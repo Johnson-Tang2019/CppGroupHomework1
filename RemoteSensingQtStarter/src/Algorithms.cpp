@@ -1,5 +1,4 @@
 #include "rs/Algorithms.h"
-
 #include <stdexcept>
 
 namespace rs {
@@ -72,3 +71,6 @@ ProcessingResult OrthorectificationPipeline::rectify(const RasterLayer &image,
 }
 
 } // namespace rs
+
+
+//test
