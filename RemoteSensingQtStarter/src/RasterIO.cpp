@@ -39,10 +39,12 @@ namespace rs::io {
 //   - 使用 GDAL 前需要在 CMakeLists.txt 中启用 find_package(GDAL)
 //   - 注意 GDAL 与 Qt 的类型转换（如 QString <-> const char*）
 // ============================================================================
-std::shared_ptr<RasterLayer> loadRasterDataset(const QString& path, const RasterReadOptions& options) {
+std::shared_ptr<RasterLayer> loadRasterDataset(const QString &path,
+                                               const RasterReadOptions &options) {
     Q_UNUSED(path)
     Q_UNUSED(options)
-    throw std::runtime_error("TODO: implement GDALOpenEx, band metadata reading and preview rendering");
+    throw std::runtime_error(
+        "TODO: implement GDALOpenEx, band metadata reading and preview rendering");
 }
 
 // ============================================================================
@@ -62,7 +64,7 @@ std::shared_ptr<RasterLayer> loadRasterDataset(const QString& path, const Raster
 //   - 如果已有 GDAL 数据，可使用 GDALRasterIO 直接读取到缓冲区
 //   - 若数据量大，应分块读取或构建金字塔
 // ============================================================================
-QImage renderSingleBandGray(const RasterLayer& raster, int zeroBasedBandIndex) {
+QImage renderSingleBandGray(const RasterLayer &raster, int zeroBasedBandIndex) {
     Q_UNUSED(raster)
     Q_UNUSED(zeroBasedBandIndex)
     return {};
@@ -88,7 +90,7 @@ QImage renderSingleBandGray(const RasterLayer& raster, int zeroBasedBandIndex) {
 //   - 也可用于假彩色合成，如近红-红-绿组合
 //   - 注意三个波段尺寸必须一致
 // ============================================================================
-QImage renderRgbComposite(const RasterLayer& raster, int redBand, int greenBand, int blueBand) {
+QImage renderRgbComposite(const RasterLayer &raster, int redBand, int greenBand, int blueBand) {
     Q_UNUSED(raster)
     Q_UNUSED(redBand)
     Q_UNUSED(greenBand)
@@ -115,7 +117,8 @@ QImage renderRgbComposite(const RasterLayer& raster, int redBand, int greenBand,
 //   - 输出数据类型建议用 GDT_Float32
 //   - 注意 dem 中的 geoTransform 可能来自原始影像
 // ============================================================================
-void exportDemAsGeoTiff(const DemLayer& dem, const QString& path, const RasterWriteOptions& options) {
+void exportDemAsGeoTiff(const DemLayer &dem, const QString &path,
+                        const RasterWriteOptions &options) {
     Q_UNUSED(dem)
     Q_UNUSED(path)
     Q_UNUSED(options)
