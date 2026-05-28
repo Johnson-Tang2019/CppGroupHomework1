@@ -13,6 +13,8 @@ out/
 x64/
 Release/
 Debug/
+RemoteSensingQtStarter/build_vs/
+RemoteSensingQtStarter/build_msys2_ucrt/
 
 # ========== IDE 及编辑器 ==========
 .vs/
@@ -74,5 +76,4 @@ Desktop.ini
 *.pyc
 __pycache__/
 node_modules/
-
 
