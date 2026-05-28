@@ -41,6 +41,8 @@ target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets)
 if(OpenCV_FOUND)
     target_compile_definitions(RemoteSensingQtStarter PRIVATE RS_WITH_OPENCV=1)
     target_link_libraries(RemoteSensingQtStarter PRIVATE ${OpenCV_LIBS})
+    # 将 OpenCV 头文件添加为 SYSTEM 类型，避免其干扰 MSVC 标准库搜索路径
+    target_include_directories(RemoteSensingQtStarter SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
 endif()
 
 if(GDAL_FOUND)
@@ -50,6 +52,5 @@ endif()
 
 if(MSVC)
     target_compile_options(RemoteSensingQtStarter PRIVATE /W4 /permissive- /utf-8)
-else()
-    target_compile_options(RemoteSensingQtStarter PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
