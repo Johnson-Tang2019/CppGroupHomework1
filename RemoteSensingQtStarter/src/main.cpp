@@ -2,6 +2,7 @@
 #include <QApplication>
 
 int main(int argc, char *argv[]) {
+    int a = 10;
     QApplication app(argc, argv);
 
     rs::MainWindow window;
