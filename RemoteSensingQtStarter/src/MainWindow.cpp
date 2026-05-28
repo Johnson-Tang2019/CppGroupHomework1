@@ -24,178 +24,211 @@
 namespace rs {
 namespace {
 
-constexpr int kLayerIndexRole = Qt::UserRole + 1;
-constexpr int kBandIndexRole = Qt::UserRole + 2;
-constexpr int kNodeKindRole = Qt::UserRole + 3;
+// 自定义角色，用于在 QTreeWidgetItem 中存储额外数据
+constexpr int kLayerIndexRole = Qt::UserRole + 1;  // 存储图层在 LayerManager 中的索引
+constexpr int kBandIndexRole = Qt::UserRole + 2;   // 存储波段索引（用于波段子节点）
+constexpr int kNodeKindRole = Qt::UserRole + 3;    // 存储节点类型（文件夹/图层/波段）
 
+// 图层树节点的类型枚举
 enum class NodeKind {
-    Folder,
-    Layer,
-    Band
+    Folder,  // 文件夹节点（如"源数据/遥感影像"），不可选中
+    Layer,   // 图层节点，可选中/勾选
+    Band     // 波段子节点，仅信息展示
 };
 
+// 生成节点的唯一键（从根到当前节点的路径字符串）
 QString itemKey(const QTreeWidgetItem* item) {
-    QStringList parts;
-    const auto* current = item;
-    while (current) {
-        parts.prepend(current->text(0));
-        current = current->parent();
+    QStringList parts;               // 用于存储从根到当前节点的各层名称
+    const auto* current = item;      // 从当前节点开始向上遍历
+    while (current) {                // 一直遍历到根节点（parent 为 nullptr）
+        parts.prepend(current->text(0));  // 把当前节点的文本插入到列表最前面
+        current = current->parent();      // 向上移动到父节点
     }
-    return parts.join(QLatin1Char('/'));
+    return parts.join(QLatin1Char('/'));  // 用 "/" 拼接成路径字符串，如 "源数据/遥感影像/xxx.tif"
 }
 
+// 递归收集所有展开节点的键
 void collectExpandedKeys(QTreeWidgetItem* item, QSet<QString>& keys) {
-    if (!item) {
+    if (!item) {                     // 空节点，直接返回
         return;
     }
-    if (item->isExpanded()) {
-        keys.insert(itemKey(item));
+    if (item->isExpanded()) {        // 如果当前节点是展开状态
+        keys.insert(itemKey(item));  // 则记录它的路径键
     }
-    for (int i = 0; i < item->childCount(); ++i) {
-        collectExpandedKeys(item->child(i), keys);
+    for (int i = 0; i < item->childCount(); ++i) {  // 遍历所有子节点
+        collectExpandedKeys(item->child(i), keys);  // 递归处理每个子节点
     }
 }
 
+// 在指定父节点下查找或创建子文件夹
 QTreeWidgetItem* ensureChildFolder(QTreeWidgetItem* parent, const QString& name) {
+    // 先在现有子节点中查找是否已有同名文件夹
     for (int i = 0; i < parent->childCount(); ++i) {
-        if (parent->child(i)->text(0) == name) {
-            return parent->child(i);
+        if (parent->child(i)->text(0) == name) {  // 找到了同名的
+            return parent->child(i);               // 直接返回已有的节点
         }
     }
-    auto* folder = new QTreeWidgetItem(parent);
-    folder->setText(0, name);
-    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
-    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
+    // 没找到，则创建新的文件夹节点
+    auto* folder = new QTreeWidgetItem(parent);                      // 创建新节点，parent 为父节点
+    folder->setText(0, name);                                         // 设置显示文本为文件夹名
+    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));  // 标记为 Folder 类型
+    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);  // 移除"可选中"标志，保留"启用"标志
     return folder;
 }
 
+// 在顶层节点中查找或创建文件夹
 QTreeWidgetItem* ensureTopFolder(QTreeWidget* tree, const QString& name) {
+    // 先在所有顶层节点中查找是否已有同名文件夹
     for (int i = 0; i < tree->topLevelItemCount(); ++i) {
-        if (tree->topLevelItem(i)->text(0) == name) {
-            return tree->topLevelItem(i);
+        if (tree->topLevelItem(i)->text(0) == name) {  // 找到了同名的
+            return tree->topLevelItem(i);                // 直接返回已有的节点
         }
     }
-    auto* folder = new QTreeWidgetItem(tree);
-    folder->setText(0, name);
-    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
-    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
+    // 没找到，则创建新的顶层文件夹节点
+    auto* folder = new QTreeWidgetItem(tree);                       // 创建新节点，tree 为根
+    folder->setText(0, name);                                        // 设置显示文本为文件夹名
+    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));  // 标记为 Folder 类型
+    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);  // 不可选中，仅启用
     return folder;
 }
 
 } // namespace
 
+// 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("Remote Sensing Qt Starter"));
-    createMenus();
-    createUi();
-    appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL 多波段、参数化算法、DEM/正射流程的工程骨架。"));
-    updateActionStates();
+    setWindowTitle(QStringLiteral("Remote Sensing Qt Starter"));  // 设置窗口标题
+    createMenus();    // 构建菜单栏
+    createUi();       // 构建界面控件
+    appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL 多波段、参数化算法、DEM/正射流程的工程骨架。"));  // 记录启动日志
+    updateActionStates();  // 初始化菜单项的启用状态（刚启动时所有菜单应该禁用）
 }
 
+// 构建菜单栏：数据、影像处理、摄影测量/三维
 void MainWindow::createMenus() {
-    auto* dataMenu = menuBar()->addMenu(QStringLiteral("数据"));
-    connect(dataMenu->addAction(QStringLiteral("加载遥感影像(GDAL，可多选)")), &QAction::triggered, this, &MainWindow::openRasterDatasets);
-    connect(dataMenu->addAction(QStringLiteral("加载点云")), &QAction::triggered, this, &MainWindow::openPointCloud);
-    connect(dataMenu->addAction(QStringLiteral("加载 Mesh")), &QAction::triggered, this, &MainWindow::openMesh);
-    connect(dataMenu->addAction(QStringLiteral("加载 DEM")), &QAction::triggered, this, &MainWindow::openDem);
-    dataMenu->addSeparator();
-    deleteLayerAction_ = dataMenu->addAction(QStringLiteral("删除选中图层"));
+    // ---- "数据" 菜单 ----
+    auto* dataMenu = menuBar()->addMenu(QStringLiteral("数据"));  // 创建"数据"菜单
+    connect(dataMenu->addAction(QStringLiteral("加载遥感影像(GDAL，可多选)")), &QAction::triggered, this, &MainWindow::openRasterDatasets);  // 添加"加载遥感影像"并连接点击信号
+    connect(dataMenu->addAction(QStringLiteral("加载点云")), &QAction::triggered, this, &MainWindow::openPointCloud);  // 添加"加载点云"并连接
+    connect(dataMenu->addAction(QStringLiteral("加载 Mesh")), &QAction::triggered, this, &MainWindow::openMesh);  // 添加"加载 Mesh"并连接
+    connect(dataMenu->addAction(QStringLiteral("加载 DEM")), &QAction::triggered, this, &MainWindow::openDem);  // 添加"加载 DEM"并连接
+    dataMenu->addSeparator();  // 添加分隔线，将加载与删除操作分开
+    deleteLayerAction_ = dataMenu->addAction(QStringLiteral("删除选中图层"));  // 添加"删除选中图层"并保存指针以便控制启用/禁用
     connect(deleteLayerAction_, &QAction::triggered, this, &MainWindow::deleteSelectedLayers);
-    clearProjectAction_ = dataMenu->addAction(QStringLiteral("初始化/清空工程"));
+    clearProjectAction_ = dataMenu->addAction(QStringLiteral("初始化/清空工程"));  // 添加"清空工程"并保存指针
     connect(clearProjectAction_, &QAction::triggered, this, &MainWindow::clearProject);
 
-    auto* rasterMenu = menuBar()->addMenu(QStringLiteral("影像处理"));
-    auto* bandMenu = rasterMenu->addMenu(QStringLiteral("波段与设色"));
-    renderAction_ = bandMenu->addAction(QStringLiteral("波段组合/设色..."));
+    // ---- "影像处理" 菜单 ----
+    auto* rasterMenu = menuBar()->addMenu(QStringLiteral("影像处理"));  // 创建"影像处理"菜单
+    auto* bandMenu = rasterMenu->addMenu(QStringLiteral("波段与设色"));  // 创建子菜单"波段与设色"
+    renderAction_ = bandMenu->addAction(QStringLiteral("波段组合/设色..."));  // 添加"波段组合/设色"并保存指针
     connect(renderAction_, &QAction::triggered, this, &MainWindow::configureRasterRendering);
 
-    auto* statMenu = rasterMenu->addMenu(QStringLiteral("统计"));
-    histogramAction_ = statMenu->addAction(QStringLiteral("灰度直方图..."));
+    auto* statMenu = rasterMenu->addMenu(QStringLiteral("统计"));  // 创建子菜单"统计"
+    histogramAction_ = statMenu->addAction(QStringLiteral("灰度直方图..."));  // 添加"灰度直方图"并保存指针
     connect(histogramAction_, &QAction::triggered, this, &MainWindow::runHistogram);
 
-    auto* enhanceMenu = rasterMenu->addMenu(QStringLiteral("增强"));
-    equalizeAction_ = enhanceMenu->addAction(QStringLiteral("直方图均衡化..."));
+    auto* enhanceMenu = rasterMenu->addMenu(QStringLiteral("增强"));  // 创建子菜单"增强"
+    equalizeAction_ = enhanceMenu->addAction(QStringLiteral("直方图均衡化..."));  // 添加"直方图均衡化"并保存指针
     connect(equalizeAction_, &QAction::triggered, this, &MainWindow::runHistogramEqualization);
 
-    auto* featureMenu = rasterMenu->addMenu(QStringLiteral("特征"));
-    featureAction_ = featureMenu->addAction(QStringLiteral("ORB/SIFT 特征提取..."));
+    auto* featureMenu = rasterMenu->addMenu(QStringLiteral("特征"));  // 创建子菜单"特征"
+    featureAction_ = featureMenu->addAction(QStringLiteral("ORB/SIFT 特征提取..."));  // 添加"ORB/SIFT 特征提取"并保存指针
     connect(featureAction_, &QAction::triggered, this, &MainWindow::runFeatureExtraction);
 
-    auto* photogrammetryMenu = menuBar()->addMenu(QStringLiteral("摄影测量/三维"));
-    demAction_ = photogrammetryMenu->addAction(QStringLiteral("DEM 重建..."));
+    // ---- "摄影测量/三维" 菜单 ----
+    auto* photogrammetryMenu = menuBar()->addMenu(QStringLiteral("摄影测量/三维"));  // 创建"摄影测量/三维"菜单
+    demAction_ = photogrammetryMenu->addAction(QStringLiteral("DEM 重建..."));  // 添加"DEM 重建"并保存指针
     connect(demAction_, &QAction::triggered, this, &MainWindow::runDemReconstruction);
-    orthoAction_ = photogrammetryMenu->addAction(QStringLiteral("正射影像校正..."));
+    orthoAction_ = photogrammetryMenu->addAction(QStringLiteral("正射影像校正..."));  // 添加"正射影像校正"并保存指针
     connect(orthoAction_, &QAction::triggered, this, &MainWindow::runOrthorectification);
 }
 
+// 构建界面布局：左侧图层树 + 右侧影像/三维标签页 + 底部日志面板
 void MainWindow::createUi() {
+    // 主分割器：水平方向，将窗口分为左侧（图层树）和右侧（影像+日志）
     auto* root = new QSplitter(Qt::Horizontal, this);
-    layerTree_ = new QTreeWidget(root);
-    layerTree_->setHeaderLabel(QStringLiteral("工程图层"));
-    layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(layerTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSelectionChanged);
-    connect(layerTree_, &QTreeWidget::itemChanged, this, &MainWindow::onLayerItemChanged);
-    connect(layerTree_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::showLayerContextMenu);
+    // ---- 左侧：图层树 ----
+    layerTree_ = new QTreeWidget(root);          // 创建图层树控件
+    layerTree_->setHeaderLabel(QStringLiteral("工程图层"));  // 设置表头文字
+    layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);  // 支持 Ctrl/Shift 多选
+    layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);  // 启用自定义右键菜单
+    connect(layerTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSelectionChanged);  // 选中项改变时刷新影像
+    connect(layerTree_, &QTreeWidget::itemChanged, this, &MainWindow::onLayerItemChanged);  // 勾选框改变时切换可见性
+    connect(layerTree_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::showLayerContextMenu);  // 右键弹出菜单
 
-    auto* right = new QSplitter(Qt::Vertical, root);
-    tabs_ = new QTabWidget(right);
-    imageScene_ = new QGraphicsScene(this);
-    imageView_ = new QGraphicsView(imageScene_, tabs_);
-    imageView_->setDragMode(QGraphicsView::ScrollHandDrag);
-    imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+    // ---- 右侧：上下分割（上方影像标签页 + 下方日志） ----
+    auto* right = new QSplitter(Qt::Vertical, root);  // 右侧垂直分割器
 
-    scene3DPlaceholder_ = new QWidget(tabs_);
-    auto* layout = new QVBoxLayout(scene3DPlaceholder_);
-    layout->addWidget(new QLabel(QStringLiteral("TODO: 在这里实现 QOpenGLWidget / Qt3D / VTK 三维窗口。\n建议支持：左键旋转、右键平移、滚轮缩放、双击设置旋转中心。")));
+    // 标签页控件：二维影像 / 三维场景
+    tabs_ = new QTabWidget(right);              // 创建标签页控件
+    imageScene_ = new QGraphicsScene(this);     // 创建图形场景（管理所有图形项）
 
-    tabs_->addTab(imageView_, QStringLiteral("二维影像"));
-    tabs_->addTab(scene3DPlaceholder_, QStringLiteral("三维场景"));
+    imageView_ = new QGraphicsView(imageScene_, tabs_);  // 创建图形视图（显示场景内容）
+    imageView_->setDragMode(QGraphicsView::ScrollHandDrag);  // 设置拖拽模式：手型抓手平移
+    imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);  // 缩放时以鼠标位置为中心
 
-    logEdit_ = new QTextEdit(right);
-    logEdit_->setReadOnly(true);
-    logEdit_->setMaximumHeight(210);
+    // 三维场景占位页（TODO: 后续实现 QOpenGLWidget / Qt3D / VTK）
+    scene3DPlaceholder_ = new QWidget(tabs_);  // 创建占位容器
+    auto* layout = new QVBoxLayout(scene3DPlaceholder_);  // 垂直布局
+    layout->addWidget(new QLabel(QStringLiteral("TODO: 在这里实现 QOpenGLWidget / Qt3D / VTK 三维窗口。\n建议支持：左键旋转、右键平移、滚轮缩放、双击设置旋转中心。")));  // 提示文字
 
-    root->setStretchFactor(0, 1);
-    root->setStretchFactor(1, 5);
-    right->setStretchFactor(0, 5);
-    right->setStretchFactor(1, 1);
-    setCentralWidget(root);
+    tabs_->addTab(imageView_, QStringLiteral("二维影像"));  // 添加"二维影像"标签页
+    tabs_->addTab(scene3DPlaceholder_, QStringLiteral("三维场景"));  // 添加"三维场景"标签页
+
+    // 日志输出面板
+    logEdit_ = new QTextEdit(right);             // 创建文本编辑框用于日志输出
+    logEdit_->setReadOnly(true);                  // 设置为只读，用户不能编辑
+    logEdit_->setMaximumHeight(210);              // 限制最大高度 210 像素
+
+    // 设置分割器拉伸比例（控件随窗口缩放时的比例分配）
+    root->setStretchFactor(0, 1);   // 第0个（图层树）：拉伸因子 = 1
+    root->setStretchFactor(1, 5);   // 第1个（右侧区域）：拉伸因子 = 5
+    right->setStretchFactor(0, 5);  // 第0个（影像标签页）：拉伸因子 = 5
+    right->setStretchFactor(1, 1);  // 第1个（日志面板）：拉伸因子 = 1
+
+    setCentralWidget(root);  // 将分割器设为窗口的中心控件（填满整个窗口）
 }
 
+// 打开文件对话框选择遥感影像，登记到图层管理器
 void MainWindow::openRasterDatasets() {
+    // 弹出文件选择对话框，支持多选，过滤遥感影像格式
     const QStringList paths = QFileDialog::getOpenFileNames(
-        this,
-        QStringLiteral("加载遥感影像"),
-        QString(),
-        QStringLiteral("Remote sensing rasters (*.tif *.tiff *.img *.dat *.jp2);;All Files (*.*)"));
-    if (paths.isEmpty()) {
-        return;
+        this,                                              // 父窗口
+        QStringLiteral("加载遥感影像"),                      // 对话框标题
+        QString(),                                          // 默认路径（空 = 上次路径）
+        QStringLiteral("Remote sensing rasters (*.tif *.tiff *.img *.dat *.jp2);;All Files (*.*)"));  // 文件过滤器
+    if (paths.isEmpty()) {    // 用户取消选择
+        return;               // 不做任何操作
     }
 
+    // 遍历所有选中的文件路径
     for (const QString& path : paths) {
-        const QFileInfo info(path);
+        const QFileInfo info(path);                     // 获取文件信息（文件名、后缀等）
         // 学生作业应在这里替换为：auto raster = rs::io::loadRasterDataset(path);
-        auto raster = std::make_shared<RasterLayer>(info.fileName(), path);
-        layers_.add(raster);
-        appendLog(QStringLiteral("已登记影像路径：%1。TODO: 调用 RasterIO/GDAL 读取波段、投影和地理变换。").arg(path));
+        auto raster = std::make_shared<RasterLayer>(info.fileName(), path);  // 创建 RasterLayer，目前仅记录文件名和路径
+        layers_.add(raster);                            // 将图层添加到 LayerManager 中
+        appendLog(QStringLiteral("已登记影像路径：%1。TODO: 调用 RasterIO/GDAL 读取波段、投影和地理变换。").arg(path));  // 记录日志
     }
-    refreshLayerTree();
-    updateActionStates();
+    refreshLayerTree();    // 刷新图层树显示新添加的图层
+    updateActionStates();  // 更新菜单启用状态
 }
 
+// TODO: 加载点云
 void MainWindow::openPointCloud() {
     appendLog(QStringLiteral("TODO: 实现 PLY/XYZ/LAS 点云读取，并加入“源数据/点云”。"));
 }
 
+// TODO: 加载 Mesh
 void MainWindow::openMesh() {
     appendLog(QStringLiteral("TODO: 实现 OBJ/PLY Mesh 读取，并加入“源数据/Mesh”。"));
 }
 
+// TODO: 加载 DEM
 void MainWindow::openDem() {
     appendLog(QStringLiteral("TODO: 使用 GDAL 读取 DEM GeoTIFF/ASCII Grid，并加入“源数据/DEM”。"));
 }
 
+// 删除图层树中选中的图层
 void MainWindow::deleteSelectedLayers() {
     const auto indices = selectedLayerIndices();
     if (indices.empty()) {
@@ -208,6 +241,7 @@ void MainWindow::deleteSelectedLayers() {
     updateActionStates();
 }
 
+// 清空所有图层，重置工程
 void MainWindow::clearProject() {
     layers_.clear();
     imageScene_->clear();
@@ -216,6 +250,7 @@ void MainWindow::clearProject() {
     updateActionStates();
 }
 
+// 打开波段组合/设色对话框
 void MainWindow::configureRasterRendering() {
     const auto raster = selectedRaster();
     if (!raster) {
@@ -228,6 +263,7 @@ void MainWindow::configureRasterRendering() {
     appendLog(QStringLiteral("TODO: 根据波段组合/设色参数渲染影像：%1。").arg(raster->name()));
 }
 
+// 执行灰度直方图算法（TODO）
 void MainWindow::runHistogram() {
     HistogramAlgorithm algorithm;
     appendLog(QStringLiteral("TODO: 打开参数对话框并执行：%1，当前波段索引=%2。")
@@ -235,29 +271,35 @@ void MainWindow::runHistogram() {
                   .arg(selectedBandIndex()));
 }
 
+// 执行直方图均衡化算法（TODO）
 void MainWindow::runHistogramEqualization() {
     HistogramEqualizationAlgorithm algorithm;
     appendLog(QStringLiteral("TODO: 打开参数对话框并执行：%1，结果应加入“处理结果/直方图均衡化”。").arg(algorithm.name()));
 }
 
+// 执行 ORB/SIFT 特征提取（TODO）
 void MainWindow::runFeatureExtraction() {
     FeatureExtractionAlgorithm algorithm;
     appendLog(QStringLiteral("TODO: 打开参数对话框并执行：%1，可选 ORB/SIFT/AKAZE。").arg(algorithm.name()));
 }
 
+// 执行 DEM 重建流程（TODO）
 void MainWindow::runDemReconstruction() {
     appendLog(QStringLiteral("TODO: 选择两张影像后弹出 DEM 重建对话框，补充相机参数/控制点/输出目录，再自动完成匹配、校正、视差和 DEM 输出。"));
 }
 
+// 执行正射校正流程（TODO）
 void MainWindow::runOrthorectification() {
     appendLog(QStringLiteral("TODO: 选择影像和对应 DEM，使用 DEM 地理变换与影像模型重采样生成正射影像。"));
 }
 
+// 当图层树选中项改变时，刷新影像显示和菜单状态
 void MainWindow::onSelectionChanged() {
     displayRaster(selectedRaster(), selectedBandIndex());
     updateActionStates();
 }
 
+// 当图层项的勾选状态改变时，切换其可见性
 void MainWindow::onLayerItemChanged(QTreeWidgetItem* item, int column) {
     if (rebuildingTree_ || !item || column != 0) {
         return;
@@ -276,6 +318,7 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem* item, int column) {
     }
 }
 
+// 右键点击图层树时弹出上下文菜单
 void MainWindow::showLayerContextMenu(const QPoint& position) {
     QTreeWidgetItem* item = layerTree_->itemAt(position);
     if (!item) {
@@ -302,6 +345,7 @@ void MainWindow::showLayerContextMenu(const QPoint& position) {
     menu.exec(layerTree_->viewport()->mapToGlobal(position));
 }
 
+// 根据 LayerManager 中的数据重建图层树，保持展开/折叠状态
 void MainWindow::refreshLayerTree() {
     QSet<QString> expandedKeys;
     for (int i = 0; i < layerTree_->topLevelItemCount(); ++i) {
@@ -386,6 +430,7 @@ void MainWindow::refreshLayerTree() {
     rebuildingTree_ = false;
 }
 
+// 在 QGraphicsView 中显示选中的影像（优先显示选中波段）
 void MainWindow::displayRaster(const std::shared_ptr<RasterLayer>& raster, int bandIndex) {
     imageScene_->clear();
     if (!raster) {
@@ -410,6 +455,7 @@ void MainWindow::displayRaster(const std::shared_ptr<RasterLayer>& raster, int b
     imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
 }
 
+// 获取当前选中的所有图层的索引列表（去重）
 std::vector<int> MainWindow::selectedLayerIndices() const {
     std::vector<int> indices;
     for (const auto* item : layerTree_->selectedItems()) {
@@ -425,6 +471,7 @@ std::vector<int> MainWindow::selectedLayerIndices() const {
     return indices;
 }
 
+// 获取当前选中的 RasterLayer（非 Raster 类型返回 nullptr）
 std::shared_ptr<RasterLayer> MainWindow::selectedRaster() const {
     auto* item = layerTree_->currentItem();
     if (!item) {
@@ -441,6 +488,7 @@ std::shared_ptr<RasterLayer> MainWindow::selectedRaster() const {
     }
 }
 
+// 获取当前选中的波段索引（-1 表示未选中具体波段）
 int MainWindow::selectedBandIndex() const {
     auto* item = layerTree_->currentItem();
     if (!item) {
@@ -450,6 +498,7 @@ int MainWindow::selectedBandIndex() const {
     return value.isValid() ? value.toInt() : -1;
 }
 
+// 根据当前选中图层的类型，更新菜单项的启用/禁用状态
 void MainWindow::updateActionStates() {
     int selectedRasters = 0;
     int selectedDems = 0;
@@ -492,6 +541,7 @@ void MainWindow::updateActionStates() {
     }
 }
 
+// 在日志面板追加带时间戳的信息
 void MainWindow::appendLog(const QString& text) {
     logEdit_->append(QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), text));
 }
