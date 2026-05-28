@@ -1,0 +1,5 @@
+C:/Users/js/Documents/作业/c++/MainHW2/build/CMakeFiles/RemoteSensingQtStarter.dir
+C:/Users/js/Documents/作业/c++/MainHW2/build/CMakeFiles/edit_cache.dir
+C:/Users/js/Documents/作业/c++/MainHW2/build/CMakeFiles/rebuild_cache.dir
+C:/Users/js/Documents/作业/c++/MainHW2/build/CMakeFiles/RemoteSensingQtStarter_autogen_timestamp_deps.dir
+C:/Users/js/Documents/作业/c++/MainHW2/build/CMakeFiles/RemoteSensingQtStarter_autogen.dir

@@ -1,0 +1,14 @@
+# ninja log v7
+33	477	8016375739558960	RemoteSensingQtStarter_autogen/timestamp	39f07f9bc695e535
+33	477	8016375739558960	RemoteSensingQtStarter_autogen/mocs_compilation.cpp	39f07f9bc695e535
+33	477	8016375739558960	C:/Users/js/Documents/作业/c++/MainHW2/build/RemoteSensingQtStarter_autogen/timestamp	39f07f9bc695e535
+33	477	8016375739558960	C:/Users/js/Documents/作业/c++/MainHW2/build/RemoteSensingQtStarter_autogen/mocs_compilation.cpp	39f07f9bc695e535
+495	1671	8016375740481974	CMakeFiles/RemoteSensingQtStarter.dir/src/RasterIO.cpp.obj	c4b620955648e5e2
+491	1930	8016375740439305	CMakeFiles/RemoteSensingQtStarter.dir/src/Algorithms.cpp.obj	2580e41bcc4671
+499	1986	8016375740523502	CMakeFiles/RemoteSensingQtStarter.dir/src/RasterRenderDialog.cpp.obj	751af059476ba507
+482	2381	8016375740348780	CMakeFiles/RemoteSensingQtStarter.dir/src/main.cpp.obj	5de4137cf3d31010
+478	2411	8016375740313704	CMakeFiles/RemoteSensingQtStarter.dir/RemoteSensingQtStarter_autogen/mocs_compilation.cpp.obj	9e371ce98db25df7
+486	2890	8016375740392485	CMakeFiles/RemoteSensingQtStarter.dir/src/MainWindow.cpp.obj	1ec4350bb0cca7e0
+2890	3112	8016375764433289	RemoteSensingQtStarter.exe	533e9f74ffe9d919
+13	52	8016375732826863	CMakeFiles/clean.additional	67a1194c2ef3ec5a
+52	65	8016375733231505	clean	716045210d92e6da
