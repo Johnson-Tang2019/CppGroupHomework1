@@ -1,0 +1,68 @@
+# ========== 构建输出 ==========
+build/
+cmake-build-*/
+out/
+x64/
+Release/
+Debug/
+
+# ========== IDE 及编辑器 ==========
+.vs/
+.vscode/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.vcxproj.user
+*.vcxproj.filters
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# ========== Qt 自动生成 ==========
+*_autogen/
+mocs_compilation.cpp
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+qmake.stash
+Makefile
+Makefile.Debug
+Makefile.Release
+
+# ========== 编译中间文件 ==========
+*.o
+*.obj
+*.lib
+*.exp
+*.so
+*.dylib
+*.a
+*.dll
+*.exe
+*.ilk
+*.pdb
+*.tlog
+*.log
+*.manifest
+*.res
+*.lastbuildstate
+*.idb
+
+# ========== 数据文件（可选的，建议保留小样本数据） ==========
+# 如果 Data/ 下是学生测试用的小样本数据，可以保留
+# 如果数据很大，建议取消下面注释排除
+Data/
+
+# ========== 系统文件 ==========
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# ========== 其他 ==========
+*.pyc
+__pycache__/
+node_modules/
