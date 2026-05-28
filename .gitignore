@@ -1,3 +1,11 @@
+# ========== 演示文档 ==========
+*.pptx
+*.ppt
+*.docx
+*.doc
+~$*
+RemoteSensingQtStarter/docs/
+
 # ========== 构建输出 ==========
 build/
 cmake-build-*/
@@ -66,4 +74,5 @@ Desktop.ini
 *.pyc
 __pycache__/
 node_modules/
+
 
