@@ -703,11 +703,11 @@ void MainWindow::deleteSelectedLayers() {
 
 // 清空所有图层，重置工程
 void MainWindow::clearProject() {
-    layers_.clear();
-    imageScene_->clear();
-    refreshLayerTree();
+    layers_.clear();// 清空所有图层
+    imageScene_->clear();// 清空图像场景
+    refreshLayerTree();// 刷新图层树
     appendLog(QStringLiteral("工程已初始化。"));
-    updateActionStates();
+    updateActionStates();// 更新菜单所有操作按钮的状态
 }
 
 // 打开波段组合/设色对话框
