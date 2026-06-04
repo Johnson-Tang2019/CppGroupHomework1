@@ -33,7 +33,7 @@ add_executable(RemoteSensingQtStarter WIN32
 )
 
 target_include_directories(RemoteSensingQtStarter PRIVATE include)
-target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets)
+target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets opengl32)
 
 if(OpenCV_FOUND)
     target_compile_definitions(RemoteSensingQtStarter PRIVATE RS_WITH_OPENCV=1)

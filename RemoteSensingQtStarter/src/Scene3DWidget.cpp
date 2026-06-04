@@ -1,9 +1,8 @@
 #include "rs/Scene3DWidget.h"
 
+#include <GL/gl.h>
 #include <QMouseEvent>
 #include <QWheelEvent>
-#include <QtOpenGL>
-#include <QtOpenGLWidgets>
 #include <algorithm>
 #include <cmath>
 

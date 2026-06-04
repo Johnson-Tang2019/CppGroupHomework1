@@ -3,6 +3,7 @@
 #include "rs/Algorithms.h"
 #include "rs/RasterIO.h"
 #include "rs/RasterRenderDialog.h"
+#include "rs/Scene3DWidget.h"
 
 #ifdef RS_WITH_GDAL
 #include <gdal_priv.h>
