@@ -7,9 +7,11 @@
 #include <QString> // Qt 字符串，表示文件路径
 #include <algorithm>
 #include <cmath>
+#ifdef RS_WITH_GDAL
 #include <cpl_string.h>
 #include <cstring>
 #include <gdal_priv.h>
+#endif
 #include <limits>
 #include <memory> // std::shared_ptr，智能指针管理图层对象
 #include <stdexcept>

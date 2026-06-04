@@ -30,7 +30,9 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cstdint>
+#ifdef RS_WITH_GDAL
 #include <gdal_priv.h>
+#endif
 #include <limits>
 #include <memory>
 #include <memory> // std::shared_ptr，管理图层对象的共享所有权
