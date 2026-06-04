@@ -5,33 +5,8 @@
 #include "rs/RasterRenderDialog.h"
 #include "rs/Scene3DWidget.h"
 
-#ifdef RS_WITH_GDAL
-#include <gdal_priv.h>
-#endif
 
-#include <QAbstractItemView>
-#include <QByteArray>
-#include <QDataStream>
-#include <QDateTime>
-#include <QFile>
-#include <QFileDialog>
-#include <QFileInfo>
-#include <QGraphicsTextItem>
-#include <QLabel>
-#include <QMenu>
-#include <QMenuBar>
-#include <QPixmap>
-#include <QSet>
-#include <QSplitter>
-#include <QStringList>
-#include <QTextStream>
-#include <QVBoxLayout>
 
-#include <algorithm>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <stdexcept>
 
 namespace rs {
 namespace {
