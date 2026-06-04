@@ -4,8 +4,15 @@
 #include "rs/RasterIO.h"
 #include "rs/RasterRenderDialog.h"
 
+#ifdef RS_WITH_GDAL
+#include <gdal_priv.h>
+#endif
+
 #include <QAbstractItemView>
+#include <QByteArray>
+#include <QDataStream>
 #include <QDateTime>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGraphicsTextItem>
@@ -16,10 +23,14 @@
 #include <QSet>
 #include <QSplitter>
 #include <QStringList>
+#include <QTextStream>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <stdexcept>
 
 namespace rs {
 namespace {
@@ -35,6 +46,110 @@ enum class NodeKind {
     Layer,   // 图层节点，可选中/勾选
     Band     // 波段子节点，仅信息展示
 };
+
+quint8 readUInt8At(QFile& file, qint64 offset) {
+    if (!file.seek(offset)) throw std::runtime_error("LAS 文件头不完整");
+    char value = 0;
+    if (file.read(&value, 1) != 1) throw std::runtime_error("LAS 文件头不完整");
+    return static_cast<quint8>(value);
+}
+
+quint16 readUInt16LeAt(QFile& file, qint64 offset) {
+    if (!file.seek(offset)) throw std::runtime_error("LAS 文件头不完整");
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    quint16 value = 0;
+    stream >> value;
+    if (stream.status() != QDataStream::Ok) throw std::runtime_error("LAS 文件头不完整");
+    return value;
+}
+
+quint32 readUInt32LeAt(QFile& file, qint64 offset) {
+    if (!file.seek(offset)) throw std::runtime_error("LAS 文件头不完整");
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    quint32 value = 0;
+    stream >> value;
+    if (stream.status() != QDataStream::Ok) throw std::runtime_error("LAS 文件头不完整");
+    return value;
+}
+
+quint64 readUInt64LeAt(QFile& file, qint64 offset) {
+    if (!file.seek(offset)) throw std::runtime_error("LAS 文件头不完整");
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    quint64 value = 0;
+    stream >> value;
+    if (stream.status() != QDataStream::Ok) throw std::runtime_error("LAS 文件头不完整");
+    return value;
+}
+
+double readDoubleLeAt(QFile& file, qint64 offset) {
+    if (!file.seek(offset)) throw std::runtime_error("LAS 文件头不完整");
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    double value = 0.0;
+    stream >> value;
+    if (stream.status() != QDataStream::Ok) throw std::runtime_error("LAS 文件头不完整");
+    return value;
+}
+
+qint32 readInt32Le(const char* data) {
+    const auto* b = reinterpret_cast<const unsigned char*>(data);
+    const quint32 value = (static_cast<quint32>(b[0])      ) |
+                          (static_cast<quint32>(b[1]) <<  8) |
+                          (static_cast<quint32>(b[2]) << 16) |
+                          (static_cast<quint32>(b[3]) << 24);
+    return static_cast<qint32>(value);
+}
+
+QVector<QVector3D> readLasPoints(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        throw std::runtime_error("无法打开 LAS 文件");
+    }
+    if (file.read(4) != QByteArray("LASF", 4)) {
+        throw std::runtime_error("不是有效的 LAS 文件");
+    }
+
+    const quint32 pointDataOffset = readUInt32LeAt(file, 96);
+    const quint8 pointFormat = readUInt8At(file, 104) & 0x3f;
+    const quint16 recordLength = readUInt16LeAt(file, 105);
+    quint64 pointCount = readUInt32LeAt(file, 107);
+    if (pointCount == 0 && file.size() >= 255) {
+        pointCount = readUInt64LeAt(file, 247);
+    }
+    const double xScale = readDoubleLeAt(file, 131);
+    const double yScale = readDoubleLeAt(file, 139);
+    const double zScale = readDoubleLeAt(file, 147);
+    const double xOffset = readDoubleLeAt(file, 155);
+    const double yOffset = readDoubleLeAt(file, 163);
+    const double zOffset = readDoubleLeAt(file, 171);
+
+    if (pointDataOffset == 0 || recordLength < 12 || pointFormat > 10) {
+        throw std::runtime_error("LAS 点记录格式无效");
+    }
+
+    const qint64 availableRecords = (file.size() - static_cast<qint64>(pointDataOffset)) / recordLength;
+    pointCount = std::min<quint64>(pointCount, static_cast<quint64>(std::max<qint64>(0, availableRecords)));
+    pointCount = std::min<quint64>(pointCount, static_cast<quint64>(std::numeric_limits<int>::max()));
+    const int reserveCount = static_cast<int>(pointCount);
+
+    QVector<QVector3D> points;
+    points.reserve(reserveCount);
+    QByteArray record(recordLength, Qt::Uninitialized);
+    if (!file.seek(pointDataOffset)) {
+        throw std::runtime_error("无法定位 LAS 点数据");
+    }
+    for (quint64 i = 0; i < pointCount; ++i) {
+        if (file.read(record.data(), recordLength) != recordLength) break;
+        const double x = readInt32Le(record.constData()) * xScale + xOffset;
+        const double y = readInt32Le(record.constData() + 4) * yScale + yOffset;
+        const double z = readInt32Le(record.constData() + 8) * zScale + zOffset;
+        points.append(QVector3D(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)));
+    }
+    return points;
+}
 
 // 生成节点的唯一键（从根到当前节点的路径字符串）
 QString itemKey(const QTreeWidgetItem* item) {
@@ -189,14 +304,14 @@ void MainWindow::createUi() {
     setCentralWidget(root);  // 将分割器设为窗口的中心控件（填满整个窗口）
 }
 
-// 打开文件对话框选择遥感影像，登记到图层管理器
+// 打开文件对话框选择遥感影像，使用 GDAL 读取并加载到图层管理器
 void MainWindow::openRasterDatasets() {
     // 弹出文件选择对话框，支持多选，过滤遥感影像格式
     const QStringList paths = QFileDialog::getOpenFileNames(
         this,                                              // 父窗口
         QStringLiteral("加载遥感影像"),                      // 对话框标题
         QString(),                                          // 默认路径（空 = 上次路径）
-        QStringLiteral("Remote sensing rasters (*.tif *.tiff *.img *.dat *.jp2);;All Files (*.*)"));  // 文件过滤器
+        QStringLiteral("Remote sensing rasters (*.tif *.tiff *.img *.dat *.jp2 *.jpg *.jpeg *.png *.bmp);;All Files (*.*)"));  // 文件过滤器
     if (paths.isEmpty()) {    // 用户取消选择
         return;               // 不做任何操作
     }
@@ -204,28 +319,275 @@ void MainWindow::openRasterDatasets() {
     // 遍历所有选中的文件路径
     for (const QString& path : paths) {
         const QFileInfo info(path);                     // 获取文件信息（文件名、后缀等）
-        // 学生作业应在这里替换为：auto raster = rs::io::loadRasterDataset(path);
-        auto raster = std::make_shared<RasterLayer>(info.fileName(), path);  // 创建 RasterLayer，目前仅记录文件名和路径
-        layers_.add(raster);                            // 将图层添加到 LayerManager 中
-        appendLog(QStringLiteral("已登记影像路径：%1。TODO: 调用 RasterIO/GDAL 读取波段、投影和地理变换。").arg(path));  // 记录日志
+        try {
+            // 调用 RasterIO 中的 GDAL 读取函数，读取波段、投影、地理变换和缩略图
+            auto raster = rs::io::loadRasterDataset(path);
+            if (raster) {
+                layers_.add(raster);                            // 将图层添加到 LayerManager 中
+                appendLog(QStringLiteral("已加载影像：%1（%2 波段，%3x%4）")
+                    .arg(info.fileName())
+                    .arg(raster->bandCount())
+                    .arg(raster->bandCount() > 0 ? raster->band(0).width : 0)
+                    .arg(raster->bandCount() > 0 ? raster->band(0).height : 0));
+            }
+        } catch (const std::exception& e) {
+            // GDAL 读取失败时记录错误信息
+            appendLog(QStringLiteral("加载失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
+        }
     }
     refreshLayerTree();    // 刷新图层树显示新添加的图层
     updateActionStates();  // 更新菜单启用状态
 }
 
-// TODO: 加载点云
+// 加载点云：支持 PLY、XYZ、LAS 格式
 void MainWindow::openPointCloud() {
-    appendLog(QStringLiteral("TODO: 实现 PLY/XYZ/LAS 点云读取，并加入“源数据/点云”。"));
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("加载点云"),
+        QString(),
+        QStringLiteral("Point Cloud (*.ply *.xyz *.las);;All Files (*.*)"));
+    if (path.isEmpty()) return;
+
+    const QFileInfo info(path);
+    const QString ext = info.suffix().toLower();
+
+    try {
+        QVector<QVector3D> points;
+
+        if (ext == QStringLiteral("xyz")) {
+            // XYZ 文本格式：每行一个点 "x y z"
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                throw std::runtime_error("无法打开文件");
+            }
+            QTextStream in(&file);
+            while (!in.atEnd()) {
+                const QString line = in.readLine().trimmed();
+                if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) continue;
+                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() >= 3) {
+                    points.append(QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+                }
+            }
+            file.close();
+        } else if (ext == QStringLiteral("ply")) {
+            // 简易 PLY 读取：只读顶点（支持 ASCII 格式）
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                throw std::runtime_error("无法打开 PLY 文件");
+            }
+            QTextStream in(&file);
+            int vertexCount = 0;
+            bool headerEnd = false;
+            int readVertices = 0;
+            while (!in.atEnd()) {
+                const QString line = in.readLine().trimmed();
+                if (!headerEnd) {
+                    if (line.startsWith(QStringLiteral("element vertex"))) {
+                        vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                    } else if (line == QStringLiteral("end_header")) {
+                        headerEnd = true;
+                        points.reserve(vertexCount);
+                    }
+                    continue;
+                }
+                if (readVertices >= vertexCount) break;
+                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() >= 3) {
+                    points.append(QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+                }
+                ++readVertices;
+            }
+            file.close();
+        } else if (ext == QStringLiteral("las")) {
+            points = readLasPoints(path);
+        } else {
+            throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 PLY/XYZ/LAS");
+        }
+
+        if (points.isEmpty()) {
+            throw std::runtime_error("未能读取到任何点数据");
+        }
+
+        auto layer = std::make_shared<PointCloudLayer>(info.fileName(), path, points);
+        layers_.add(layer);
+        appendLog(QStringLiteral("已加载点云：%1（%2 个点）").arg(info.fileName()).arg(points.size()));
+    } catch (const std::exception& e) {
+        appendLog(QStringLiteral("点云加载失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
+    }
+    refreshLayerTree();
+    updateActionStates();
 }
 
-// TODO: 加载 Mesh
+// 加载 Mesh：支持 OBJ、PLY 格式
 void MainWindow::openMesh() {
-    appendLog(QStringLiteral("TODO: 实现 OBJ/PLY Mesh 读取，并加入“源数据/Mesh”。"));
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("加载 Mesh"),
+        QString(),
+        QStringLiteral("Mesh (*.obj *.ply);;All Files (*.*)"));
+    if (path.isEmpty()) return;
+
+    const QFileInfo info(path);
+    const QString ext = info.suffix().toLower();
+
+    try {
+        QVector<QVector3D> vertices;
+        QVector<Face> faces;
+
+        if (ext == QStringLiteral("obj")) {
+            // OBJ 格式：v x y z（顶点），f v1 v2 v3（三角面）
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                throw std::runtime_error("无法打开 OBJ 文件");
+            }
+            QTextStream in(&file);
+            while (!in.atEnd()) {
+                const QString line = in.readLine().trimmed();
+                if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) continue;
+                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.isEmpty()) continue;
+
+                if (parts[0] == QStringLiteral("v") && parts.size() >= 4) {
+                    vertices.append(QVector3D(parts[1].toFloat(), parts[2].toFloat(), parts[3].toFloat()));
+                } else if (parts[0] == QStringLiteral("f") && parts.size() >= 4) {
+                    Face face;
+                    // OBJ 索引从 1 开始，需要减 1
+                    face.a = parts[1].section(QLatin1Char('/'), 0, 0).toInt() - 1;
+                    face.b = parts[2].section(QLatin1Char('/'), 0, 0).toInt() - 1;
+                    face.c = parts[3].section(QLatin1Char('/'), 0, 0).toInt() - 1;
+                    faces.append(face);
+                }
+            }
+            file.close();
+        } else if (ext == QStringLiteral("ply")) {
+            // PLY 格式（同点云读取方式，但同时读取面片信息）
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                throw std::runtime_error("无法打开 PLY 文件");
+            }
+            QTextStream in(&file);
+            int vertexCount = 0, faceCount = 0;
+            bool headerEnd = false;
+            int readVerts = 0, readFaces = 0;
+            bool readingVerts = true;
+
+            while (!in.atEnd()) {
+                const QString line = in.readLine().trimmed();
+                if (!headerEnd) {
+                    if (line.startsWith(QStringLiteral("element vertex"))) {
+                        vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                    } else if (line.startsWith(QStringLiteral("element face"))) {
+                        faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                    } else if (line == QStringLiteral("end_header")) {
+                        headerEnd = true;
+                        vertices.reserve(vertexCount);
+                        faces.reserve(faceCount);
+                    }
+                    continue;
+                }
+
+                if (readingVerts && readVerts < vertexCount) {
+                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                    if (parts.size() >= 3) {
+                        vertices.append(QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+                    }
+                    ++readVerts;
+                    if (readVerts >= vertexCount) readingVerts = false;
+                } else if (readFaces < faceCount) {
+                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                    if (parts.size() >= 4) {
+                        Face face;
+                        face.a = parts[1].toInt();
+                        face.b = parts[2].toInt();
+                        face.c = parts[3].toInt();
+                        faces.append(face);
+                    }
+                    ++readFaces;
+                }
+            }
+            file.close();
+        } else {
+            throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 OBJ/PLY");
+        }
+
+        if (vertices.isEmpty()) {
+            throw std::runtime_error("未能读取到任何顶点数据");
+        }
+
+        auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
+        layers_.add(layer);
+        appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
+            .arg(info.fileName()).arg(vertices.size()).arg(faces.size()));
+    } catch (const std::exception& e) {
+        appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
+    }
+    refreshLayerTree();
+    updateActionStates();
 }
 
-// TODO: 加载 DEM
+// 加载 DEM：使用 GDAL 读取 DEM GeoTIFF/ASCII Grid 格式
 void MainWindow::openDem() {
-    appendLog(QStringLiteral("TODO: 使用 GDAL 读取 DEM GeoTIFF/ASCII Grid，并加入“源数据/DEM”。"));
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("加载 DEM"),
+        QString(),
+        QStringLiteral("Digital Elevation Model (*.tif *.tiff *.asc *.dem);;All Files (*.*)"));
+    if (path.isEmpty()) return;
+
+    const QFileInfo info(path);
+#ifndef RS_WITH_GDAL
+    appendLog(QStringLiteral("DEM 加载失败 [%1]：当前构建未启用 GDAL。").arg(info.fileName()));
+#else
+    try {
+        // 使用 GDAL 读取 DEM 文件
+        GDALAllRegister();
+        GDALDataset* dataset = static_cast<GDALDataset*>(
+            GDALOpenEx(path.toUtf8().constData(), GA_ReadOnly, nullptr, nullptr, nullptr));
+        if (!dataset) {
+            throw std::runtime_error("无法打开 DEM 文件");
+        }
+
+        const int width = dataset->GetRasterXSize();
+        const int height = dataset->GetRasterYSize();
+        const int bandCount = dataset->GetRasterCount();
+
+        if (width <= 0 || height <= 0 || bandCount < 1) {
+            GDALClose(dataset);
+            throw std::runtime_error("DEM 尺寸或波段数无效");
+        }
+
+        // 读取地理变换
+        std::array<double, 6> geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
+        if (dataset->GetGeoTransform(geoTransform.data()) != CE_None) {
+            geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
+        }
+
+        // 读取高程数据（取第一个波段）
+        const int pixelCount = width * height;
+        QVector<float> elevations(pixelCount);
+        GDALRasterBand* gdalBand = dataset->GetRasterBand(1);
+        CPLErr err = gdalBand->RasterIO(GF_Read, 0, 0, width, height,
+                                         elevations.data(), width, height,
+                                         GDT_Float32, 0, 0, nullptr);
+        GDALClose(dataset);
+
+        if (err != CE_None) {
+            throw std::runtime_error("读取 DEM 像素数据失败");
+        }
+
+        // 创建 DEM 图层
+        auto dem = std::make_shared<DemLayer>(info.fileName(), path, width, height, elevations);
+        dem->setGeoTransform(geoTransform);
+        dem->setSourceRasterPath(path);
+        layers_.add(dem);
+        appendLog(QStringLiteral("已加载 DEM：%1（%2x%3）").arg(info.fileName()).arg(width).arg(height));
+    } catch (const std::exception& e) {
+        appendLog(QStringLiteral("DEM 加载失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
+    }
+#endif
+    refreshLayerTree();
+    updateActionStates();
 }
 
 // 删除图层树中选中的图层
@@ -260,7 +622,36 @@ void MainWindow::configureRasterRendering() {
     if (!request.has_value()) {
         return;
     }
-    appendLog(QStringLiteral("TODO: 根据波段组合/设色参数渲染影像：%1。").arg(raster->name()));
+
+    QImage image;
+    QString description;
+    switch (request->mode) {
+    case RasterRenderMode::AutoRgb:
+        image = io::renderRgbComposite(*raster, 0, 1, 2);
+        description = QStringLiteral("Auto RGB (Band 1/2/3)");
+        break;
+    case RasterRenderMode::RgbBands:
+        image = io::renderRgbComposite(*raster, request->redBand, request->greenBand, request->blueBand);
+        description = QStringLiteral("RGB (Band %1/%2/%3)")
+                          .arg(request->redBand + 1)
+                          .arg(request->greenBand + 1)
+                          .arg(request->blueBand + 1);
+        break;
+    case RasterRenderMode::SingleBandGray:
+    case RasterRenderMode::PseudoColor:
+        image = io::renderSingleBandGray(*raster, request->grayBand);
+        description = QStringLiteral("Gray (Band %1)").arg(request->grayBand + 1);
+        break;
+    }
+
+    if (image.isNull()) {
+        appendLog(QStringLiteral("渲染失败：%1，请确认加载时已读取像素样本且波段索引有效。").arg(raster->name()));
+        return;
+    }
+    raster->setCurrentDisplayImage(image);
+    raster->setRenderDescription(description);
+    displayRaster(raster, -1);
+    appendLog(QStringLiteral("已渲染影像：%1，%2。").arg(raster->name(), description));
 }
 
 // 执行灰度直方图算法（TODO）
@@ -335,8 +726,29 @@ void MainWindow::showLayerContextMenu(const QPoint& position) {
         try {
             if (layers_.at(layerIndex.toInt())->type() == DataType::Dem) {
                 QAction* exportDem = menu.addAction(QStringLiteral("导出 DEM..."));
-                connect(exportDem, &QAction::triggered, this, [this]() {
-                    appendLog(QStringLiteral("TODO: 调用 rs::io::exportDemAsGeoTiff 导出 DEM。"));
+                const int demLayerIndex = layerIndex.toInt();
+                connect(exportDem, &QAction::triggered, this, [this, demLayerIndex]() {
+                    try {
+                        const auto dem = std::dynamic_pointer_cast<DemLayer>(layers_.at(demLayerIndex));
+                        if (!dem) {
+                            throw std::runtime_error("当前图层不是 DEM");
+                        }
+                        const QString path = QFileDialog::getSaveFileName(
+                            this,
+                            QStringLiteral("导出 DEM GeoTIFF"),
+                            dem->name() + QStringLiteral(".tif"),
+                            QStringLiteral("GeoTIFF (*.tif *.tiff);;All Files (*.*)"));
+                        if (path.isEmpty()) {
+                            return;
+                        }
+                        rs::io::RasterWriteOptions options;
+                        options.driverName = QStringLiteral("GTiff");
+                        options.creationOptions = QStringLiteral("COMPRESS=LZW");
+                        rs::io::exportDemAsGeoTiff(*dem, path, options);
+                        appendLog(QStringLiteral("已导出 DEM：%1").arg(path));
+                    } catch (const std::exception& e) {
+                        appendLog(QStringLiteral("DEM 导出失败：%1").arg(QString::fromUtf8(e.what())));
+                    }
                 });
             }
         } catch (const std::exception&) {
@@ -446,7 +858,7 @@ void MainWindow::displayRaster(const std::shared_ptr<RasterLayer>& raster, int b
     }
 
     if (image.isNull()) {
-        imageScene_->addText(QStringLiteral("TODO: 实现 GDAL 读取与波段渲染后在这里显示影像。\n当前图层：%1").arg(raster->name()));
+        imageScene_->addText(QStringLiteral("当前影像没有可显示的渲染结果。\n当前图层：%1").arg(raster->name()));
         return;
     }
 
