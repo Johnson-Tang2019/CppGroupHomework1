@@ -801,8 +801,18 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem* item, int column) {
         return;
     }
     try {
-        layers_.at(value.toInt())->setVisible(item->checkState(0) == Qt::Checked);
-        appendLog(QStringLiteral("%1：%2").arg(item->text(0), item->checkState(0) == Qt::Checked ? QStringLiteral("显示") : QStringLiteral("隐藏")));
+        const bool visible = item->checkState(0) == Qt::Checked;
+        layers_.at(value.toInt())->setVisible(visible);
+        const auto layer = layers_.at(value.toInt());
+        if (layer->type() == DataType::PointCloud) {
+            if (visible) {
+                const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer);
+                if (pc) scene3DWidget_->setPoints(pc->points());
+            } else {
+                scene3DWidget_->setPoints({});
+            }
+        }
+        appendLog(QStringLiteral("%1：%2").arg(item->text(0), visible ? QStringLiteral("显示") : QStringLiteral("隐藏")));
     } catch (const std::exception&) {
     }
 }
