@@ -12,6 +12,8 @@
 #include <QTextEdit>       // Qt 文本编辑框，用于日志输出面板
 #include <QTreeWidget>     // Qt 树形控件，显示图层的文件夹层级结构
 
+class Scene3DWidget;  // 前向声明 3D 点云预览控件
+
 #include <memory>   // std::shared_ptr，管理图层对象的共享所有权
 #include <vector>   // std::vector，存储选中的图层索引列表
 
@@ -78,7 +80,7 @@ private:
     QTreeWidget* layerTree_ {};          // 图层树控件（左侧面板）
     QGraphicsView* imageView_ {};        // 影像显示控件（二维影像标签页中的图形视图）
     QGraphicsScene* imageScene_ {};      // 图形场景（管理所有图形项）
-    QWidget* scene3DPlaceholder_ {};     // 三维场景占位控件（TODO: 替换为 Qt3D/OpenGL/VTK）
+    Scene3DWidget* scene3DWidget_ {};    // 三维点云预览控件（基于 QOpenGLWidget）
     QTabWidget* tabs_ {};                // 标签页控件（切换"二维影像"和"三维场景"）
     QTextEdit* logEdit_ {};              // 日志输出面板（底部）
 

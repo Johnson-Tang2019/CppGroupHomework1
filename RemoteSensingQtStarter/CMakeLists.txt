@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
 set(QT_PACKAGE Qt6)
 
 find_package(OpenCV QUIET COMPONENTS core imgproc features2d calib3d)
@@ -20,18 +20,20 @@ add_executable(RemoteSensingQtStarter WIN32
     src/Algorithms.cpp
     src/RasterIO.cpp
     src/RasterRenderDialog.cpp
+    src/Scene3DWidget.cpp
     include/rs/DataObject.h
     include/rs/Geometry.h
     include/rs/LayerManager.h
     include/rs/ProcessingAlgorithm.h
     include/rs/Algorithms.h
     include/rs/RasterIO.h
-    include/rs/RasterRenderDialog.h
+        include/rs/RasterRenderDialog.h
     include/rs/MainWindow.h
+    include/rs/Scene3DWidget.h
 )
 
 target_include_directories(RemoteSensingQtStarter PRIVATE include)
-target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets)
+target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets)
 
 if(OpenCV_FOUND)
     target_compile_definitions(RemoteSensingQtStarter PRIVATE RS_WITH_OPENCV=1)

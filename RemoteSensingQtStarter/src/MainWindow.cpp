@@ -282,13 +282,11 @@ void MainWindow::createUi() {
     imageView_->setDragMode(QGraphicsView::ScrollHandDrag);  // 设置拖拽模式：手型抓手平移
     imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);  // 缩放时以鼠标位置为中心
 
-    // 三维场景占位页（TODO: 后续实现 QOpenGLWidget / Qt3D / VTK）
-    scene3DPlaceholder_ = new QWidget(tabs_);  // 创建占位容器
-    auto* layout = new QVBoxLayout(scene3DPlaceholder_);  // 垂直布局
-    layout->addWidget(new QLabel(QStringLiteral("TODO: 在这里实现 QOpenGLWidget / Qt3D / VTK 三维窗口。\n建议支持：左键旋转、右键平移、滚轮缩放、双击设置旋转中心。")));  // 提示文字
+    // 三维场景页：QOpenGLWidget 点云预览
+    scene3DWidget_ = new Scene3DWidget(tabs_);
 
     tabs_->addTab(imageView_, QStringLiteral("二维影像"));  // 添加"二维影像"标签页
-    tabs_->addTab(scene3DPlaceholder_, QStringLiteral("三维场景"));  // 添加"三维场景"标签页
+    tabs_->addTab(scene3DWidget_, QStringLiteral("三维场景"));  // 添加"三维场景"标签页
 
     // 日志输出面板
     logEdit_ = new QTextEdit(right);             // 创建文本编辑框用于日志输出
@@ -412,6 +410,10 @@ void MainWindow::openPointCloud() {
         auto layer = std::make_shared<PointCloudLayer>(info.fileName(), path, points);
         layers_.add(layer);
         appendLog(QStringLiteral("已加载点云：%1（%2 个点）").arg(info.fileName()).arg(points.size()));
+
+        // 在三维窗口中显示点云（由本组同学添加）
+        scene3DWidget_->setPoints(points);
+        tabs_->setCurrentWidget(scene3DWidget_);
     } catch (const std::exception& e) {
         appendLog(QStringLiteral("点云加载失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
     }
