@@ -1,16 +1,12 @@
-#pragma once  // 防止头文件被重复包含
+#pragma once
 
-#include "rs/ProcessingAlgorithm.h"  // 算法基类 ProcessingAlgorithm 和结果类型定义
+#include "rs/ProcessingAlgorithm.h"
 
-#include <memory>  // std::shared_ptr，用于返回智能指针管理的图层对象
+#include <memory>
 
-namespace rs {  // 遥感（Remote Sensing）命名空间
+namespace rs {
 
-// ============================================================================
-// HistogramAlgorithm：灰度直方图统计算法
-// 统计选中影像指定波段的像素灰度值分布，生成直方图结果
-// ============================================================================
-class HistogramAlgorithm final : public ProcessingAlgorithm {  // final 禁止进一步继承
+class HistogramAlgorithm final : public ProcessingAlgorithm {
 public:
     QString name() const override;              // 返回算法名称："灰度直方图"
     QString category() const override;           // 返回算法分类："影像统计"
