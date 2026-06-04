@@ -9,7 +9,6 @@
 
 #include "rs/Algorithms.h"
 
-#include <stdexcept>
 
 namespace rs {
 

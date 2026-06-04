@@ -3,6 +3,7 @@
 #include "rs/ProcessingAlgorithm.h"
 
 #include <memory>
+#include <stdexcept>
 
 namespace rs {
 
