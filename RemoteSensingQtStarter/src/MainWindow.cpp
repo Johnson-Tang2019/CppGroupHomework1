@@ -5,6 +5,36 @@
 #include "rs/RasterRenderDialog.h"
 #include "rs/Scene3DWidget.h"
 
+ifdef RS_WITH_GDAL
+#include <gdal_priv.h>
+#endif
+
+#include <QAbstractItemView>
+#include <QByteArray>
+#include <QDataStream>
+#include <QDateTime>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QGraphicsTextItem>
+#include <QLabel>
+#include <QMenu>
+#include <QMessageBox>
+#include <QMenuBar>
+#include <QPixmap>
+#include <QSet>
+#include <QSplitter>
+#include <QStringList>
+#include <QTextStream>
+#include <QVBoxLayout>
+
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+
+
 namespace rs {
 namespace {
 
@@ -716,8 +746,23 @@ void MainWindow::deleteSelectedLayers() {
     if (indices.empty()) {
         return;
     }
+
+    // 检查是否有被删除的点云，如有则清空三维场景
+    bool hasPointCloud = false;
+    for (const int idx : indices) {
+        try {
+            if (layers_.at(idx)->type() == DataType::PointCloud) {
+                hasPointCloud = true;
+                break;
+            }
+        } catch (...) {}
+    }
+
     layers_.removeMany(indices);
     imageScene_->clear();
+    if (hasPointCloud) {
+        scene3DWidget_->setPoints({});
+    }
     refreshLayerTree();
     appendLog(QStringLiteral("已删除 %1 个选中图层。").arg(indices.size()));
     updateActionStates();
@@ -854,46 +899,99 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     if (!item) {
         return;
     }
+    const QVariant layerIndexVar = item->data(0, kLayerIndexRole);
+    const int nodeKind = item->data(0, kNodeKindRole).toInt();
     QMenu menu(this);
-    const auto indices = selectedLayerIndices();
-    QAction *deleteAction = menu.addAction(QStringLiteral("删除选中图层"));
-    deleteAction->setEnabled(!indices.empty());
-    connect(deleteAction, &QAction::triggered, this, &MainWindow::deleteSelectedLayers);
 
-    const QVariant layerIndex = item->data(0, kLayerIndexRole);
-    if (layerIndex.isValid()) {
-        try {
-            if (layers_.at(layerIndex.toInt())->type() == DataType::Dem) {
-                QAction *exportDem = menu.addAction(QStringLiteral("导出 DEM..."));
-                const int demLayerIndex = layerIndex.toInt();
-                connect(exportDem, &QAction::triggered, this, [this, demLayerIndex]() {
-                    try {
-                        const auto dem =
-                            std::dynamic_pointer_cast<DemLayer>(layers_.at(demLayerIndex));
-                        if (!dem) {
-                            throw std::runtime_error("当前图层不是 DEM");
-                        }
-                        const QString path = QFileDialog::getSaveFileName(
-                            this, QStringLiteral("导出 DEM GeoTIFF"),
-                            dem->name() + QStringLiteral(".tif"),
-                            QStringLiteral("GeoTIFF (*.tif *.tiff);;All Files (*.*)"));
-                        if (path.isEmpty()) {
-                            return;
-                        }
-                        rs::io::RasterWriteOptions options;
-                        options.driverName = QStringLiteral("GTiff");
-                        options.creationOptions = QStringLiteral("COMPRESS=LZW");
-                        rs::io::exportDemAsGeoTiff(*dem, path, options);
-                        appendLog(QStringLiteral("已导出 DEM：%1").arg(path));
-                    } catch (const std::exception &e) {
-                        appendLog(
-                            QStringLiteral("DEM 导出失败：%1").arg(QString::fromUtf8(e.what())));
-                    }
-                });
-            }
-        } catch (const std::exception &) {
-        }
+    if (!layerIndexVar.isValid() || nodeKind != static_cast<int>(NodeKind::Layer)) {
+        // 文件夹或波段节点：只允许删除选中图层
+        const auto indices = selectedLayerIndices();
+        QAction* deleteAction = menu.addAction(QStringLiteral("删除选中图层"));
+        deleteAction->setEnabled(!indices.empty());
+        connect(deleteAction, &QAction::triggered, this, &MainWindow::deleteSelectedLayers);
+        menu.exec(layerTree_->viewport()->mapToGlobal(position));
+        return;
+
     }
+
+    // 右键点击某个图层，自动选中它
+    layerTree_->setCurrentItem(item);
+
+    const int layerIndex = layerIndexVar.toInt();
+    std::shared_ptr<DataObject> layer;
+    try {
+        layer = layers_.at(layerIndex);
+    } catch (const std::exception&) {
+        return;
+    }
+
+    // ── 删除图层 ──
+    QAction* deleteAction = menu.addAction(QStringLiteral("删除图层"));
+    connect(deleteAction, &QAction::triggered, this, [this, layerIndex]() {
+        try {
+            if (layers_.at(layerIndex)->type() == DataType::PointCloud) {
+                scene3DWidget_->setPoints({});
+            }
+        } catch (...) {}
+        layers_.removeMany({layerIndex});
+        imageScene_->clear();
+        refreshLayerTree();
+        appendLog(QStringLiteral("已删除图层。"));
+        updateActionStates();
+    });
+
+    // ── 缩放至范围 ──
+    QAction* zoomAction = menu.addAction(QStringLiteral("缩放至范围"));
+    connect(zoomAction, &QAction::triggered, this, [this, layer]() {
+        if (layer->type() == DataType::Raster) {
+            appendLog(QStringLiteral("TODO: 缩放至 %1 的影像范围。").arg(layer->name()));
+        } else if (layer->type() == DataType::PointCloud) {
+            appendLog(QStringLiteral("TODO: 缩放至 %1 的点云范围。").arg(layer->name()));
+        } else if (layer->type() == DataType::Mesh) {
+            appendLog(QStringLiteral("TODO: 缩放至 %1 的网格范围。").arg(layer->name()));
+        } else {
+            appendLog(QStringLiteral("TODO: 缩放至 %1 的范围。").arg(layer->name()));
+        }
+    });
+
+    // ── 属性对话框 ──
+    QAction* propAction = menu.addAction(QStringLiteral("属性"));
+    connect(propAction, &QAction::triggered, this, [this, layer]() {
+        QString typeName;
+        switch (layer->type()) {
+        case DataType::Raster:      typeName = QStringLiteral("遥感影像"); break;
+        case DataType::PointCloud:  typeName = QStringLiteral("点云"); break;
+        case DataType::Mesh:        typeName = QStringLiteral("网格模型"); break;
+        case DataType::Dem:         typeName = QStringLiteral("数字高程模型"); break;
+        case DataType::Result:      typeName = QStringLiteral("处理结果"); break;
+        }
+
+        QString info;
+        info += QStringLiteral("名称: %1\n").arg(layer->name());
+        info += QStringLiteral("路径: %1\n").arg(layer->path());
+        info += QStringLiteral("类型: %1\n").arg(typeName);
+        info += QStringLiteral("可见: %1\n").arg(layer->visible() ? QStringLiteral("是") : QStringLiteral("否"));
+
+        if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
+            info += QStringLiteral("波段数: %1\n").arg(raster->bandCount());
+            if (raster->bandCount() > 0) {
+                const auto& b = raster->band(0);
+                info += QStringLiteral("尺寸: %1 x %2像素\n").arg(b.width).arg(b.height);
+            }
+            info += QStringLiteral("投影: %1\n").arg(raster->projection().isEmpty() ? QStringLiteral("(未知)") : raster->projection());
+        } else if (const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
+            info += QStringLiteral("点数: %1\n").arg(pc->points().size());
+        } else if (const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
+            info += QStringLiteral("顶点数: %1\n").arg(mesh->vertices().size());
+            info += QStringLiteral("三角面: %1\n").arg(mesh->faces().size());
+        } else if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
+            info += QStringLiteral("尺寸: %1 x %2\n").arg(dem->width()).arg(dem->height());
+        }
+
+        info += QStringLiteral("\n摘要: %1").arg(layer->summary());
+        QMessageBox::information(nullptr, QStringLiteral("图层属性 - %1").arg(layer->name()), info);
+    });
+
     menu.exec(layerTree_->viewport()->mapToGlobal(position));
 }
 
