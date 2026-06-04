@@ -6,21 +6,6 @@
 
 #include "rs/RasterIO.h"
 
-#include <algorithm>
-#include <cmath>
-#include <cstring>
-#include <limits>
-#include <stdexcept>
-#include <vector>
-
-#include <QByteArray>
-#include <QFileInfo>
-
-#ifdef RS_WITH_GDAL
-#include <cpl_string.h>
-#include <gdal_priv.h>
-#endif
-
 namespace rs::io {
 
 static void ensureGdalRegistered() {

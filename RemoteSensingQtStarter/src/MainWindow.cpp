@@ -5,9 +5,6 @@
 #include "rs/RasterRenderDialog.h"
 #include "rs/Scene3DWidget.h"
 
-
-
-
 namespace rs {
 namespace {
 
