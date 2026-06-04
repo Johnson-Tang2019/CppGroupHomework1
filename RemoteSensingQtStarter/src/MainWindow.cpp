@@ -350,13 +350,13 @@ void MainWindow::openPointCloud() {
     const QFileInfo info(path);
     const QString ext = info.suffix().toLower();
 
-    try {
-        QVector<QVector3D> points;
+    QVector<QVector3D> points;
 
+    try {
         if (ext == QStringLiteral("xyz")) {
-            // XYZ 文本格式：每行一个点 "x y z"
+            // XYZ 文本格式
             QFile file(path);
-            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            if (!file.open(QIODevice::ReadOnly)) {
                 throw std::runtime_error("无法打开文件");
             }
             QTextStream in(&file);
@@ -370,38 +370,135 @@ void MainWindow::openPointCloud() {
             }
             file.close();
         } else if (ext == QStringLiteral("ply")) {
-            // 简易 PLY 读取：只读顶点（支持 ASCII 格式）
+            // PLY 格式（支持 ASCII 和二进制小端）
             QFile file(path);
-            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            if (!file.open(QIODevice::ReadOnly)) {
                 throw std::runtime_error("无法打开 PLY 文件");
             }
-            QTextStream in(&file);
+            QByteArray allData = file.readAll();
+            file.close();
+
+            // ── 解析文本头 ──
+            int headerEndPos = allData.indexOf("end_header");
+            if (headerEndPos < 0) {
+                throw std::runtime_error("PLY 缺少 end_header");
+            }
+            int nlPos = allData.indexOf('\n', headerEndPos);
+            int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
+
+            QByteArray headerData = allData.left(headerBytes);
+            QTextStream headerStream(headerData);
+            bool isAscii = false;
             int vertexCount = 0;
-            bool headerEnd = false;
-            int readVertices = 0;
-            while (!in.atEnd()) {
-                const QString line = in.readLine().trimmed();
-                if (!headerEnd) {
-                    if (line.startsWith(QStringLiteral("element vertex"))) {
-                        vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                    } else if (line == QStringLiteral("end_header")) {
-                        headerEnd = true;
-                        points.reserve(vertexCount);
-                    }
+            int propCount = 0;
+            bool inVertex = false;
+
+            while (!headerStream.atEnd()) {
+                QString line = headerStream.readLine().trimmed();
+                if (line.startsWith(QLatin1String("element vertex"))) {
+                    vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                    inVertex = true;
                     continue;
                 }
-                if (readVertices >= vertexCount) break;
-                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                if (parts.size() >= 3) {
-                    points.append(QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+                if (inVertex && line.startsWith(QLatin1String("element "))) {
+                    inVertex = false;
                 }
-                ++readVertices;
+                if (inVertex && line.startsWith(QLatin1String("property "))) {
+                    propCount++;
+                }
+                if (line.contains(QLatin1String("format ascii"))) {
+                    isAscii = true;
+                }
             }
-            file.close();
+
+            if (vertexCount <= 0) {
+                throw std::runtime_error("PLY 顶点数量无效");
+            }
+
+            if (isAscii) {
+                // ASCII PLY
+                QTextStream in(allData);
+                while (!in.atEnd()) {
+                    QString line = in.readLine();
+                    if (line.trimmed() == QLatin1String("end_header")) break;
+                }
+                while (!in.atEnd()) {
+                    const QString line = in.readLine().trimmed();
+                    if (line.isEmpty()) continue;
+                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                    if (parts.size() < 3) continue;
+                    bool xOk, yOk, zOk;
+                    float x = parts[0].toFloat(&xOk);
+                    float y = parts[1].toFloat(&yOk);
+                    float z = parts[2].toFloat(&zOk);
+                    if (xOk && yOk && zOk) {
+                        points.append(QVector3D(x, y, z));
+                    }
+                }
+            } else {
+                // 二进制 PLY（小端 float）
+                if (propCount < 3) {
+                    throw std::runtime_error("PLY 顶点属性数不足");
+                }
+                int vertexSize = propCount * sizeof(float);
+                const char* data = allData.constData() + headerBytes;
+                int remaining = allData.size() - headerBytes;
+                int maxVerts = remaining / vertexSize;
+                int n = std::min(vertexCount, maxVerts);
+                points.reserve(n);
+                for (int i = 0; i < n; ++i) {
+                    const float* f = reinterpret_cast<const float*>(data + i * vertexSize);
+                    points.append(QVector3D(f[0], f[1], f[2]));
+                }
+            }
         } else if (ext == QStringLiteral("las")) {
-            points = readLasPoints(path);
+            // LAS 格式（使用已定义的 readLasPoints 辅助函数）
+            // 需要对应的辅助函数在文件上方定义（其他同学已添加）
+            QFile lasFile(path);
+            if (!lasFile.open(QIODevice::ReadOnly)) {
+                throw std::runtime_error("无法打开 LAS 文件");
+            }
+            // LAS 格式使用完整的二进制读取方法
+            QByteArray lasData = lasFile.readAll();
+            lasFile.close();
+            // 简单 LAS 读取：仅读取 xyz 点
+            if (lasData.size() < 227) {
+                throw std::runtime_error("LAS 文件头不完整");
+            }
+            const unsigned char* hdr = reinterpret_cast<const unsigned char*>(lasData.constData());
+            if (hdr[0] != 'L' || hdr[1] != 'A' || hdr[2] != 'S' || hdr[3] != 'F') {
+                throw std::runtime_error("无效的 LAS 签名");
+            }
+            quint32 offset = *reinterpret_cast<const quint32*>(hdr + 96);
+            quint16 recLen = *reinterpret_cast<const quint16*>(hdr + 105);
+            quint32 ptCount = *reinterpret_cast<const quint32*>(hdr + 107);
+            double xScale = *reinterpret_cast<const double*>(hdr + 131);
+            double yScale = *reinterpret_cast<const double*>(hdr + 139);
+            double zScale = *reinterpret_cast<const double*>(hdr + 147);
+            double xOff = *reinterpret_cast<const double*>(hdr + 155);
+            double yOff = *reinterpret_cast<const double*>(hdr + 163);
+            double zOff = *reinterpret_cast<const double*>(hdr + 171);
+            if (recLen < 12) throw std::runtime_error("LAS 记录长度无效");
+            quint64 totalPoints = ptCount;
+            if (totalPoints == 0 && lasData.size() >= 255) {
+                totalPoints = *reinterpret_cast<const quint64*>(hdr + 247);
+            }
+            quint64 maxRead = (lasData.size() - offset) / recLen;
+            quint64 n = std::min(totalPoints, maxRead);
+            if (n > 10000000) n = 10000000; // 最多读取 1000 万点
+            points.reserve(static_cast<int>(n));
+            for (quint64 i = 0; i < n; ++i) {
+                const char* rec = lasData.constData() + offset + i * recLen;
+                qint32 ix = *reinterpret_cast<const qint32*>(rec);
+                qint32 iy = *reinterpret_cast<const qint32*>(rec + 4);
+                qint32 iz = *reinterpret_cast<const qint32*>(rec + 8);
+                points.append(QVector3D(
+                    static_cast<float>(ix * xScale + xOff),
+                    static_cast<float>(iy * yScale + yOff),
+                    static_cast<float>(iz * zScale + zOff)));
+            }
         } else {
-            throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 PLY/XYZ/LAS");
+            throw std::runtime_error("不支持的格式");
         }
 
         if (points.isEmpty()) {
@@ -412,7 +509,7 @@ void MainWindow::openPointCloud() {
         layers_.add(layer);
         appendLog(QStringLiteral("已加载点云：%1（%2 个点）").arg(info.fileName()).arg(points.size()));
 
-        // 在三维窗口中显示点云（由本组同学添加）
+        // 在三维窗口中显示点云
         scene3DWidget_->setPoints(points);
         tabs_->setCurrentWidget(scene3DWidget_);
     } catch (const std::exception& e) {
@@ -421,8 +518,6 @@ void MainWindow::openPointCloud() {
     refreshLayerTree();
     updateActionStates();
 }
-
-// 加载 Mesh：支持 OBJ、PLY 格式
 void MainWindow::openMesh() {
     const QString path = QFileDialog::getOpenFileName(
         this,

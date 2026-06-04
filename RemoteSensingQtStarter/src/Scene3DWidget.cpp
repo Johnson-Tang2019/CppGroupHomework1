@@ -55,14 +55,14 @@ void Scene3DWidget::paintGL()
 
     const float aspect = static_cast<float>(width()) / std::max(height(), 1);
     float projMatrix[16];
-    buildPerspectiveMatrix(45.0f, aspect, 0.1f, 1000.0f, projMatrix);
+    buildPerspectiveMatrix(45.0f, aspect, 0.01f, 1000.0f, projMatrix);
     glMultMatrixf(projMatrix);
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    // 相机位置：从原点往后拉 m_zoom 距离
-    glTranslatef(0.0f, 0.0f, -5.0f * m_zoom);
+        // 相机位置：先从原点往后拉，让归一化后的点云在可见范围内
+    glTranslatef(0.0f, 0.0f, -3.0f * m_zoom);
     glRotatef(m_rotX, 1.0f, 0.0f, 0.0f);
     glRotatef(m_rotY, 0.0f, 1.0f, 0.0f);
 
