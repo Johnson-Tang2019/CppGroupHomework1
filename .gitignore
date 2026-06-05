@@ -77,3 +77,4 @@ Desktop.ini
 __pycache__/
 node_modules/
 
+RemoteSensingQtStarter/CMakePresets.json
