@@ -1,3 +1,4 @@
+// ===== 主窗口界面与交互逻辑 (Group3 - UI & Main Interaction) =====
 #include "rs/MainWindow.h"
 
 #include "rs/Algorithms.h"
@@ -1106,6 +1107,17 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
                     scene3DWidget_->setPoints(pc->points());
             } else {
                 scene3DWidget_->setPoints({});
+            }
+        } else if (layer->type() == DataType::Raster) {
+            // 二维影像图层：刷新当前显示的影像
+            const auto selected = selectedRaster();
+            const auto toggled = std::dynamic_pointer_cast<RasterLayer>(layer);
+            if (selected == toggled) {
+                if (visible) {
+                    displayRaster(toggled, selectedBandIndex());
+                } else {
+                    displayRaster(nullptr, -1);
+                }
             }
         }
         appendLog(QStringLiteral("%1：%2").arg(item->text(0), visible ? QStringLiteral("显示")
