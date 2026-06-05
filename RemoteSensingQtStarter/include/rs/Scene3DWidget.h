@@ -15,6 +15,7 @@ class Scene3DWidget : public QOpenGLWidget {
   public:
     explicit Scene3DWidget(QWidget *parent = nullptr);
     void setPoints(const QVector<QVector3D> &points);
+    void fitToBounds();
 
   protected:
     void initializeGL() override;
@@ -27,6 +28,8 @@ class Scene3DWidget : public QOpenGLWidget {
     QVector<QVector3D> m_points;
     float m_rotX = 0, m_rotY = 0, m_zoom = 1.0f;
     QPoint m_lastPos;
+    QVector3D m_center;
+    float m_halfExtent = 1.0f;
 };
 
 #endif

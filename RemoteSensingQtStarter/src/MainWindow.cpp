@@ -300,6 +300,7 @@ void MainWindow::createUi() {
     // ---- 左侧：图层树 ----
     layerTree_ = new QTreeWidget(root);                                 // 创建图层树控件
     layerTree_->setHeaderLabel(QStringLiteral("工程图层"));             // 设置表头文字
+    layerTree_->setAlternatingRowColors(true);                        // 开启交替行颜色
     layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection); // 支持 Ctrl/Shift 多选
     layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);            // 启用自定义右键菜单
     connect(layerTree_, &QTreeWidget::itemSelectionChanged, this,
@@ -338,6 +339,128 @@ void MainWindow::createUi() {
     right->setStretchFactor(1, 1); // 第1个（日志面板）：拉伸因子 = 1
 
     setCentralWidget(root); // 将分割器设为窗口的中心控件（填满整个窗口）
+
+    // ── 全局样式美化 ──
+        setStyleSheet(QStringLiteral(R"(
+        QMainWindow {
+            background-color: #fdf6f0;
+        }
+        QMenuBar {
+            background-color: #ffffff;
+            color: #5a4a4a;
+            font-size: 13px;
+            padding: 2px 0;
+            border-bottom: 2px solid #f4b8c8;
+        }
+        QMenuBar::item {
+            padding: 6px 16px;
+            background: transparent;
+        }
+        QMenuBar::item:selected {
+            background-color: #fce4ec;
+            border-radius: 4px;
+            color: #8b5a6a;
+        }
+        QMenu {
+            background-color: #ffffff;
+            color: #5a4a4a;
+            border: 1px solid #f4d0d8;
+            padding: 4px;
+        }
+        QMenu::item {
+            padding: 6px 24px;
+            border-radius: 3px;
+        }
+        QMenu::item:selected {
+            background-color: #fce4ec;
+            color: #8b5a6a;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #f0d0d8;
+            margin: 4px 8px;
+        }
+        QTabWidget::pane {
+            border: 1px solid #e8d0d8;
+            border-top: 2px solid #f4b8c8;
+            background-color: #ffffff;
+        }
+        QTabBar::tab {
+            background-color: #fdf0f4;
+            color: #8b7a7a;
+            padding: 8px 20px;
+            border: 1px solid #e8d0d8;
+            border-bottom: none;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+            margin-right: 2px;
+            font-size: 12px;
+        }
+        QTabBar::tab:selected {
+            background-color: #ffffff;
+            color: #5a4a4a;
+            border-bottom: 2px solid #f4b8c8;
+            font-weight: bold;
+        }
+        QTabBar::tab:hover:!selected {
+            background-color: #fce4ec;
+            color: #5a4a4a;
+        }
+        QTreeWidget {
+            background-color: #fffafa;
+            border: 1px solid #e8d0d8;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #5a4a4a;
+            alternate-background-color: #fdf6f0;
+        }
+        QTreeWidget::item {
+            padding: 4px 0;
+            border-bottom: 1px solid #fdf0f4;
+        }
+        QTreeWidget::item:selected {
+            background-color: #f4b8c8;
+            color: #ffffff;
+        }
+        QTreeWidget::item:hover {
+            background-color: #fce4ec;
+        }
+        QTextEdit {
+            background-color: #fff5f5;
+            color: #5a4a4a;
+            font-family: "Consolas", "Courier New", monospace;
+            font-size: 12px;
+            border: 1px solid #e8d0d8;
+            border-radius: 4px;
+            padding: 4px;
+        }
+        QSplitter::handle {
+            background-color: #f0d0d8;
+            width: 3px;
+        }
+        QSplitter::handle:hover {
+            background-color: #f4b8c8;
+        }
+        QScrollBar:vertical {
+            background-color: #fdf6f0;
+            width: 10px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #f0d0d8;
+            min-height: 20px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background-color: #e8b8c8;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+        QSplitter {
+            padding: 4px;
+        }
+    )"));
 }
 
 // 打开文件对话框选择遥感影像，使用 GDAL 读取并加载到图层管理器
@@ -1178,10 +1301,9 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     connect(zoomAction, &QAction::triggered, this, [this, layer]() {
         if (layer->type() == DataType::Raster) {
             appendLog(QStringLiteral("TODO: 缩放至 %1 的影像范围。").arg(layer->name()));
-        } else if (layer->type() == DataType::PointCloud) {
-            appendLog(QStringLiteral("TODO: 缩放至 %1 的点云范围。").arg(layer->name()));
-        } else if (layer->type() == DataType::Mesh) {
-            appendLog(QStringLiteral("TODO: 缩放至 %1 的网格范围。").arg(layer->name()));
+        } else if (layer->type() == DataType::PointCloud || layer->type() == DataType::Mesh) {
+            scene3DWidget_->fitToBounds();
+            appendLog(QStringLiteral("缩放至 %1 的范围。").arg(layer->name()));
         } else {
             appendLog(QStringLiteral("TODO: 缩放至 %1 的范围。").arg(layer->name()));
         }
