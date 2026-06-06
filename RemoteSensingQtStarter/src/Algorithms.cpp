@@ -2,7 +2,7 @@
 #include "../include/rs/RasterRenderDialog.h" 
 #include "../include/rs/RasterIO.h" 
 #include <QImage>
-
+//2026.6.6
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
@@ -39,7 +39,7 @@ static void showAndWait(const std::string& winName, const cv::Mat& img) {
     cv::destroyWindow(winName);
 }
 
-
+// ═══════════════════════════════════════════════════════════════════════════
 // 1. 灰度直方图算法（基于真实波段像素数据）
 
 QString HistogramAlgorithm::name() const { return QStringLiteral("灰度直方图"); }

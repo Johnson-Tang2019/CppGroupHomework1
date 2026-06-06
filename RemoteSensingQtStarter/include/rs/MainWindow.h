@@ -1,5 +1,5 @@
 #pragma once  // 防止头文件被重复包含
-
+//2026.6.6
 #include "rs/DataObject.h"     // DataObject 基类型，LayerManager 管理该类型
 #include "rs/Geometry.h"       // RasterLayer 等子类型，用于类型转换和显示
 #include "rs/LayerManager.h"   // LayerManager 模板，管理图层的增删查改

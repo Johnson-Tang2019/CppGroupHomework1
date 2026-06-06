@@ -4,7 +4,7 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
-
+//2026.6.6
 static void buildPerspectiveMatrix(float fovY, float aspect, float zNear, float zFar, float m[16]) {
     const float f = 1.0f / std::tan(fovY * 3.14159265f / 360.0f);
     m[0] = f / aspect; m[1] = 0; m[2] = 0; m[3] = 0;

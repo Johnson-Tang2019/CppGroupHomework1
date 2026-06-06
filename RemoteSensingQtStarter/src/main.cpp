@@ -1,7 +1,7 @@
 #include "rs/MainWindow.h"
 #include <QApplication>
 #include <QDebug>
-
+//2026.6.6
 #ifdef RS_WITH_GDAL
 #include <gdal_priv.h>
 #endif
