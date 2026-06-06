@@ -1,8 +1,12 @@
 #include "../include/rs/Algorithms.h"
 #include "../include/rs/RasterRenderDialog.h" 
 #include "../include/rs/RasterIO.h" 
+#include <QDialog>
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QPixmap>
 #include <QImage>
-//2026.6.6
+#include <QCoreApplication>
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
@@ -31,13 +35,48 @@ static cv::Mat stretchTo8U(const cv::Mat& floatMat, float minVal, float maxVal) 
     return result;
 }
 
-// ── 辅助函数：构建 OpenCV 显示并等待按键 ──
-static void showAndWait(const std::string& winName, const cv::Mat& img) {
-    cv::imshow(winName, img);
-    cv::waitKey(0);
-    cv::destroyWindow(winName);
+// ── 辅助函数：将 cv::Mat 转换为 QImage ──
+static QImage matToQImage(const cv::Mat& mat) {
+    if (mat.type() == CV_8UC1) {
+        // 单通道灰度图
+        QImage img(mat.data, mat.cols, mat.rows, static_cast<int>(mat.step), QImage::Format_Grayscale8);
+        return img.copy(); // 必须 copy，防止 Mat 内存释放后图像损坏
+    } else if (mat.type() == CV_8UC3) {
+        // 三通道彩色图 (OpenCV 默认是 BGR，需转为 RGB)
+        cv::Mat rgb;
+        cv::cvtColor(mat, rgb, cv::COLOR_BGR2RGB);
+        QImage img(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGB888);
+        return img.copy();
+    }
+    return QImage();
 }
 
+// ── 辅助函数：使用 Qt 原生窗口替换 OpenCV 的 imshow ──
+static void showAndWait(const std::string& winName, const cv::Mat& img) {
+    QImage qImg = matToQImage(img);
+
+    if (qImg.isNull()) return;
+    QDialog dialog;
+    dialog.setWindowTitle(QString::fromStdString(winName));
+    // 增加窗口最大化按钮，方便查看大图
+    dialog.setWindowFlags(dialog.windowFlags() | Qt::WindowMaximizeButtonHint);
+    // 用 QLabel 来承载图像
+    QLabel* label = new QLabel(&dialog);
+    label->setPixmap(QPixmap::fromImage(qImg));
+    label->setAlignment(Qt::AlignCenter);
+
+    // 设置布局，去除边缘留白
+    QVBoxLayout* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(label);
+
+    dialog.setLayout(layout);
+    
+    // 使用 exec() 弹出模态对话框。
+    // 这会阻塞当前算法流程（等待用户看完图像），但绝不会阻塞主程序的重绘，
+    // 用户点击 "X" 或按 ESC 键关闭后，代码安全返回，不会发送任何退出程序的信号！
+    dialog.exec();
+}
 // 1. 灰度直方图算法（基于真实波段像素数据）
 
 QString HistogramAlgorithm::name() const { return QStringLiteral("灰度直方图"); }
@@ -103,7 +142,7 @@ ProcessingResult HistogramAlgorithm::execute(const RasterLayer& input, const Pro
                        + " | Valid pixels: " + std::to_string(validCount);
     cv::putText(histImage, info, cv::Point(10, 25),
                 cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
-    cv::putText(histImage, "Press ANY KEY to close", cv::Point(10, hist_h - 8),
+        cv::putText(histImage, "Close window to continue", cv::Point(10, hist_h - 8),
                 cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(200, 200, 200), 1);
 
     showAndWait("Histogram - " + bandInfo.name.toStdString(), histImage);

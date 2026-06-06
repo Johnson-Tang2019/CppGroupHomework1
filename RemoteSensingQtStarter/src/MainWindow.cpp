@@ -988,28 +988,8 @@ void MainWindow::runHistogram() {
 
     HistogramAlgorithm algorithm;
     const auto result = algorithm.execute(*raster, ctx);
-
-    // 显示结果（模拟生成一个直方图 QImage）
-    QImage histImage(512, 300, QImage::Format_RGB32);
-    histImage.fill(Qt::white);
-    // 模拟直方图：随机柱子
-    QPainter painter(&histImage);
-    painter.setPen(Qt::NoPen);
-    const int barCount = std::min(bins, 256);
-    const float barW = 512.0f / barCount;
-    for (int i = 0; i < barCount; ++i) {
-        const int h = 50 + (i * 137 + i * i * 7) % 200;
-        painter.setBrush(QColor(70, 130, 180));
-        painter.drawRect(QRectF(i * barW, 300 - h, barW - 1, h));
-    }
-    painter.end();
-
-    // 显示直方图
-    imageScene_->clear();
-    imageScene_->addPixmap(QPixmap::fromImage(histImage));
-    imageScene_->setSceneRect(histImage.rect());
-    imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
-    tabs_->setCurrentIndex(0); // 切换到二维影像页
+    if (!result.message.isEmpty())
+        appendLog(result.message);
 
     appendLog(QStringLiteral("直方图统计完成（模拟）：%1，波段%2，%3分箱。")
                   .arg(raster->name())
@@ -1019,9 +999,17 @@ void MainWindow::runHistogram() {
 
 // 执行直方图均衡化算法（TODO）
 void MainWindow::runHistogramEqualization() {
+    const auto raster = selectedRaster();
+    if (!raster) {
+        appendLog(QStringLiteral("请先选择一个遥感影像图层。"));
+        return;
+    }
+
     HistogramEqualizationAlgorithm algorithm;
-    appendLog(QStringLiteral("TODO: 打开参数对话框并执行：%1，结果应加入“处理结果/直方图均衡化”。")
-                  .arg(algorithm.name()));
+    ProcessingContext ctx;
+    const auto result = algorithm.execute(*raster, ctx);
+    if (!result.message.isEmpty())
+        appendLog(result.message);
 }
 
 // 执行 ORB/SIFT 特征提取（TODO）
