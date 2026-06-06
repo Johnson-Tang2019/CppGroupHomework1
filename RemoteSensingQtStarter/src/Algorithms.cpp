@@ -39,7 +39,6 @@ static void showAndWait(const std::string& winName, const cv::Mat& img) {
     cv::destroyWindow(winName);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // 1. 灰度直方图算法（基于真实波段像素数据）
 
 QString HistogramAlgorithm::name() const { return QStringLiteral("灰度直方图"); }

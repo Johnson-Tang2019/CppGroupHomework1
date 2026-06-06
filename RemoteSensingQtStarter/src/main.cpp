@@ -6,10 +6,9 @@
 #include <gdal_priv.h>
 #endif
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
-    // 【UI 升级】启用现代极客风暗色主题 (Dark Theme)
     app.setStyle("Fusion");
     QString darkTheme = R"(
         QMainWindow { background-color: #1e1e1e; color: #d4d4d4; }
