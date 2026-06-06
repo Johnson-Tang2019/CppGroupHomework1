@@ -22,7 +22,6 @@ class Scene3DWidget : public QOpenGLWidget {
     void setMesh(const QVector<QVector3D>& vertices, const QVector<rs::Face>& faces);
     void setPoints(const QVector<QVector3D> &points);
     void fitToBounds();
-    void fitToBounds();
 
   protected:
     void initializeGL() override;

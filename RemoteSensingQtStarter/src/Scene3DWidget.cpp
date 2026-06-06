@@ -156,6 +156,29 @@ void Scene3DWidget::mouseMoveEvent(QMouseEvent *event) {
     m_lastPos = event->pos();
 }
 
+void Scene3DWidget::fitToBounds() {
+    // TODO: 根据当前点云数据自动调整相机位置和缩放
+    if (m_points.isEmpty()) return;
+
+    float cx = 0, cy = 0, cz = 0;
+    for (const auto &p : m_points) {
+        cx += p.x(); cy += p.y(); cz += p.z();
+    }
+    const float invN = 1.0f / m_points.size();
+    m_center = QVector3D(cx * invN, cy * invN, cz * invN);
+
+    float maxDist = 0;
+    for (const auto &p : m_points) {
+        const float dx = p.x() - m_center.x();
+        const float dy = p.y() - m_center.y();
+        const float dz = p.z() - m_center.z();
+        maxDist = std::max(maxDist, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    m_halfExtent = maxDist > 0 ? maxDist : 1.0f;
+    m_zoom = 1.0f;
+    update();
+}
+
 void Scene3DWidget::wheelEvent(QWheelEvent *event) {
     const float delta = event->angleDelta().y() / 120.0f;
     m_zoom *= (1.0f - delta * 0.08f);
