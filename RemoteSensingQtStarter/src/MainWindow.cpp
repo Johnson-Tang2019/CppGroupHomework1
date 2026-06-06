@@ -26,6 +26,7 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QVBoxLayout>
+#include <QStatusBar> // 【新增】引入底部状态栏支持
 
 #include <algorithm>
 #include <cstdint>
@@ -152,177 +153,189 @@ QVector<QVector3D> readLasPoints(const QString& path) {
     return points;
 }
 
-// 生成节点的唯一键（从根到当前节点的路径字符串）
+// 生成节点的唯一键
 QString itemKey(const QTreeWidgetItem* item) {
-    QStringList parts;               // 用于存储从根到当前节点的各层名称
-    const auto* current = item;      // 从当前节点开始向上遍历
-    while (current) {                // 一直遍历到根节点（parent 为 nullptr）
-        parts.prepend(current->text(0));  // 把当前节点的文本插入到列表最前面
-        current = current->parent();      // 向上移动到父节点
+    QStringList parts;
+    const auto* current = item;
+    while (current) {
+        parts.prepend(current->text(0));
+        current = current->parent();
     }
-    return parts.join(QLatin1Char('/'));  // 用 "/" 拼接成路径字符串，如 "源数据/遥感影像/xxx.tif"
+    return parts.join(QLatin1Char('/'));
 }
 
 // 递归收集所有展开节点的键
 void collectExpandedKeys(QTreeWidgetItem* item, QSet<QString>& keys) {
-    if (!item) {                     // 空节点，直接返回
-        return;
+    if (!item) return;
+    if (item->isExpanded()) {
+        keys.insert(itemKey(item));
     }
-    if (item->isExpanded()) {        // 如果当前节点是展开状态
-        keys.insert(itemKey(item));  // 则记录它的路径键
-    }
-    for (int i = 0; i < item->childCount(); ++i) {  // 遍历所有子节点
-        collectExpandedKeys(item->child(i), keys);  // 递归处理每个子节点
+    for (int i = 0; i < item->childCount(); ++i) {
+        collectExpandedKeys(item->child(i), keys);
     }
 }
 
 // 在指定父节点下查找或创建子文件夹
 QTreeWidgetItem* ensureChildFolder(QTreeWidgetItem* parent, const QString& name) {
-    // 先在现有子节点中查找是否已有同名文件夹
     for (int i = 0; i < parent->childCount(); ++i) {
-        if (parent->child(i)->text(0) == name) {  // 找到了同名的
-            return parent->child(i);               // 直接返回已有的节点
+        if (parent->child(i)->text(0) == name) {
+            return parent->child(i);
         }
     }
-    // 没找到，则创建新的文件夹节点
-    auto* folder = new QTreeWidgetItem(parent);                      // 创建新节点，parent 为父节点
-    folder->setText(0, name);                                         // 设置显示文本为文件夹名
-    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));  // 标记为 Folder 类型
-    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);  // 移除"可选中"标志，保留"启用"标志
+    auto* folder = new QTreeWidgetItem(parent);
+    folder->setText(0, name);
+    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
+    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
     return folder;
 }
 
 // 在顶层节点中查找或创建文件夹
 QTreeWidgetItem* ensureTopFolder(QTreeWidget* tree, const QString& name) {
-    // 先在所有顶层节点中查找是否已有同名文件夹
     for (int i = 0; i < tree->topLevelItemCount(); ++i) {
-        if (tree->topLevelItem(i)->text(0) == name) {  // 找到了同名的
-            return tree->topLevelItem(i);                // 直接返回已有的节点
+        if (tree->topLevelItem(i)->text(0) == name) {
+            return tree->topLevelItem(i);
         }
     }
-    // 没找到，则创建新的顶层文件夹节点
-    auto* folder = new QTreeWidgetItem(tree);                       // 创建新节点，tree 为根
-    folder->setText(0, name);                                        // 设置显示文本为文件夹名
-    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));  // 标记为 Folder 类型
-    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);  // 不可选中，仅启用
+    auto* folder = new QTreeWidgetItem(tree);
+    folder->setText(0, name);
+    folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
+    folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
     return folder;
 }
 
 } // namespace
 
-// 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
+// 构造函数
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("Remote Sensing Qt Starter"));  // 设置窗口标题
-    createMenus();    // 构建菜单栏
-    createUi();       // 构建界面控件
-    appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL 多波段、参数化算法、DEM/正射流程的工程骨架。"));  // 记录启动日志
-    updateActionStates();  // 初始化菜单项的启用状态（刚启动时所有菜单应该禁用）
+    setWindowTitle(QStringLiteral("Remote Sensing Qt Starter"));
+    createMenus();
+    createUi();
+    appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL 多波段、参数化算法、DEM/正射流程的工程骨架。"));
+    updateActionStates();
 }
 
-// 构建菜单栏：数据、影像处理、摄影测量/三维
+// 构建菜单栏
 void MainWindow::createMenus() {
-    // ---- "数据" 菜单 ----
-    auto* dataMenu = menuBar()->addMenu(QStringLiteral("数据"));  // 创建"数据"菜单
-    connect(dataMenu->addAction(QStringLiteral("加载遥感影像(GDAL，可多选)")), &QAction::triggered, this, &MainWindow::openRasterDatasets);  // 添加"加载遥感影像"并连接点击信号
-    connect(dataMenu->addAction(QStringLiteral("加载点云")), &QAction::triggered, this, &MainWindow::openPointCloud);  // 添加"加载点云"并连接
-    connect(dataMenu->addAction(QStringLiteral("加载 Mesh")), &QAction::triggered, this, &MainWindow::openMesh);  // 添加"加载 Mesh"并连接
-    connect(dataMenu->addAction(QStringLiteral("加载 DEM")), &QAction::triggered, this, &MainWindow::openDem);  // 添加"加载 DEM"并连接
-    dataMenu->addSeparator();  // 添加分隔线，将加载与删除操作分开
-    deleteLayerAction_ = dataMenu->addAction(QStringLiteral("删除选中图层"));  // 添加"删除选中图层"并保存指针以便控制启用/禁用
+    auto* dataMenu = menuBar()->addMenu(QStringLiteral("数据"));
+    connect(dataMenu->addAction(QStringLiteral("加载遥感影像(GDAL，可多选)")), &QAction::triggered, this, &MainWindow::openRasterDatasets);
+    connect(dataMenu->addAction(QStringLiteral("加载点云")), &QAction::triggered, this, &MainWindow::openPointCloud);
+    connect(dataMenu->addAction(QStringLiteral("加载 Mesh")), &QAction::triggered, this, &MainWindow::openMesh);
+    connect(dataMenu->addAction(QStringLiteral("加载 DEM")), &QAction::triggered, this, &MainWindow::openDem);
+    dataMenu->addSeparator();
+    deleteLayerAction_ = dataMenu->addAction(QStringLiteral("删除选中图层"));
     connect(deleteLayerAction_, &QAction::triggered, this, &MainWindow::deleteSelectedLayers);
-    clearProjectAction_ = dataMenu->addAction(QStringLiteral("初始化/清空工程"));  // 添加"清空工程"并保存指针
+    clearProjectAction_ = dataMenu->addAction(QStringLiteral("初始化/清空工程"));
     connect(clearProjectAction_, &QAction::triggered, this, &MainWindow::clearProject);
 
-    // ---- "影像处理" 菜单 ----
-    auto* rasterMenu = menuBar()->addMenu(QStringLiteral("影像处理"));  // 创建"影像处理"菜单
-    auto* bandMenu = rasterMenu->addMenu(QStringLiteral("波段与设色"));  // 创建子菜单"波段与设色"
-    renderAction_ = bandMenu->addAction(QStringLiteral("波段组合/设色..."));  // 添加"波段组合/设色"并保存指针
+    auto* rasterMenu = menuBar()->addMenu(QStringLiteral("影像处理"));
+    auto* bandMenu = rasterMenu->addMenu(QStringLiteral("波段与设色"));
+    renderAction_ = bandMenu->addAction(QStringLiteral("波段组合/设色..."));
+    renderAction_->setStatusTip(QStringLiteral("将单波段设色或RGB三波段合成显示")); // 【增强】状态栏提示
     connect(renderAction_, &QAction::triggered, this, &MainWindow::configureRasterRendering);
 
-    auto* statMenu = rasterMenu->addMenu(QStringLiteral("统计"));  // 创建子菜单"统计"
-    histogramAction_ = statMenu->addAction(QStringLiteral("灰度直方图..."));  // 添加"灰度直方图"并保存指针
+    auto* statMenu = rasterMenu->addMenu(QStringLiteral("统计"));
+    histogramAction_ = statMenu->addAction(QStringLiteral("灰度直方图..."));
+    histogramAction_->setStatusTip(QStringLiteral("使用 OpenCV 提取当前影像灰度直方图分布")); // 【增强】状态栏提示
     connect(histogramAction_, &QAction::triggered, this, &MainWindow::runHistogram);
 
-    auto* enhanceMenu = rasterMenu->addMenu(QStringLiteral("增强"));  // 创建子菜单"增强"
-    equalizeAction_ = enhanceMenu->addAction(QStringLiteral("直方图均衡化..."));  // 添加"直方图均衡化"并保存指针
+    auto* enhanceMenu = rasterMenu->addMenu(QStringLiteral("增强"));
+    equalizeAction_ = enhanceMenu->addAction(QStringLiteral("直方图均衡化..."));
+    equalizeAction_->setStatusTip(QStringLiteral("使用 CLAHE 算法对影像进行自适应对比度增强")); // 【增强】状态栏提示
     connect(equalizeAction_, &QAction::triggered, this, &MainWindow::runHistogramEqualization);
 
-    auto* featureMenu = rasterMenu->addMenu(QStringLiteral("特征"));  // 创建子菜单"特征"
-    featureAction_ = featureMenu->addAction(QStringLiteral("ORB/SIFT 特征提取..."));  // 添加"ORB/SIFT 特征提取"并保存指针
+    auto* featureMenu = rasterMenu->addMenu(QStringLiteral("特征"));
+    featureAction_ = featureMenu->addAction(QStringLiteral("ORB/SIFT 特征提取..."));
+    featureAction_->setStatusTip(QStringLiteral("提取影像 SIFT 关键点，用于配准及空三加密")); // 【增强】状态栏提示
     connect(featureAction_, &QAction::triggered, this, &MainWindow::runFeatureExtraction);
 
-    // ---- "摄影测量/三维" 菜单 ----
-    auto* photogrammetryMenu = menuBar()->addMenu(QStringLiteral("摄影测量/三维"));  // 创建"摄影测量/三维"菜单
-    demAction_ = photogrammetryMenu->addAction(QStringLiteral("DEM 重建..."));  // 添加"DEM 重建"并保存指针
+        auto* photogrammetryMenu = menuBar()->addMenu(QStringLiteral("摄影测量/三维"));
+    demAction_ = photogrammetryMenu->addAction(QStringLiteral("DEM 重建..."));
+    demAction_->setStatusTip(QStringLiteral("立体像对 SGBM 稠密匹配与地形重建")); // 【增强】状态栏提示
     connect(demAction_, &QAction::triggered, this, &MainWindow::runDemReconstruction);
-    orthoAction_ = photogrammetryMenu->addAction(QStringLiteral("正射影像校正..."));  // 添加"正射影像校正"并保存指针
+    orthoAction_ = photogrammetryMenu->addAction(QStringLiteral("正射影像校正..."));
+    orthoAction_->setStatusTip(QStringLiteral("利用 DEM 纠正影像几何畸变")); // 【增强】状态栏提示
     connect(orthoAction_, &QAction::triggered, this, &MainWindow::runOrthorectification);
+
+    // ── 三维点云/Mesh 功能菜单 ──
+    auto* pointMenu = menuBar()->addMenu(QStringLiteral("点云处理"));
+    downsampleAction_ = pointMenu->addAction(QStringLiteral("体素降采样..."));
+    downsampleAction_->setStatusTip(QStringLiteral("对点云进行体素网格降采样"));
+    connect(downsampleAction_, &QAction::triggered, this, &MainWindow::runPointCloudDownsample);
+
+    filterAction_ = pointMenu->addAction(QStringLiteral("统计滤波（去离群点）..."));
+    filterAction_->setStatusTip(QStringLiteral("基于距离统计去除离群点"));
+    connect(filterAction_, &QAction::triggered, this, &MainWindow::runPointCloudFilter);
+
+    pcToDemAction_ = pointMenu->addAction(QStringLiteral("点云转 DEM..."));
+    pcToDemAction_->setStatusTip(QStringLiteral("将点云网格化为 DEM/DSM"));
+    connect(pcToDemAction_, &QAction::triggered, this, &MainWindow::runPointCloudToDem);
+
+    pointMenu->addSeparator();
+    exportPlyAction_ = pointMenu->addAction(QStringLiteral("导出为 PLY..."));
+    exportPlyAction_->setStatusTip(QStringLiteral("将点云或 Mesh 保存为 PLY 文件"));
+    connect(exportPlyAction_, &QAction::triggered, this, &MainWindow::exportPly);
+
+    clearPointAction_ = pointMenu->addAction(QStringLiteral("清空三维场景"));
+    clearPointAction_->setStatusTip(QStringLiteral("清除 3D 视窗中显示的点云/Mesh"));
+    connect(clearPointAction_, &QAction::triggered, this, [this]() {
+        scene3DWidget_->setPoints({});
+        scene3DWidget_->setMesh({}, {});
+        appendLog(QStringLiteral("三维场景已清空。"));
+    });
 }
 
-// 构建界面布局：左侧图层树 + 右侧影像/三维标签页 + 底部日志面板
+// 构建界面布局
 void MainWindow::createUi() {
-    // 主分割器：水平方向，将窗口分为左侧（图层树）和右侧（影像+日志）
     auto* root = new QSplitter(Qt::Horizontal, this);
-    // ---- 左侧：图层树 ----
-    layerTree_ = new QTreeWidget(root);          // 创建图层树控件
-    layerTree_->setHeaderLabel(QStringLiteral("工程图层"));  // 设置表头文字
-    layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);  // 支持 Ctrl/Shift 多选
-    layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);  // 启用自定义右键菜单
-    connect(layerTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSelectionChanged);  // 选中项改变时刷新影像
-    connect(layerTree_, &QTreeWidget::itemChanged, this, &MainWindow::onLayerItemChanged);  // 勾选框改变时切换可见性
-    connect(layerTree_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::showLayerContextMenu);  // 右键弹出菜单
+    layerTree_ = new QTreeWidget(root);
+    layerTree_->setHeaderLabel(QStringLiteral("工程图层"));
+    layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(layerTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSelectionChanged);
+    connect(layerTree_, &QTreeWidget::itemChanged, this, &MainWindow::onLayerItemChanged);
+    connect(layerTree_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::showLayerContextMenu);
 
-    // ---- 右侧：上下分割（上方影像标签页 + 下方日志） ----
-    auto* right = new QSplitter(Qt::Vertical, root);  // 右侧垂直分割器
+    auto* right = new QSplitter(Qt::Vertical, root);
 
-    // 标签页控件：二维影像 / 三维场景
-    tabs_ = new QTabWidget(right);              // 创建标签页控件
-    imageScene_ = new QGraphicsScene(this);     // 创建图形场景（管理所有图形项）
+    tabs_ = new QTabWidget(right);
+    imageScene_ = new QGraphicsScene(this);
 
-    imageView_ = new QGraphicsView(imageScene_, tabs_);  // 创建图形视图（显示场景内容）
-    imageView_->setDragMode(QGraphicsView::ScrollHandDrag);  // 设置拖拽模式：手型抓手平移
-    imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);  // 缩放时以鼠标位置为中心
+    imageView_ = new QGraphicsView(imageScene_, tabs_);
+    imageView_->setDragMode(QGraphicsView::ScrollHandDrag);
+    imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
 
-    // 三维场景页：QOpenGLWidget 点云预览
     scene3DWidget_ = new Scene3DWidget(tabs_);
 
-    tabs_->addTab(imageView_, QStringLiteral("二维影像"));  // 添加"二维影像"标签页
-    tabs_->addTab(scene3DWidget_, QStringLiteral("三维场景"));  // 添加"三维场景"标签页
+    tabs_->addTab(imageView_, QStringLiteral("二维影像"));
+    tabs_->addTab(scene3DWidget_, QStringLiteral("三维场景"));
 
-    // 日志输出面板
-    logEdit_ = new QTextEdit(right);             // 创建文本编辑框用于日志输出
-    logEdit_->setReadOnly(true);                  // 设置为只读，用户不能编辑
-    logEdit_->setMaximumHeight(210);              // 限制最大高度 210 像素
+    logEdit_ = new QTextEdit(right);
+    logEdit_->setReadOnly(true);
+    logEdit_->setMaximumHeight(210);
 
-    // 设置分割器拉伸比例（控件随窗口缩放时的比例分配）
-    root->setStretchFactor(0, 1);   // 第0个（图层树）：拉伸因子 = 1
-    root->setStretchFactor(1, 5);   // 第1个（右侧区域）：拉伸因子 = 5
-    right->setStretchFactor(0, 5);  // 第0个（影像标签页）：拉伸因子 = 5
-    right->setStretchFactor(1, 1);  // 第1个（日志面板）：拉伸因子 = 1
+    root->setStretchFactor(0, 1);
+    root->setStretchFactor(1, 5);
+    right->setStretchFactor(0, 5);
+    right->setStretchFactor(1, 1);
 
-    setCentralWidget(root);  // 将分割器设为窗口的中心控件（填满整个窗口）
+    setCentralWidget(root);
 }
 
-// 打开文件对话框选择遥感影像，使用 GDAL 读取并加载到图层管理器
+// 打开遥感影像
 void MainWindow::openRasterDatasets() {
-    // 弹出文件选择对话框，支持多选，过滤遥感影像格式
     const QStringList paths = QFileDialog::getOpenFileNames(
-        this,                                              // 父窗口
-        QStringLiteral("加载遥感影像"),                      // 对话框标题
-        QString(),                                          // 默认路径（空 = 上次路径）
-        QStringLiteral("Remote sensing rasters (*.tif *.tiff *.img *.dat *.jp2 *.jpg *.jpeg *.png *.bmp);;All Files (*.*)"));  // 文件过滤器
-    if (paths.isEmpty()) {    // 用户取消选择
-        return;               // 不做任何操作
-    }
+        this,
+        QStringLiteral("加载遥感影像"),
+        QString(),
+        QStringLiteral("Remote sensing rasters (*.tif *.tiff *.img *.dat *.jp2 *.jpg *.jpeg *.png *.bmp);;All Files (*.*)"));
+    if (paths.isEmpty()) return;
 
-    // 遍历所有选中的文件路径
     for (const QString& path : paths) {
-        const QFileInfo info(path);                     // 获取文件信息（文件名、后缀等）
+        const QFileInfo info(path);
         try {
-            // 调用 RasterIO 中的 GDAL 读取函数，读取波段、投影、地理变换和缩略图
             auto raster = rs::io::loadRasterDataset(path);
             if (raster) {
-                layers_.add(raster);                            // 将图层添加到 LayerManager 中
+                layers_.add(raster);
                 appendLog(QStringLiteral("已加载影像：%1（%2 波段，%3x%4）")
                     .arg(info.fileName())
                     .arg(raster->bandCount())
@@ -330,15 +343,14 @@ void MainWindow::openRasterDatasets() {
                     .arg(raster->bandCount() > 0 ? raster->band(0).height : 0));
             }
         } catch (const std::exception& e) {
-            // GDAL 读取失败时记录错误信息
             appendLog(QStringLiteral("加载失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
         }
     }
-    refreshLayerTree();    // 刷新图层树显示新添加的图层
-    updateActionStates();  // 更新菜单启用状态
+    refreshLayerTree();
+    updateActionStates();
 }
 
-// 加载点云：支持 PLY、XYZ、LAS 格式
+// 加载点云
 void MainWindow::openPointCloud() {
     const QString path = QFileDialog::getOpenFileName(
         this,
@@ -349,16 +361,12 @@ void MainWindow::openPointCloud() {
 
     const QFileInfo info(path);
     const QString ext = info.suffix().toLower();
-
     QVector<QVector3D> points;
 
     try {
         if (ext == QStringLiteral("xyz")) {
-            // XYZ 文本格式
             QFile file(path);
-            if (!file.open(QIODevice::ReadOnly)) {
-                throw std::runtime_error("无法打开文件");
-            }
+            if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("无法打开文件");
             QTextStream in(&file);
             while (!in.atEnd()) {
                 const QString line = in.readLine().trimmed();
@@ -370,19 +378,13 @@ void MainWindow::openPointCloud() {
             }
             file.close();
         } else if (ext == QStringLiteral("ply")) {
-            // PLY 格式（支持 ASCII 和二进制小端）
             QFile file(path);
-            if (!file.open(QIODevice::ReadOnly)) {
-                throw std::runtime_error("无法打开 PLY 文件");
-            }
+            if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("无法打开 PLY 文件");
             QByteArray allData = file.readAll();
             file.close();
 
-            // ── 解析文本头 ──
             int headerEndPos = allData.indexOf("end_header");
-            if (headerEndPos < 0) {
-                throw std::runtime_error("PLY 缺少 end_header");
-            }
+            if (headerEndPos < 0) throw std::runtime_error("PLY 缺少 end_header");
             int nlPos = allData.indexOf('\n', headerEndPos);
             int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
 
@@ -400,27 +402,17 @@ void MainWindow::openPointCloud() {
                     inVertex = true;
                     continue;
                 }
-                if (inVertex && line.startsWith(QLatin1String("element "))) {
-                    inVertex = false;
-                }
-                if (inVertex && line.startsWith(QLatin1String("property "))) {
-                    propCount++;
-                }
-                if (line.contains(QLatin1String("format ascii"))) {
-                    isAscii = true;
-                }
+                if (inVertex && line.startsWith(QLatin1String("element "))) inVertex = false;
+                if (inVertex && line.startsWith(QLatin1String("property "))) propCount++;
+                if (line.contains(QLatin1String("format ascii"))) isAscii = true;
             }
 
-            if (vertexCount <= 0) {
-                throw std::runtime_error("PLY 顶点数量无效");
-            }
+            if (vertexCount <= 0) throw std::runtime_error("PLY 顶点数量无效");
 
             if (isAscii) {
-                // ASCII PLY
                 QTextStream in(allData);
                 while (!in.atEnd()) {
-                    QString line = in.readLine();
-                    if (line.trimmed() == QLatin1String("end_header")) break;
+                    if (in.readLine().trimmed() == QLatin1String("end_header")) break;
                 }
                 while (!in.atEnd()) {
                     const QString line = in.readLine().trimmed();
@@ -431,15 +423,10 @@ void MainWindow::openPointCloud() {
                     float x = parts[0].toFloat(&xOk);
                     float y = parts[1].toFloat(&yOk);
                     float z = parts[2].toFloat(&zOk);
-                    if (xOk && yOk && zOk) {
-                        points.append(QVector3D(x, y, z));
-                    }
+                    if (xOk && yOk && zOk) points.append(QVector3D(x, y, z));
                 }
             } else {
-                // 二进制 PLY（小端 float）
-                if (propCount < 3) {
-                    throw std::runtime_error("PLY 顶点属性数不足");
-                }
+                if (propCount < 3) throw std::runtime_error("PLY 顶点属性数不足");
                 int vertexSize = propCount * sizeof(float);
                 const char* data = allData.constData() + headerBytes;
                 int remaining = allData.size() - headerBytes;
@@ -452,23 +439,13 @@ void MainWindow::openPointCloud() {
                 }
             }
         } else if (ext == QStringLiteral("las")) {
-            // LAS 格式（使用已定义的 readLasPoints 辅助函数）
-            // 需要对应的辅助函数在文件上方定义（其他同学已添加）
             QFile lasFile(path);
-            if (!lasFile.open(QIODevice::ReadOnly)) {
-                throw std::runtime_error("无法打开 LAS 文件");
-            }
-            // LAS 格式使用完整的二进制读取方法
+            if (!lasFile.open(QIODevice::ReadOnly)) throw std::runtime_error("无法打开 LAS 文件");
             QByteArray lasData = lasFile.readAll();
             lasFile.close();
-            // 简单 LAS 读取：仅读取 xyz 点
-            if (lasData.size() < 227) {
-                throw std::runtime_error("LAS 文件头不完整");
-            }
+            if (lasData.size() < 227) throw std::runtime_error("LAS 文件头不完整");
             const unsigned char* hdr = reinterpret_cast<const unsigned char*>(lasData.constData());
-            if (hdr[0] != 'L' || hdr[1] != 'A' || hdr[2] != 'S' || hdr[3] != 'F') {
-                throw std::runtime_error("无效的 LAS 签名");
-            }
+            if (hdr[0] != 'L' || hdr[1] != 'A' || hdr[2] != 'S' || hdr[3] != 'F') throw std::runtime_error("无效的 LAS 签名");
             quint32 offset = *reinterpret_cast<const quint32*>(hdr + 96);
             quint16 recLen = *reinterpret_cast<const quint16*>(hdr + 105);
             quint32 ptCount = *reinterpret_cast<const quint32*>(hdr + 107);
@@ -485,31 +462,27 @@ void MainWindow::openPointCloud() {
             }
             quint64 maxRead = (lasData.size() - offset) / recLen;
             quint64 n = std::min(totalPoints, maxRead);
-            if (n > 10000000) n = 10000000; // 最多读取 1000 万点
+            if (n > 10000000) n = 10000000;
             points.reserve(static_cast<int>(n));
             for (quint64 i = 0; i < n; ++i) {
                 const char* rec = lasData.constData() + offset + i * recLen;
                 qint32 ix = *reinterpret_cast<const qint32*>(rec);
                 qint32 iy = *reinterpret_cast<const qint32*>(rec + 4);
                 qint32 iz = *reinterpret_cast<const qint32*>(rec + 8);
-                points.append(QVector3D(
-                    static_cast<float>(ix * xScale + xOff),
-                    static_cast<float>(iy * yScale + yOff),
-                    static_cast<float>(iz * zScale + zOff)));
+                points.append(QVector3D(static_cast<float>(ix * xScale + xOff),
+                                        static_cast<float>(iy * yScale + yOff),
+                                        static_cast<float>(iz * zScale + zOff)));
             }
         } else {
             throw std::runtime_error("不支持的格式");
         }
 
-        if (points.isEmpty()) {
-            throw std::runtime_error("未能读取到任何点数据");
-        }
+        if (points.isEmpty()) throw std::runtime_error("未能读取到任何点数据");
 
         auto layer = std::make_shared<PointCloudLayer>(info.fileName(), path, points);
         layers_.add(layer);
         appendLog(QStringLiteral("已加载点云：%1（%2 个点）").arg(info.fileName()).arg(points.size()));
 
-        // 在三维窗口中显示点云
         scene3DWidget_->setPoints(points);
         tabs_->setCurrentWidget(scene3DWidget_);
     } catch (const std::exception& e) {
@@ -518,6 +491,8 @@ void MainWindow::openPointCloud() {
     refreshLayerTree();
     updateActionStates();
 }
+
+// 加载 Mesh
 void MainWindow::openMesh() {
     const QString path = QFileDialog::getOpenFileName(
         this,
@@ -534,11 +509,8 @@ void MainWindow::openMesh() {
         QVector<Face> faces;
 
         if (ext == QStringLiteral("obj")) {
-            // OBJ 格式：v x y z（顶点），f v1 v2 v3（三角面）
             QFile file(path);
-            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                throw std::runtime_error("无法打开 OBJ 文件");
-            }
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) throw std::runtime_error("无法打开 OBJ 文件");
             QTextStream in(&file);
             while (!in.atEnd()) {
                 const QString line = in.readLine().trimmed();
@@ -550,7 +522,6 @@ void MainWindow::openMesh() {
                     vertices.append(QVector3D(parts[1].toFloat(), parts[2].toFloat(), parts[3].toFloat()));
                 } else if (parts[0] == QStringLiteral("f") && parts.size() >= 4) {
                     Face face;
-                    // OBJ 索引从 1 开始，需要减 1
                     face.a = parts[1].section(QLatin1Char('/'), 0, 0).toInt() - 1;
                     face.b = parts[2].section(QLatin1Char('/'), 0, 0).toInt() - 1;
                     face.c = parts[3].section(QLatin1Char('/'), 0, 0).toInt() - 1;
@@ -558,65 +529,148 @@ void MainWindow::openMesh() {
                 }
             }
             file.close();
-        } else if (ext == QStringLiteral("ply")) {
-            // PLY 格式（同点云读取方式，但同时读取面片信息）
+                } else if (ext == QStringLiteral("ply")) {
             QFile file(path);
-            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                throw std::runtime_error("无法打开 PLY 文件");
-            }
-            QTextStream in(&file);
-            int vertexCount = 0, faceCount = 0;
-            bool headerEnd = false;
-            int readVerts = 0, readFaces = 0;
-            bool readingVerts = true;
+            if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("无法打开 PLY 文件");
+            QByteArray allData = file.readAll();
+            file.close();
 
-            while (!in.atEnd()) {
-                const QString line = in.readLine().trimmed();
-                if (!headerEnd) {
-                    if (line.startsWith(QStringLiteral("element vertex"))) {
-                        vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                    } else if (line.startsWith(QStringLiteral("element face"))) {
-                        faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                    } else if (line == QStringLiteral("end_header")) {
-                        headerEnd = true;
-                        vertices.reserve(vertexCount);
-                        faces.reserve(faceCount);
-                    }
+            // 找到 header 结束位置
+            int headerEndPos = allData.indexOf("end_header");
+            if (headerEndPos < 0) throw std::runtime_error("PLY 缺少 end_header");
+            int nlPos = allData.indexOf('\n', headerEndPos);
+            int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
+
+                        // 解析 header
+            QByteArray headerData = allData.left(headerBytes);
+            QTextStream headerStream(headerData);
+            int vertexCount = 0, faceCount = 0;
+            bool isBinary = false;
+            int vertProps = 0;
+            bool parsingVert = false, parsingFace = false;
+
+            while (!headerStream.atEnd()) {
+                QString line = headerStream.readLine().trimmed();
+                if (line.startsWith(QStringLiteral("element vertex"))) {
+                    vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                    parsingVert = true; parsingFace = false;
+                    vertProps = 0; // 重置，只统计 vertex 的属性
                     continue;
                 }
+                if (line.startsWith(QStringLiteral("element face"))) {
+                    faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                    parsingVert = false; parsingFace = true;
+                    continue;
+                }
+                if (line.startsWith(QStringLiteral("element "))) {
+                    parsingVert = false; parsingFace = false;
+                }
+                if (parsingVert && line.startsWith(QStringLiteral("property "))) vertProps++;
+                if (line.startsWith(QStringLiteral("format binary"))) isBinary = true;
+                if (line.startsWith(QStringLiteral("format ascii"))) isBinary = false;
+            }
 
-                if (readingVerts && readVerts < vertexCount) {
-                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                    if (parts.size() >= 3) {
-                        vertices.append(QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+            if (vertexCount <= 0) throw std::runtime_error("PLY 顶点数量无效");
+
+            vertices.reserve(vertexCount);
+            faces.reserve(faceCount);
+
+            if (isBinary) {
+                // ── 二进制 PLY 解析 ──
+                if (vertProps < 3) throw std::runtime_error("PLY 顶点属性不足");
+                int vertexSize = vertProps * sizeof(float);
+                const char* data = allData.constData() + headerBytes;
+                int remaining = allData.size() - headerBytes;
+
+                // 读顶点
+                for (int i = 0; i < vertexCount && i * vertexSize + 3 * sizeof(float) <= remaining; ++i) {
+                    const float* f = reinterpret_cast<const float*>(data + i * vertexSize);
+                    vertices.append(QVector3D(f[0], f[1], f[2]));
+                }
+
+                // 读三角面 - 二进制格式中 face 通常是"uchar n_vertices int i0 int i1 int i2"
+                int faceDataOffset = vertexCount * vertexSize;
+                int faceIdx = 0;
+                while (faceIdx < faceCount && faceDataOffset + 1 <= remaining) {
+                    const unsigned char* buf = reinterpret_cast<const unsigned char*>(data + faceDataOffset);
+                    int nVerts = buf[0]; // 每个面的顶点数
+                    faceDataOffset += 1;
+                    if (nVerts == 3 && faceDataOffset + 3 * sizeof(int) <= remaining) {
+                        const int* indices = reinterpret_cast<const int*>(data + faceDataOffset);
+                        Face f;
+                        f.a = indices[0];
+                        f.b = indices[1];
+                        f.c = indices[2];
+                        faces.append(f);
+                        faceDataOffset += 3 * sizeof(int);
+                    } else if (nVerts > 0) {
+                        // 跳过非三角面
+                        faceDataOffset += nVerts * sizeof(int);
                     }
-                    ++readVerts;
-                    if (readVerts >= vertexCount) readingVerts = false;
-                } else if (readFaces < faceCount) {
-                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                    if (parts.size() >= 4) {
-                        Face face;
-                        face.a = parts[1].toInt();
-                        face.b = parts[2].toInt();
-                        face.c = parts[3].toInt();
-                        faces.append(face);
+                    faceIdx++;
+                }
+            } else {
+                // ── ASCII PLY 解析 ──
+                QTextStream in(allData);
+                int readVerts = 0, readFaces = 0;
+                bool readingVerts = true;
+
+                while (!in.atEnd()) {
+                    const QString line = in.readLine().trimmed();
+                    if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) continue;
+
+                    if (line == QStringLiteral("end_header")) {
+                        readingVerts = true;
+                        continue;
                     }
-                    ++readFaces;
+
+                    // 跳过 header 中的其他行（element/property/format 等）
+                    if (line.startsWith(QLatin1String("ply")) ||
+                        line.startsWith(QLatin1String("format")) ||
+                        line.startsWith(QLatin1String("element")) ||
+                        line.startsWith(QLatin1String("property")) ||
+                        line.startsWith(QLatin1String("comment")) ||
+                        line.startsWith(QLatin1String("obj_info"))) continue;
+
+                    if (readingVerts && readVerts < vertexCount) {
+                        QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                        if (parts.size() >= 3) {
+                            vertices.append(QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+                        }
+                        ++readVerts;
+                        if (readVerts >= vertexCount) readingVerts = false;
+                    } else if (!readingVerts && readFaces < faceCount) {
+                        QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                        if (parts.size() >= 4) {
+                            Face face;
+                            face.a = parts[1].toInt();
+                            face.b = parts[2].toInt();
+                            face.c = parts[3].toInt();
+                            faces.append(face);
+                        }
+                        ++readFaces;
+                    }
                 }
             }
-            file.close();
         } else {
             throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 OBJ/PLY");
         }
 
-        if (vertices.isEmpty()) {
-            throw std::runtime_error("未能读取到任何顶点数据");
-        }
+        if (vertices.isEmpty()) throw std::runtime_error("未能读取到任何顶点数据");
 
         auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
         layers_.add(layer);
+        
+        // 【核心修复】将读取的 Mesh 顶点和三角面片传入给 3D 渲染引擎
+        scene3DWidget_->setMesh(vertices, faces);
+        tabs_->setCurrentWidget(scene3DWidget_);
+
         appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
             .arg(info.fileName()).arg(vertices.size()).arg(faces.size()));
+            
+        if (statusBar()) {
+            statusBar()->showMessage(QStringLiteral("Mesh 加载成功: %1").arg(info.fileName()), 3000);
+        }
     } catch (const std::exception& e) {
         appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
     }
@@ -624,7 +678,7 @@ void MainWindow::openMesh() {
     updateActionStates();
 }
 
-// 加载 DEM：使用 GDAL 读取 DEM GeoTIFF/ASCII Grid 格式
+// 加载 DEM
 void MainWindow::openDem() {
     const QString path = QFileDialog::getOpenFileName(
         this,
@@ -638,13 +692,10 @@ void MainWindow::openDem() {
     appendLog(QStringLiteral("DEM 加载失败 [%1]：当前构建未启用 GDAL。").arg(info.fileName()));
 #else
     try {
-        // 使用 GDAL 读取 DEM 文件
         GDALAllRegister();
         GDALDataset* dataset = static_cast<GDALDataset*>(
             GDALOpenEx(path.toUtf8().constData(), GA_ReadOnly, nullptr, nullptr, nullptr));
-        if (!dataset) {
-            throw std::runtime_error("无法打开 DEM 文件");
-        }
+        if (!dataset) throw std::runtime_error("无法打开 DEM 文件");
 
         const int width = dataset->GetRasterXSize();
         const int height = dataset->GetRasterYSize();
@@ -655,13 +706,11 @@ void MainWindow::openDem() {
             throw std::runtime_error("DEM 尺寸或波段数无效");
         }
 
-        // 读取地理变换
         std::array<double, 6> geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
         if (dataset->GetGeoTransform(geoTransform.data()) != CE_None) {
             geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
         }
 
-        // 读取高程数据（取第一个波段）
         const int pixelCount = width * height;
         QVector<float> elevations(pixelCount);
         GDALRasterBand* gdalBand = dataset->GetRasterBand(1);
@@ -670,11 +719,8 @@ void MainWindow::openDem() {
                                          GDT_Float32, 0, 0, nullptr);
         GDALClose(dataset);
 
-        if (err != CE_None) {
-            throw std::runtime_error("读取 DEM 像素数据失败");
-        }
+        if (err != CE_None) throw std::runtime_error("读取 DEM 像素数据失败");
 
-        // 创建 DEM 图层
         auto dem = std::make_shared<DemLayer>(info.fileName(), path, width, height, elevations);
         dem->setGeoTransform(geoTransform);
         dem->setSourceRasterPath(path);
@@ -688,12 +734,9 @@ void MainWindow::openDem() {
     updateActionStates();
 }
 
-// 删除图层树中选中的图层
 void MainWindow::deleteSelectedLayers() {
     const auto indices = selectedLayerIndices();
-    if (indices.empty()) {
-        return;
-    }
+    if (indices.empty()) return;
     layers_.removeMany(indices);
     imageScene_->clear();
     refreshLayerTree();
@@ -701,25 +744,19 @@ void MainWindow::deleteSelectedLayers() {
     updateActionStates();
 }
 
-// 清空所有图层，重置工程
 void MainWindow::clearProject() {
-    layers_.clear();// 清空所有图层
-    imageScene_->clear();// 清空图像场景
-    refreshLayerTree();// 刷新图层树
+    layers_.clear();
+    imageScene_->clear();
+    refreshLayerTree();
     appendLog(QStringLiteral("工程已初始化。"));
-    updateActionStates();// 更新菜单所有操作按钮的状态
+    updateActionStates();
 }
 
-// 打开波段组合/设色对话框
 void MainWindow::configureRasterRendering() {
     const auto raster = selectedRaster();
-    if (!raster) {
-        return;
-    }
+    if (!raster) return;
     const auto request = askRasterRenderRequest(this, *raster);
-    if (!request.has_value()) {
-        return;
-    }
+    if (!request.has_value()) return;
 
     QImage image;
     QString description;
@@ -752,58 +789,144 @@ void MainWindow::configureRasterRendering() {
     appendLog(QStringLiteral("已渲染影像：%1，%2。").arg(raster->name(), description));
 }
 
-// 执行灰度直方图算法（TODO）
 void MainWindow::runHistogram() {
+    auto raster = selectedRaster();
+    if (!raster) return;
     HistogramAlgorithm algorithm;
-    appendLog(QStringLiteral("TODO: 打开参数对话框并执行：%1，当前波段索引=%2。")
-                  .arg(algorithm.name())
-                  .arg(selectedBandIndex()));
+    ProcessingContext context;
+    algorithm.execute(*raster, context);
+    appendLog(QStringLiteral("已执行：%1，结果已在独立窗口显示。").arg(algorithm.name()));
 }
 
-// 执行直方图均衡化算法（TODO）
 void MainWindow::runHistogramEqualization() {
+    auto raster = selectedRaster();
+    if (!raster) return;
     HistogramEqualizationAlgorithm algorithm;
-    appendLog(QStringLiteral("TODO: 打开参数对话框并执行：%1，结果应加入“处理结果/直方图均衡化”。").arg(algorithm.name()));
+    ProcessingContext context;
+    algorithm.execute(*raster, context);
+    appendLog(QStringLiteral("已执行：%1，结果已在独立窗口显示。").arg(algorithm.name()));
 }
 
-// 执行 ORB/SIFT 特征提取（TODO）
 void MainWindow::runFeatureExtraction() {
+    auto raster = selectedRaster();
+    if (!raster) return;
     FeatureExtractionAlgorithm algorithm;
-    appendLog(QStringLiteral("TODO: 打开参数对话框并执行：%1，可选 ORB/SIFT/AKAZE。").arg(algorithm.name()));
+    ProcessingContext context;
+    algorithm.execute(*raster, context);
+    appendLog(QStringLiteral("已执行：%1，特征点已在独立窗口显示。").arg(algorithm.name()));
 }
 
-// 执行 DEM 重建流程（TODO）
 void MainWindow::runDemReconstruction() {
-    appendLog(QStringLiteral("TODO: 选择两张影像后弹出 DEM 重建对话框，补充相机参数/控制点/输出目录，再自动完成匹配、校正、视差和 DEM 输出。"));
+    DemReconstructionPipeline pipeline;
+    DemReconstructionPipeline::Inputs inputs;
+
+    // 从选中的图层中获取左右影像路径
+    const auto indices = selectedLayerIndices();
+    int rasterCount = 0;
+    for (int idx : indices) {
+        try {
+            auto layer = layers_.at(idx);
+            if (std::dynamic_pointer_cast<RasterLayer>(layer)) {
+                if (rasterCount == 0) {
+                    inputs.leftImagePath = layer->path();
+                } else if (rasterCount == 1) {
+                    inputs.rightImagePath = layer->path();
+                }
+                rasterCount++;
+            }
+        } catch (...) {}
+    }
+
+    if (rasterCount < 2) {
+        appendLog(QStringLiteral("DEM 重建提示：请先加载并在图层树中选中两个遥感影像作为立体像对（左右各一）。"));
+        return;
+    }
+
+    // 设置输出目录
+    inputs.outputDirectory = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("选择 DEM 输出目录"), QString());
+    if (inputs.outputDirectory.isEmpty()) {
+        appendLog(QStringLiteral("DEM 重建已取消：未选择输出目录。"));
+        return;
+    }
+
+    try {
+        auto dem = pipeline.reconstruct(inputs);
+        if (dem) {
+            layers_.add(dem);
+            refreshLayerTree();
+            appendLog(QStringLiteral("DEM 重建完成：%1（%2x%3）").arg(dem->name()).arg(dem->width()).arg(dem->height()));
+        }
+    } catch (const std::exception& e) {
+        appendLog(QStringLiteral("DEM 重建提示：%1").arg(QString::fromUtf8(e.what())));
+    }
 }
 
-// 执行正射校正流程（TODO）
 void MainWindow::runOrthorectification() {
-    appendLog(QStringLiteral("TODO: 选择影像和对应 DEM，使用 DEM 地理变换与影像模型重采样生成正射影像。"));
+    auto raster = selectedRaster();
+    if (!raster) {
+        appendLog(QStringLiteral("正射校正提示：请先选中一个遥感影像图层。"));
+        return;
+    }
+
+        // 从图层树中找第一个 DEM
+    std::shared_ptr<DemLayer> demLayer;
+    const auto orthoIndices = selectedLayerIndices();
+    for (int idx : orthoIndices) {
+        try {
+            auto layer = layers_.at(idx);
+            if (layer->type() == DataType::Dem) {
+                demLayer = std::dynamic_pointer_cast<DemLayer>(layer);
+                if (demLayer) break;
+            }
+        } catch (...) {}
+    }
+
+    // 如果选中的里面没有 DEM，就从所有图层里找
+    if (!demLayer) {
+        for (int i = 0; i < layers_.size(); ++i) {
+            try {
+                auto layer = layers_.at(i);
+                if (layer->type() == DataType::Dem) {
+                    demLayer = std::dynamic_pointer_cast<DemLayer>(layer);
+                    if (demLayer) break;
+                }
+            } catch (...) {}
+        }
+    }
+
+    if (!demLayer) {
+        appendLog(QStringLiteral("正射校正提示：请先加载并选中 DEM 图层。"));
+        return;
+    }
+
+    OrthorectificationPipeline pipeline;
+    try {
+        auto result = pipeline.rectify(*raster, *demLayer);
+        appendLog(QStringLiteral("正射校正完成：%1").arg(result.message));
+    } catch (const std::exception& e) {
+        appendLog(QStringLiteral("正射校正失败：%1").arg(QString::fromUtf8(e.what())));
+    }
 }
 
-// 当图层树选中项改变时，刷新影像显示和菜单状态
 void MainWindow::onSelectionChanged() {
     displayRaster(selectedRaster(), selectedBandIndex());
     updateActionStates();
 }
 
-// 当图层项的勾选状态改变时，切换其可见性
 void MainWindow::onLayerItemChanged(QTreeWidgetItem* item, int column) {
-    if (rebuildingTree_ || !item || column != 0) {
-        return;
-    }
-    if (static_cast<NodeKind>(item->data(0, kNodeKindRole).toInt()) != NodeKind::Layer) {
-        return;
-    }
+    if (rebuildingTree_ || !item || column != 0) return;
+    if (static_cast<NodeKind>(item->data(0, kNodeKindRole).toInt()) != NodeKind::Layer) return;
+    
     const QVariant value = item->data(0, kLayerIndexRole);
-    if (!value.isValid()) {
-        return;
-    }
+    if (!value.isValid()) return;
+    
     try {
         const bool visible = item->checkState(0) == Qt::Checked;
         layers_.at(value.toInt())->setVisible(visible);
         const auto layer = layers_.at(value.toInt());
+        
+        // 【核心修复】完美控制点云与 Mesh 3D 网格的可见性切换
         if (layer->type() == DataType::PointCloud) {
             if (visible) {
                 const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer);
@@ -811,18 +934,22 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem* item, int column) {
             } else {
                 scene3DWidget_->setPoints({});
             }
+        } else if (layer->type() == DataType::Mesh) {
+            if (visible) {
+                const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
+                if (mesh) scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+            } else {
+                scene3DWidget_->setMesh({}, {});
+            }
         }
         appendLog(QStringLiteral("%1：%2").arg(item->text(0), visible ? QStringLiteral("显示") : QStringLiteral("隐藏")));
-    } catch (const std::exception&) {
-    }
+    } catch (const std::exception&) {}
 }
 
-// 右键点击图层树时弹出上下文菜单
 void MainWindow::showLayerContextMenu(const QPoint& position) {
     QTreeWidgetItem* item = layerTree_->itemAt(position);
-    if (!item) {
-        return;
-    }
+    if (!item) return;
+    
     QMenu menu(this);
     const auto indices = selectedLayerIndices();
     QAction* deleteAction = menu.addAction(QStringLiteral("删除选中图层"));
@@ -838,17 +965,15 @@ void MainWindow::showLayerContextMenu(const QPoint& position) {
                 connect(exportDem, &QAction::triggered, this, [this, demLayerIndex]() {
                     try {
                         const auto dem = std::dynamic_pointer_cast<DemLayer>(layers_.at(demLayerIndex));
-                        if (!dem) {
-                            throw std::runtime_error("当前图层不是 DEM");
-                        }
+                        if (!dem) throw std::runtime_error("当前图层不是 DEM");
+                        
                         const QString path = QFileDialog::getSaveFileName(
                             this,
                             QStringLiteral("导出 DEM GeoTIFF"),
                             dem->name() + QStringLiteral(".tif"),
                             QStringLiteral("GeoTIFF (*.tif *.tiff);;All Files (*.*)"));
-                        if (path.isEmpty()) {
-                            return;
-                        }
+                        if (path.isEmpty()) return;
+                        
                         rs::io::RasterWriteOptions options;
                         options.driverName = QStringLiteral("GTiff");
                         options.creationOptions = QStringLiteral("COMPRESS=LZW");
@@ -859,13 +984,11 @@ void MainWindow::showLayerContextMenu(const QPoint& position) {
                     }
                 });
             }
-        } catch (const std::exception&) {
-        }
+        } catch (const std::exception&) {}
     }
     menu.exec(layerTree_->viewport()->mapToGlobal(position));
 }
 
-// 根据 LayerManager 中的数据重建图层树，保持展开/折叠状态
 void MainWindow::refreshLayerTree() {
     QSet<QString> expandedKeys;
     for (int i = 0; i < layerTree_->topLevelItemCount(); ++i) {
@@ -890,21 +1013,11 @@ void MainWindow::refreshLayerTree() {
         const auto layer = layers_.at(i);
         QTreeWidgetItem* parent = nullptr;
         switch (layer->type()) {
-        case DataType::Raster:
-            parent = rasterFolder;
-            break;
-        case DataType::PointCloud:
-            parent = pointFolder;
-            break;
-        case DataType::Mesh:
-            parent = meshFolder;
-            break;
-        case DataType::Dem:
-            parent = demFolder;
-            break;
-        case DataType::Result:
-            parent = resultRoot;
-            break;
+        case DataType::Raster: parent = rasterFolder; break;
+        case DataType::PointCloud: parent = pointFolder; break;
+        case DataType::Mesh: parent = meshFolder; break;
+        case DataType::Dem: parent = demFolder; break;
+        case DataType::Result: parent = resultRoot; break;
         }
 
         auto* item = new QTreeWidgetItem(parent);
@@ -950,7 +1063,6 @@ void MainWindow::refreshLayerTree() {
     rebuildingTree_ = false;
 }
 
-// 在 QGraphicsView 中显示选中的影像（优先显示选中波段）
 void MainWindow::displayRaster(const std::shared_ptr<RasterLayer>& raster, int bandIndex) {
     imageScene_->clear();
     if (!raster) {
@@ -975,14 +1087,12 @@ void MainWindow::displayRaster(const std::shared_ptr<RasterLayer>& raster, int b
     imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
 }
 
-// 获取当前选中的所有图层的索引列表（去重）
 std::vector<int> MainWindow::selectedLayerIndices() const {
     std::vector<int> indices;
     for (const auto* item : layerTree_->selectedItems()) {
         const QVariant value = item->data(0, kLayerIndexRole);
-        if (!value.isValid()) {
-            continue;
-        }
+        if (!value.isValid()) continue;
+        
         const int index = value.toInt();
         if (std::find(indices.begin(), indices.end(), index) == indices.end()) {
             indices.push_back(index);
@@ -991,16 +1101,13 @@ std::vector<int> MainWindow::selectedLayerIndices() const {
     return indices;
 }
 
-// 获取当前选中的 RasterLayer（非 Raster 类型返回 nullptr）
 std::shared_ptr<RasterLayer> MainWindow::selectedRaster() const {
     auto* item = layerTree_->currentItem();
-    if (!item) {
-        return {};
-    }
+    if (!item) return {};
+    
     const QVariant value = item->data(0, kLayerIndexRole);
-    if (!value.isValid()) {
-        return {};
-    }
+    if (!value.isValid()) return {};
+    
     try {
         return std::dynamic_pointer_cast<RasterLayer>(layers_.at(value.toInt()));
     } catch (const std::exception&) {
@@ -1008,62 +1115,200 @@ std::shared_ptr<RasterLayer> MainWindow::selectedRaster() const {
     }
 }
 
-// 获取当前选中的波段索引（-1 表示未选中具体波段）
 int MainWindow::selectedBandIndex() const {
     auto* item = layerTree_->currentItem();
-    if (!item) {
-        return -1;
-    }
+    if (!item) return -1;
     const QVariant value = item->data(0, kBandIndexRole);
     return value.isValid() ? value.toInt() : -1;
 }
 
-// 根据当前选中图层的类型，更新菜单项的启用/禁用状态
 void MainWindow::updateActionStates() {
     int selectedRasters = 0;
     int selectedDems = 0;
-    for (const int index : selectedLayerIndices()) {
-        try {
-            const auto layer = layers_.at(index);
-            if (std::dynamic_pointer_cast<RasterLayer>(layer)) {
-                ++selectedRasters;
-            } else if (layer->type() == DataType::Dem) {
-                ++selectedDems;
-            }
-        } catch (const std::exception&) {
+
+    for (auto* item : layerTree_->selectedItems()) {
+        QVariant indexVar = item->data(0, kLayerIndexRole);
+        if (indexVar.isValid()) {
+            try {
+                auto layer = layers_.at(indexVar.toInt());
+                if (std::dynamic_pointer_cast<RasterLayer>(layer)) selectedRasters++;
+                else if (layer->type() == DataType::Dem) selectedDems++;
+            } catch (...) {}
         }
     }
 
-    const bool hasOneRaster = selectedRasters == 1;
-    if (deleteLayerAction_) {
-        deleteLayerAction_->setEnabled(!selectedLayerIndices().empty());
-    }
-    if (clearProjectAction_) {
-        clearProjectAction_->setEnabled(!layers_.empty());
-    }
-    if (renderAction_) {
-        renderAction_->setEnabled(hasOneRaster);
-    }
-    if (histogramAction_) {
-        histogramAction_->setEnabled(hasOneRaster);
-    }
-    if (equalizeAction_) {
-        equalizeAction_->setEnabled(hasOneRaster);
-    }
-    if (featureAction_) {
-        featureAction_->setEnabled(hasOneRaster);
-    }
-    if (demAction_) {
-        demAction_->setEnabled(selectedRasters == 2);
-    }
-    if (orthoAction_) {
-        orthoAction_->setEnabled(selectedRasters >= 1 && selectedDems >= 1);
-    }
+    // 将强制禁用的逻辑改为“弱激活”：
+    // 如果没有选中项，我们不禁用菜单，而是允许点击，点击后在具体算法里弹出“请选择数据”的提示
+    if (deleteLayerAction_) deleteLayerAction_->setEnabled(!layers_.empty());
+    if (clearProjectAction_) clearProjectAction_->setEnabled(!layers_.empty());
+    
+    // 【强制点亮】将这些动作永久激活，点击后的逻辑由算法内部 check
+    if (renderAction_) renderAction_->setEnabled(true);
+    if (histogramAction_) histogramAction_->setEnabled(true);
+    if (equalizeAction_) equalizeAction_->setEnabled(true);
+    if (featureAction_) featureAction_->setEnabled(true);
+        if (demAction_) demAction_->setEnabled(true);
+    if (orthoAction_) orthoAction_->setEnabled(true);
+        if (exportPlyAction_) exportPlyAction_->setEnabled(true);
+    if (clearPointAction_) clearPointAction_->setEnabled(true);
+    if (downsampleAction_) downsampleAction_->setEnabled(true);
+    if (filterAction_) filterAction_->setEnabled(true);
+    if (pcToDemAction_) pcToDemAction_->setEnabled(true);
 }
 
-// 在日志面板追加带时间戳的信息
 void MainWindow::appendLog(const QString& text) {
     logEdit_->append(QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), text));
 }
 
 } // namespace rs
+
+// ── 点云体素降采样 ──
+void rs::MainWindow::runPointCloudDownsample() {
+    const auto indices = selectedLayerIndices();
+    std::shared_ptr<PointCloudLayer> pcLayer;
+    for (int idx : indices) {
+        try {
+            auto layer = layers_.at(idx);
+            pcLayer = std::dynamic_pointer_cast<PointCloudLayer>(layer);
+            if (pcLayer) break;
+        } catch (...) {}
+    }
+    if (!pcLayer) {
+        appendLog(QStringLiteral("请先选中一个点云图层。"));
+        return;
+    }
+
+    const auto& points = pcLayer->points();
+    PointCloudFilterAlgorithm algo;
+    auto filtered = algo.voxelDownsample(points, 0.1);
+
+    auto newLayer = std::make_shared<PointCloudLayer>(
+        pcLayer->name() + QStringLiteral("_降采样"), QString(), filtered);
+    layers_.add(newLayer);
+    scene3DWidget_->setPoints(filtered);
+    tabs_->setCurrentWidget(scene3DWidget_);
+    refreshLayerTree();
+    appendLog(QStringLiteral("体素降采样完成：%1 → %2 个点").arg(points.size()).arg(filtered.size()));
+}
+
+// ── 点云统计滤波 ──
+void rs::MainWindow::runPointCloudFilter() {
+    const auto indices = selectedLayerIndices();
+    std::shared_ptr<PointCloudLayer> pcLayer;
+    for (int idx : indices) {
+        try {
+            auto layer = layers_.at(idx);
+            pcLayer = std::dynamic_pointer_cast<PointCloudLayer>(layer);
+            if (pcLayer) break;
+        } catch (...) {}
+    }
+    if (!pcLayer) {
+        appendLog(QStringLiteral("请先选中一个点云图层。"));
+        return;
+    }
+
+    const auto& points = pcLayer->points();
+    PointCloudFilterAlgorithm algo;
+    auto filtered = algo.statisticalOutlierRemoval(points, 20, 2.0);
+
+    auto newLayer = std::make_shared<PointCloudLayer>(
+        pcLayer->name() + QStringLiteral("_滤波"), QString(), filtered);
+    layers_.add(newLayer);
+    scene3DWidget_->setPoints(filtered);
+    tabs_->setCurrentWidget(scene3DWidget_);
+    refreshLayerTree();
+    appendLog(QStringLiteral("统计滤波完成：%1 → %2 个点").arg(points.size()).arg(filtered.size()));
+}
+
+// ── 点云转 DEM ──
+void rs::MainWindow::runPointCloudToDem() {
+    const auto indices = selectedLayerIndices();
+    std::shared_ptr<PointCloudLayer> pcLayer;
+    for (int idx : indices) {
+        try {
+            auto layer = layers_.at(idx);
+            pcLayer = std::dynamic_pointer_cast<PointCloudLayer>(layer);
+            if (pcLayer) break;
+        } catch (...) {}
+    }
+    if (!pcLayer) {
+        appendLog(QStringLiteral("请先选中一个点云图层。"));
+        return;
+    }
+
+    const auto& points = pcLayer->points();
+        PointCloudToDemAlgorithm algo;
+    PointCloudToDemAlgorithm::Parameters params;
+    params.gridResolution = 1.0;
+    params.useMaxZ = true;
+
+    auto dem = algo.convert(points, params, pcLayer->name() + QStringLiteral("_DSM"));
+    if (dem) {
+        layers_.add(std::static_pointer_cast<DataObject>(dem));
+        refreshLayerTree();
+        appendLog(QStringLiteral("点云转 DEM 完成：%1（%2x%3）").arg(dem->name()).arg(dem->width()).arg(dem->height()));
+    }
+}
+
+// ── 导出选中的点云/Mesh 为 PLY ──
+void rs::MainWindow::exportPly() {
+    const auto indices = selectedLayerIndices();
+    if (indices.empty()) {
+        appendLog(QStringLiteral("导出 PLY 提示：请先选中一个点云或 Mesh 图层。"));
+        return;
+    }
+
+    for (int idx : indices) {
+        try {
+            auto layer = layers_.at(idx);
+            QString path = QFileDialog::getSaveFileName(
+                this, QStringLiteral("导出 PLY"), layer->name() + QStringLiteral(".ply"),
+                QStringLiteral("PLY (*.ply);;All Files (*.*)"));
+            if (path.isEmpty()) continue;
+
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly)) {
+                appendLog(QStringLiteral("无法创建文件: %1").arg(path));
+                continue;
+            }
+
+            QTextStream out(&file);
+
+            if (auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
+                // 导出点云
+                const auto& points = pc->points();
+                out << "ply\nformat ascii 1.0\n"
+                    << "element vertex " << points.size() << "\n"
+                    << "property float x\nproperty float y\nproperty float z\n"
+                    << "end_header\n";
+                for (const auto& p : points) {
+                    out << p.x() << " " << p.y() << " " << p.z() << "\n";
+                }
+                appendLog(QStringLiteral("已导出点云 PLY：%1（%2 个点）").arg(path).arg(points.size()));
+            } else if (auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
+                // 导出 Mesh
+                const auto& verts = mesh->vertices();
+                const auto& faces = mesh->faces();
+                out << "ply\nformat ascii 1.0\n"
+                    << "element vertex " << verts.size() << "\n"
+                    << "property float x\nproperty float y\nproperty float z\n"
+                    << "element face " << faces.size() << "\n"
+                    << "property list uchar int vertex_indices\n"
+                    << "end_header\n";
+                for (const auto& v : verts) {
+                    out << v.x() << " " << v.y() << " " << v.z() << "\n";
+                }
+                for (const auto& f : faces) {
+                    out << "3 " << f.a << " " << f.b << " " << f.c << "\n";
+                }
+                appendLog(QStringLiteral("已导出 Mesh PLY：%1（%2 顶点，%3 面）")
+                    .arg(path).arg(verts.size()).arg(faces.size()));
+            } else {
+                appendLog(QStringLiteral("选中图层不是点云或 Mesh，无法导出。"));
+            }
+            file.close();
+        } catch (const std::exception& e) {
+            appendLog(QStringLiteral("导出失败：%1").arg(QString::fromUtf8(e.what())));
+        }
+    }
+}
