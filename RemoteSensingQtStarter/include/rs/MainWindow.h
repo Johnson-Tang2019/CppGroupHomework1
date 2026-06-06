@@ -72,6 +72,12 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void runDemReconstruction();  // 执行 DEM 重建（立体像对）
     void runOrthorectification(); // 执行正射影像校正
 
+    // ============ 三维点云/Mesh ============
+    void exportPly();                 // 导出选中的点云/Mesh 为 PLY
+    void runPointCloudDownsample();   // 点云降采样
+    void runPointCloudFilter();       // 点云统计滤波
+    void runPointCloudToDem();        // 点云转 DEM
+
     // ============ 界面交互 ============
     void onSelectionChanged();                                  // 图层树选中项改变时的响应
     void onLayerItemChanged(QTreeWidgetItem *item, int column); // 图层项（勾选框）改变时的响应
@@ -118,6 +124,11 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *featureAction_{};      // "ORB/SIFT 特征提取"菜单项
     QAction *demAction_{};          // "DEM 重建"菜单项
     QAction *orthoAction_{};        // "正射影像校正"菜单项
+    QAction* exportPlyAction_ {};        // "导出 PLY"菜单项
+    QAction* clearPointAction_ {};       // "清空三维场景"菜单项
+    QAction* downsampleAction_ {};       // "体素降采样"菜单项
+    QAction* filterAction_ {};           // "统计滤波"菜单项
+    QAction* pcToDemAction_ {};          // "点云转 DEM"菜单项
 
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
