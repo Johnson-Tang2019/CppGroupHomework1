@@ -1,11 +1,10 @@
 #include "rs/Scene3DWidget.h"
-
-// ──────────────────────────────────────────────
-// 简单的 PLY 点云三维预览控件
-// 左键拖拽旋转 · 滚轮缩放
-// ──────────────────────────────────────────────
-
-// 手动实现 gluPerspective 的等效功能（避免依赖 GLU）
+#include <GL/gl.h>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <algorithm>
+#include <cmath>
+//2026.6.6
 static void buildPerspectiveMatrix(float fovY, float aspect, float zNear, float zFar, float m[16]) {
     const float f = 1.0f / std::tan(fovY * 3.14159265f / 360.0f);
     // OpenGL 列优先矩阵
@@ -31,44 +30,7 @@ Scene3DWidget::Scene3DWidget(QWidget *parent) : QOpenGLWidget(parent) {}
 
 void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
     m_points = points;
-
-    // 计算包围盒中心和范围
-    if (points.isEmpty()) {
-        m_center = QVector3D(0, 0, 0);
-        m_halfExtent = 1.0f;
-    } else {
-        float minX = points[0].x(), maxX = points[0].x();
-        float minY = points[0].y(), maxY = points[0].y();
-        float minZ = points[0].z(), maxZ = points[0].z();
-        for (const auto &p : points) {
-            minX = std::min(minX, p.x()); maxX = std::max(maxX, p.x());
-            minY = std::min(minY, p.y()); maxY = std::max(maxY, p.y());
-            minZ = std::min(minZ, p.z()); maxZ = std::max(maxZ, p.z());
-        }
-        m_center = QVector3D((minX + maxX) * 0.5f, (minY + maxY) * 0.5f, (minZ + maxZ) * 0.5f);
-        m_halfExtent = std::max({maxX - minX, maxY - minY, maxZ - minZ}) * 0.5f;
-        if (m_halfExtent < 1e-6f) m_halfExtent = 1.0f;
-    }
-
-    fitToBounds();
-}
-
-// ── 自适应缩放至包围盒 ─────────────────────────
-void Scene3DWidget::fitToBounds() {
-    if (m_points.isEmpty()) {
-        m_rotX = 0;
-        m_rotY = 0;
-        m_zoom = 1.0f;
-        update();
-        return;
-    }
-    // 根据包围盒大小和视锥 FOV 计算合适 zoom
-    const float fov = 45.0f;
-    const float dist = m_halfExtent / std::tan(fov * 3.14159265f / 360.0f);
-    m_zoom = dist / 3.0f; // 因为 paintGL 中 glTranslatef 使用 -3.0f * m_zoom
-    m_rotX = 0;
-    m_rotY = 0;
-    update();
+    update(); // 请求重绘
 }
 
 // ── OpenGL 初始化 ────────────────────────────
@@ -79,8 +41,15 @@ void Scene3DWidget::initializeGL() {
     // 启用深度测试
     glEnable(GL_DEPTH_TEST);
 
-    // 点大小（固定管线）
-    glPointSize(2.5f);
+    // 【3D 增强】启用光照模型，让模型有立体反光感
+    glEnable(GL_COLOR_MATERIAL);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+    glEnable(GL_NORMALIZE);
+    GLfloat lightPos[] = {1.0f, 1.0f, 1.0f, 0.0f};
+    glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
+
+    glPointSize(2.0f);
 }
 
 // ── 每帧绘制 ─────────────────────────────────
@@ -89,27 +58,38 @@ void Scene3DWidget::paintGL() {
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-
     const float aspect = static_cast<float>(width()) / std::max(height(), 1);
     const float zFar = m_halfExtent * 20.0f + 10.0f;
     const float zNear = 0.01f;
     float projMatrix[16];
     const float f = 1.0f / std::tan(45.0f * 3.14159265f / 360.0f);
-    projMatrix[0] = f / aspect;   projMatrix[1] = 0;    projMatrix[2] = 0;    projMatrix[3] = 0;
-    projMatrix[4] = 0;            projMatrix[5] = f;    projMatrix[6] = 0;    projMatrix[7] = 0;
-    projMatrix[8] = 0;            projMatrix[9] = 0;    projMatrix[10] = (zFar + zNear) / (zNear - zFar); projMatrix[11] = -1;
-    projMatrix[12] = 0;           projMatrix[13] = 0;   projMatrix[14] = 2 * zFar * zNear / (zNear - zFar); projMatrix[15] = 0;
+    projMatrix[0] = f / aspect;
+    projMatrix[1] = 0;
+    projMatrix[2] = 0;
+    projMatrix[3] = 0;
+    projMatrix[4] = 0;
+    projMatrix[5] = f;
+    projMatrix[6] = 0;
+    projMatrix[7] = 0;
+    projMatrix[8] = 0;
+    projMatrix[9] = 0;
+    projMatrix[10] = (zFar + zNear) / (zNear - zFar);
+    projMatrix[11] = -1;
+    projMatrix[12] = 0;
+    projMatrix[13] = 0;
+    projMatrix[14] = 2 * zFar * zNear / (zNear - zFar);
+    projMatrix[15] = 0;
     glMultMatrixf(projMatrix);
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    // 相机位置
+    // 相机位置：先从原点往后拉，让归一化后的点云在可见范围内
     glTranslatef(0.0f, 0.0f, -3.0f * m_zoom);
     glRotatef(m_rotX, 1.0f, 0.0f, 0.0f);
     glRotatef(m_rotY, 0.0f, 1.0f, 0.0f);
 
-    // 绘制坐标轴（在包围盒中心）
+    glDisable(GL_LIGHTING); // 坐标轴不需要光照
     glBegin(GL_LINES);
     const float axisLen = m_halfExtent * 1.5f;
     glColor3f(1.0f, 0.2f, 0.2f);
@@ -123,19 +103,43 @@ void Scene3DWidget::paintGL() {
     glVertex3f(m_center.x(), m_center.y(), m_center.z() + axisLen);
     glEnd();
 
-    // ── 绘制点云 ──
-    if (m_points.isEmpty()) return;
+    // ── 绘制点云 ──────────────────────────
+    if (m_points.isEmpty()) {
+        // 无数据时画提示文字（通过 QPainter 叠加）
+        return;
+    }
 
-    // 直接渲染原始坐标（已居中），不再归一化
-    glBegin(GL_POINTS);
-    glColor3f(0.6f, 0.8f, 1.0f);
+    // 计算点云中心，居中显示
+    float cx = 0, cy = 0, cz = 0;
     for (const auto &p : m_points) {
-        glVertex3f(p.x(), p.y(), p.z());
+        cx += p.x();
+        cy += p.y();
+        cz += p.z();
+    }
+    const float invN = 1.0f / m_points.size();
+    cx *= invN;
+    cy *= invN;
+    cz *= invN;
+
+    // 计算点云范围，用于自动缩放
+    float maxDist = 0;
+    for (const auto &p : m_points) {
+        const float dx = p.x() - cx;
+        const float dy = p.y() - cy;
+        const float dz = p.z() - cz;
+        maxDist = std::max(maxDist, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    const float scale = (maxDist > 0) ? (1.0f / maxDist) : 1.0f;
+
+    glBegin(GL_POINTS);
+    glColor3f(0.6f, 0.8f, 1.0f); // 浅蓝色点
+    for (const auto &p : m_points) {
+        // 平移至中心并缩放到合理大小
+        glVertex3f((p.x() - cx) * scale, (p.y() - cy) * scale, (p.z() - cz) * scale);
     }
     glEnd();
 }
 
-// ── 鼠标交互 ─────────────────────────────────
 // ── 鼠标交互 ─────────────────────────────────
 void Scene3DWidget::mousePressEvent(QMouseEvent *event) { m_lastPos = event->pos(); }
 
@@ -144,12 +148,11 @@ void Scene3DWidget::mouseMoveEvent(QMouseEvent *event) {
     const int dy = event->pos().y() - m_lastPos.y();
 
     if (event->buttons() & Qt::LeftButton) {
-        m_rotY += dx * 0.5f;
-        m_rotX += dy * 0.5f;
+        m_rotY += (event->pos().x() - m_lastPos.x()) * 0.5f;
+        m_rotX += (event->pos().y() - m_lastPos.y()) * 0.5f;
         m_rotX = std::clamp(m_rotX, -90.0f, 90.0f);
         update();
     }
-
     m_lastPos = event->pos();
 }
 

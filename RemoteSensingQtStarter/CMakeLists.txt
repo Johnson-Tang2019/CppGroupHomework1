@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.16)
-
 project(RemoteSensingQtStarter VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -14,6 +13,8 @@ set(QT_PACKAGE Qt6)
 find_package(OpenCV QUIET COMPONENTS core imgproc features2d calib3d)
 find_package(GDAL QUIET)
 
+find_package(OpenCV REQUIRED)
+
 add_executable(RemoteSensingQtStarter WIN32
     src/main.cpp
     src/MainWindow.cpp
@@ -27,10 +28,12 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/ProcessingAlgorithm.h
     include/rs/Algorithms.h
     include/rs/RasterIO.h
-        include/rs/RasterRenderDialog.h
+    include/rs/RasterRenderDialog.h
     include/rs/MainWindow.h
-    include/rs/Scene3DWidget.h
+    include/rs/Scene3DWidget.h    #增加
 )
+
+target_link_libraries(RemoteSensingQtStarter PRIVATE ${OpenCV_LIBS})
 
 target_include_directories(RemoteSensingQtStarter PRIVATE include)
 target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets opengl32)
