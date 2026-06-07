@@ -71,15 +71,26 @@ public:
     QString renderDescription() const { return renderDescription_; }  // 获取当前波段组合/设色方式的描述
     void setRenderDescription(QString description) { renderDescription_ = std::move(description); }  // 设置渲染描述
 
-    // 实现基类的纯虚函数：返回图层的摘要信息
+        // 实现基类的纯虚函数：返回图层的摘要信息
     QString summary() const override {
         if (!bands_.isEmpty()) {  // 如果已有波段数据
-            return QStringLiteral("%1 x %2, %3 bands")  // 返回 "宽 x 高, N bands"
-                .arg(bands_.front().width)
-                .arg(bands_.front().height)
+            const auto& frontBand = bands_.front();
+            return QStringLiteral("%1 x %2, %3 bands")
+                .arg(frontBand.width)
+                .arg(frontBand.height)
                 .arg(bands_.size());
         }
-        return QStringLiteral("GDAL dataset TODO");  // 未读取 GDAL 数据时的占位描述
+        // 没有波段数据时，从显示图像推断尺寸
+        if (!displayImage_.isNull()) {
+            return QStringLiteral("%1 x %2, display only")
+                .arg(displayImage_.width())
+                .arg(displayImage_.height());
+        }
+        // 从文件路径提取文件名
+        QString fileName = path();
+        int lastSlash = fileName.lastIndexOf('/');
+        if (lastSlash >= 0) fileName = fileName.mid(lastSlash + 1);
+        return QStringLiteral("Raster: %1").arg(fileName);
     }
 
 private:
