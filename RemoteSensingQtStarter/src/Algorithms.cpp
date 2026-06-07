@@ -145,9 +145,13 @@ ProcessingResult HistogramAlgorithm::execute(const RasterLayer& input, const Pro
         cv::putText(histImage, "Close window to continue", cv::Point(10, hist_h - 8),
                 cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(200, 200, 200), 1);
 
-    showAndWait("Histogram - " + bandInfo.name.toStdString(), histImage);
+        showAndWait("Histogram - " + bandInfo.name.toStdString(), histImage);
 
-    return {{}, QStringLiteral("直方图统计完成：共 %1 个有效像元").arg(validCount)};
+    // 返回直方图图像
+    cv::Mat histRGB;
+    cv::cvtColor(histImage, histRGB, cv::COLOR_BGR2RGB);
+    QImage resultImg(histRGB.data, histRGB.cols, histRGB.rows, histRGB.step, QImage::Format_RGB888);
+    return {resultImg.copy(), QStringLiteral("直方图统计完成：共 %1 个有效像元").arg(validCount)};
 }
 
 

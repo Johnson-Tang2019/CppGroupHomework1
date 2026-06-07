@@ -53,10 +53,10 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
   private slots:
     // ============ 数据加载（菜单项对应的槽函数） ============
-    void openRasterDatasets(); // 打开文件对话框加载遥感影像（GDAL，支持多选）
-    void openPointCloud();     // TODO: 加载点云数据（PLY/LAS/XYZ）
-    void openMesh();           // TODO: 加载三维网格模型（OBJ/PLY）
-    void openDem();            // TODO: 加载数字高程模型（GeoTIFF/ASCII Grid）
+        void openRasterDatasets(); // 打开文件对话框加载遥感影像（GDAL，支持多选）
+    void openPointCloud();     // 加载点云数据（PLY/LAS/XYZ）
+    void openMesh();           // 加载三维网格模型（OBJ/PLY）
+    void openDem();            // 加载数字高程模型（GeoTIFF/ASCII Grid）
 
     // ============ 数据管理 ============
     void deleteSelectedLayers(); // 删除图层树中当前选中的所有图层
