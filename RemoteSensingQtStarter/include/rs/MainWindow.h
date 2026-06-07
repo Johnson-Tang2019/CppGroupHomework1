@@ -15,10 +15,13 @@
 #include <QGraphicsScene> // Qt 图形场景，管理影像显示的所有图形项
 #include <QGraphicsTextItem>
 #include <QGraphicsView> // Qt 图形视图，在窗口中显示 GraphicsScene
+#include <QInputDialog>
 #include <QLabel>
 #include <QMainWindow> // Qt 主窗口基类，提供菜单栏、工具栏、状态栏等
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
+#include <QPainter>
 #include <QPixmap>
 #include <QSet>
 #include <QSplitter>
@@ -30,11 +33,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cstdint>
-#ifdef RS_WITH_GDAL
-#include <gdal_priv.h>
-#endif
 #include <limits>
-#include <memory>
 #include <memory> // std::shared_ptr，管理图层对象的共享所有权
 #include <stdexcept>
 #include <vector> // std::vector，存储选中的图层索引列表
@@ -73,10 +72,10 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void runOrthorectification(); // 执行正射影像校正
 
     // ============ 三维点云/Mesh ============
-    void exportPly();                 // 导出选中的点云/Mesh 为 PLY
-    void runPointCloudDownsample();   // 点云降采样
-    void runPointCloudFilter();       // 点云统计滤波
-    void runPointCloudToDem();        // 点云转 DEM
+    void exportPly();               // 导出选中的点云/Mesh 为 PLY
+    void runPointCloudDownsample(); // 点云降采样
+    void runPointCloudFilter();     // 点云统计滤波
+    void runPointCloudToDem();      // 点云转 DEM
 
     // ============ 界面交互 ============
     void onSelectionChanged();                                  // 图层树选中项改变时的响应
@@ -124,11 +123,11 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *featureAction_{};      // "ORB/SIFT 特征提取"菜单项
     QAction *demAction_{};          // "DEM 重建"菜单项
     QAction *orthoAction_{};        // "正射影像校正"菜单项
-    QAction* exportPlyAction_ {};        // "导出 PLY"菜单项
-    QAction* clearPointAction_ {};       // "清空三维场景"菜单项
-    QAction* downsampleAction_ {};       // "体素降采样"菜单项
-    QAction* filterAction_ {};           // "统计滤波"菜单项
-    QAction* pcToDemAction_ {};          // "点云转 DEM"菜单项
+    QAction *exportPlyAction_{};    // "导出 PLY"菜单项
+    QAction *clearPointAction_{};   // "清空三维场景"菜单项
+    QAction *downsampleAction_{};   // "体素降采样"菜单项
+    QAction *filterAction_{};       // "统计滤波"菜单项
+    QAction *pcToDemAction_{};      // "点云转 DEM"菜单项
 
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
