@@ -1,6 +1,7 @@
 #include "rs/Scene3DWidget.h"
 #include <GL/gl.h>
 #include <QMouseEvent>
+#include <QShowEvent>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
@@ -53,6 +54,14 @@ void Scene3DWidget::clearData() {
     update();
 }
 
+void Scene3DWidget::showEvent(QShowEvent *event) {
+    QOpenGLWidget::showEvent(event);
+    // 当控件变为可见时（如标签页切换），若有数据则主动触发重绘
+    if (!m_points.isEmpty() || (!meshVertices_.isEmpty() && !meshFaces_.isEmpty())) {
+        update();
+    }
+}
+
 // ── OpenGL 初始化 ────────────────────────────
 void Scene3DWidget::initializeGL() {
     // 背景色：深灰
@@ -66,8 +75,13 @@ void Scene3DWidget::initializeGL() {
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
     glEnable(GL_NORMALIZE);
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE);  // 双面光照，背面也可见
     GLfloat lightPos[] = {1.0f, 1.0f, 1.0f, 0.0f};
+    GLfloat lightAmbient[] = {0.3f, 0.3f, 0.3f, 1.0f};
+    GLfloat lightDiffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
     glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
+    glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmbient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
 
     glPointSize(2.0f);
 }
@@ -132,10 +146,16 @@ static QVector3D faceNormal(const QVector3D &a, const QVector3D &b, const QVecto
 
 // ── 每帧绘制 ─────────────────────────────────
 void Scene3DWidget::paintGL() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
     const bool hasPoints = !m_points.isEmpty();
     const bool hasMesh = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
+
+    // 诊断：有数据时用醒目的红色清屏，确认 paintGL 被调用了
+    if (hasPoints || hasMesh) {
+        glClearColor(0.3f, 0.05f, 0.05f, 1.0f);  // 暗红色 = paintGL 被调用且有数据
+    } else {
+        glClearColor(0.18f, 0.18f, 0.20f, 1.0f);  // 深灰 = 正常空状态
+    }
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // 计算包围盒（用于设置视口和坐标轴）
     QVector3D center;
@@ -229,7 +249,7 @@ void Scene3DWidget::paintGL() {
         glDisable(GL_LIGHTING);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         glLineWidth(1.0f);
-        glColor3f(0.1f, 0.1f, 0.1f);
+        glColor3f(0.3f, 0.3f, 0.35f);
 
         glBegin(GL_TRIANGLES);
         for (const auto &face : meshFaces_) {

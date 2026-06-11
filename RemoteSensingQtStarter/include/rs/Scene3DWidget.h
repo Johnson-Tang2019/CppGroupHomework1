@@ -27,6 +27,7 @@ class Scene3DWidget : public QOpenGLWidget {
   protected:
     void initializeGL() override;
     void paintGL() override;
+    void showEvent(QShowEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;

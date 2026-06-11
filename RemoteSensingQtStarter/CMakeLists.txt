@@ -25,6 +25,7 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/DataObject.h
     include/rs/Geometry.h
     include/rs/LayerManager.h
+    resources/app.rc
     include/rs/ProcessingAlgorithm.h
     include/rs/Algorithms.h
     include/rs/RasterIO.h
@@ -32,6 +33,10 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/MainWindow.h
     include/rs/Scene3DWidget.h    #增加
 )
+
+# Windows EXE 图标：将 .ico 复制到构建目录，确保 RC 编译器能找到
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/resources/app.ico"
+     DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 
 target_link_libraries(RemoteSensingQtStarter PRIVATE ${OpenCV_LIBS})
 

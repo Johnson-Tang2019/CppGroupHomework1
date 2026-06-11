@@ -778,6 +778,9 @@ void MainWindow::openMesh() {
 
         auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
         layers_.add(layer);
+        scene3DWidget_->setMesh(vertices, faces);
+        tabs_->setCurrentWidget(scene3DWidget_);
+        scene3DWidget_->update();
         appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
                       .arg(info.fileName())
                       .arg(vertices.size())
