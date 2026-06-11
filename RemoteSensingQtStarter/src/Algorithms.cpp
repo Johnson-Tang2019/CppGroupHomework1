@@ -18,6 +18,17 @@
 
 namespace rs {
 
+// ── 辅助函数：限制立体匹配输入尺寸，避免 SGBM 在主线程上过久阻塞 UI ──
+static void limitStereoImageSize(cv::Mat& left, cv::Mat& right, int maxDim = 1024) {
+    const int maxSide = std::max({left.cols, left.rows, right.cols, right.rows});
+    if (maxSide <= maxDim) {
+        return;
+    }
+    const double scale = static_cast<double>(maxDim) / static_cast<double>(maxSide);
+    cv::resize(left, left, cv::Size(), scale, scale, cv::INTER_AREA);
+    cv::resize(right, right, cv::Size(), scale, scale, cv::INTER_AREA);
+}
+
 // ── 辅助函数：将 QVector<float> 转为 cv::Mat（单通道灰度，CV_32F） ──
 static cv::Mat rasterBandToMat(const RasterBand& band) {
     if (!band.hasSamples()) return cv::Mat();
@@ -398,10 +409,11 @@ ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer& input, c
     if (leftImage.empty()) leftImage = rightImage.clone();
     if (rightImage.empty()) rightImage = leftImage.clone();
 
-    // 确保尺寸相同（SGBM 要求）
+    // 确保尺寸相同（SGBM 要求），并限制最大边长以控制计算量
     if (leftImage.size() != rightImage.size()) {
         cv::resize(rightImage, rightImage, leftImage.size());
     }
+    limitStereoImageSize(leftImage, rightImage);
 
     // SGBM 立体匹配
     int numDisparities = 16 * 3;  // 视差范围
@@ -447,14 +459,27 @@ ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer& input, c
         }
     }
 
-    // 显示结果
+    // 生成预览图（不在算法内弹模态窗，避免阻塞 UI 事件循环）
+    cv::Mat leftBgr;
+    if (leftImage.channels() == 1) {
+        cv::cvtColor(leftImage, leftBgr, cv::COLOR_GRAY2BGR);
+    } else {
+        leftBgr = leftImage;
+    }
+    if (colorDisp.rows != leftBgr.rows || colorDisp.cols != leftBgr.cols) {
+        cv::resize(colorDisp, colorDisp, leftBgr.size());
+    }
+
     cv::Mat display;
-    cv::hconcat(leftImage, colorDisp, display);
-    std::string info = "Left Image | Disparity Map (DEM) - Press ANY KEY";
+    cv::hconcat(leftBgr, colorDisp, display);
+    std::string info = "Left Image | Disparity Map (DEM)";
     cv::putText(display, info, cv::Point(10, 30),
                 cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
 
-    showAndWait("DEM Reconstruction", display);
+    cv::Mat displayRgb;
+    cv::cvtColor(display, displayRgb, cv::COLOR_BGR2RGB);
+    QImage previewImage(displayRgb.data, displayRgb.cols, displayRgb.rows, displayRgb.step,
+                        QImage::Format_RGB888);
 
     // 创建 DEM 图层
     auto dem = std::make_shared<DemLayer>(
@@ -464,7 +489,14 @@ ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer& input, c
 
     dem->setSourceRasterPath(input.path());
 
-    return {{}, QStringLiteral("DEM 重建完成：%1").arg(dem->name()), dem};
+    return {previewImage.copy(),
+            QStringLiteral("DEM 重建完成：%1（%2x%3，SGBM 处理尺寸 %4x%5）")
+                .arg(dem->name())
+                .arg(demWidth)
+                .arg(demHeight)
+                .arg(leftImage.cols)
+                .arg(leftImage.rows),
+            dem};
 }
 
 

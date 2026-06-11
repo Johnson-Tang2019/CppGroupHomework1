@@ -5,6 +5,12 @@
 #include "rs/RasterRenderDialog.h"
 #include "rs/Scene3DWidget.h"
 
+#include <QApplication>
+#include <QDialog>
+#include <QFutureWatcher>
+#include <QProgressDialog>
+#include <QtConcurrent>
+
 namespace rs {
 namespace {
 
@@ -1092,19 +1098,58 @@ void MainWindow::runDemReconstruction() {
     if (outputDir.isEmpty())
         return;
 
-    // DEM 重建（使用统一 ProcessingAlgorithm 接口）
-    ProcessingContext ctx;
-    ctx.auxiliaryRaster = rightImage.get();
-    ctx.parameters["outputDirectory"] = outputDir;
+    // DEM 重建在后台线程执行，避免 SGBM 阻塞 UI
+    const auto leftCopy = leftImage;
+    const auto rightCopy = rightImage;
+    const QString outputDirCopy = outputDir;
 
-    DemReconstructionAlgorithm algorithm;
-    const auto result = algorithm.execute(*leftImage, ctx);
+    auto *progress = new QProgressDialog(QStringLiteral("正在执行 SGBM 立体匹配，请稍候…"), QString(),
+                                         0, 0, this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setCancelButton(nullptr);
+    progress->setMinimumDuration(0);
+    progress->setWindowTitle(QStringLiteral("DEM 重建"));
+    progress->show();
+    QApplication::processEvents();
 
-    appendLog(result.message);
-    if (result.demResult) {
-        layers_.add(result.demResult);
-        refreshLayerTree();
-    }
+    auto *watcher = new QFutureWatcher<ProcessingResult>(this);
+    connect(watcher, &QFutureWatcher<ProcessingResult>::finished, this,
+            [this, watcher, progress]() {
+                progress->close();
+                progress->deleteLater();
+
+                const ProcessingResult result = watcher->result();
+                watcher->deleteLater();
+
+                appendLog(result.message);
+                if (result.demResult) {
+                    layers_.add(result.demResult);
+                    refreshLayerTree();
+                }
+                if (!result.image.isNull()) {
+                    QDialog preview(this);
+                    preview.setWindowTitle(QStringLiteral("DEM 重建结果"));
+                    preview.setWindowFlags(preview.windowFlags() | Qt::WindowMaximizeButtonHint);
+                    auto *label = new QLabel(&preview);
+                    label->setPixmap(QPixmap::fromImage(result.image));
+                    label->setAlignment(Qt::AlignCenter);
+                    auto *layout = new QVBoxLayout(&preview);
+                    layout->setContentsMargins(0, 0, 0, 0);
+                    layout->addWidget(label);
+                    preview.resize(qMin(result.image.width() + 40, 1280),
+                                   qMin(result.image.height() + 60, 800));
+                    preview.exec();
+                }
+                updateActionStates();
+            });
+
+    watcher->setFuture(QtConcurrent::run([leftCopy, rightCopy, outputDirCopy]() {
+        ProcessingContext ctx;
+        ctx.auxiliaryRaster = rightCopy.get();
+        ctx.parameters[QStringLiteral("outputDirectory")] = outputDirCopy;
+        DemReconstructionAlgorithm algorithm;
+        return algorithm.execute(*leftCopy, ctx);
+    }));
 }
 
 // 执行正射校正流程
