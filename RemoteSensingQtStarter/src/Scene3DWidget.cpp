@@ -64,8 +64,8 @@ void Scene3DWidget::showEvent(QShowEvent *event) {
 
 // ── OpenGL 初始化 ────────────────────────────
 void Scene3DWidget::initializeGL() {
-    // 背景色：深灰
-    glClearColor(0.18f, 0.18f, 0.20f, 1.0f);
+    // 背景色：浅粉
+    glClearColor(1.0f, 0.94f, 0.96f, 1.0f);
 
     // 启用深度测试
     glEnable(GL_DEPTH_TEST);
@@ -149,12 +149,8 @@ void Scene3DWidget::paintGL() {
     const bool hasPoints = !m_points.isEmpty();
     const bool hasMesh = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
 
-    // 诊断：有数据时用醒目的红色清屏，确认 paintGL 被调用了
-    if (hasPoints || hasMesh) {
-        glClearColor(0.3f, 0.05f, 0.05f, 1.0f);  // 暗红色 = paintGL 被调用且有数据
-    } else {
-        glClearColor(0.18f, 0.18f, 0.20f, 1.0f);  // 深灰 = 正常空状态
-    }
+    // 清屏：浅粉色背景
+    glClearColor(1.0f, 0.94f, 0.96f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // 计算包围盒（用于设置视口和坐标轴）
@@ -227,10 +223,10 @@ void Scene3DWidget::paintGL() {
             const QVector3D &vb = meshVertices_[face.b];
             const QVector3D &vc = meshVertices_[face.c];
 
-            // 基于面法向量的简单着色（利用 Z 分量）
+            // 基于面法向量的简单着色（利用 Z 分量），粉紫色调
             QVector3D n = faceNormal(va, vb, vc);
-            float shade = 0.3f + 0.7f * std::abs(n.z());
-            glColor3f(0.5f * shade, 0.7f * shade, 0.9f * shade);
+            float shade = 0.4f + 0.6f * std::abs(n.z());
+            glColor3f(1.0f * shade, 0.55f * shade, 0.75f * shade);
 
             glNormal3f(n.x(), n.y(), n.z());
             glVertex3f((va.x() - center.x()) * scale,
@@ -279,7 +275,7 @@ void Scene3DWidget::paintGL() {
     if (hasPoints) {
         glEnable(GL_LIGHTING);
         glBegin(GL_POINTS);
-        glColor3f(0.6f, 0.8f, 1.0f); // 浅蓝色点
+        glColor3f(0.8f, 0.2f, 0.5f); // 粉红色点
         for (const auto &p : m_points) {
             glVertex3f((p.x() - center.x()) * scale,
                        (p.y() - center.y()) * scale,
