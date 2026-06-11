@@ -553,9 +553,6 @@ QVector<QVector3D> PointCloudFilterAlgorithm::voxelDownsample(
     QVector<QVector3D> result;
     result.reserve(static_cast<int>(grid.size()));
     for (const auto& [key, entry] : grid) {
-        double sum = entry.first;
-        int count = entry.second;
-        // 无法从 sum 复原 x/y/z，改用网格中心代替
         auto [ix, iy, iz] = key;
         result.append(QVector3D(
             static_cast<float>((ix + 0.5) * voxelSize),
