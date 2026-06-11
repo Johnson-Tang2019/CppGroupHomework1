@@ -313,8 +313,6 @@ QString DemReconstructionAlgorithm::category() const { return QStringLiteral("�
 std::vector<AlgorithmParameter> DemReconstructionAlgorithm::parameterSchema() const { return {}; }
 
 ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer& input, const ProcessingContext& context) const {
-    const QString leftImagePath = input.path();
-    const QString rightImagePath = context.parameters.value("rightImagePath").toString();
     const QString outputDir = context.parameters.value("outputDirectory").toString();
     const QString cameraFilePath = context.parameters.value("cameraFilePath").toString();
     const QString controlPointFilePath = context.parameters.value("controlPointFilePath").toString();
@@ -322,44 +320,63 @@ ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer& input, c
     cv::Mat leftImage, rightImage;
     std::string errorMsg;
 
-    // 优先级 1：通过 GDAL 读取（支持 GeoTIFF 等遥感格式）
+    // 优先级 1：直接从已加载的 RasterLayer 波段数据构建 cv::Mat
+    // 左影像：来自 input（主参数）
+    if (input.bandCount() > 0 && input.band(0).hasSamples()) {
+        cv::Mat lf = rasterBandToMat(input.band(0));
+        leftImage = stretchTo8U(lf, input.band(0).minValue, input.band(0).maxValue);
+    }
+
+    // 右影像：来自 context.auxiliaryRaster
+    if (context.auxiliaryRaster && context.auxiliaryRaster->bandCount() > 0
+        && context.auxiliaryRaster->band(0).hasSamples()) {
+        cv::Mat rf = rasterBandToMat(context.auxiliaryRaster->band(0));
+        rightImage = stretchTo8U(rf, context.auxiliaryRaster->band(0).minValue,
+                                 context.auxiliaryRaster->band(0).maxValue);
+    }
+
+    // 优先级 2：如果内存数据为空，尝试通过 GDAL 从磁盘读取
 #ifdef RS_WITH_GDAL
-    try {
-        auto leftLayer = io::loadRasterDataset(leftImagePath, {});
-        auto rightLayer = io::loadRasterDataset(rightImagePath, {});
-        if (leftLayer && leftLayer->bandCount() > 0 && rightLayer && rightLayer->bandCount() > 0) {
-            if (leftLayer->band(0).hasSamples()) {
+    if (leftImage.empty()) {
+        try {
+            auto leftLayer = io::loadRasterDataset(input.path(), {});
+            if (leftLayer && leftLayer->bandCount() > 0 && leftLayer->band(0).hasSamples()) {
                 cv::Mat lf = rasterBandToMat(leftLayer->band(0));
                 leftImage = stretchTo8U(lf, leftLayer->band(0).minValue, leftLayer->band(0).maxValue);
             }
-            if (rightLayer->band(0).hasSamples()) {
+        } catch (const std::exception& e) {
+            errorMsg = "GDAL 左影像: " + std::string(e.what());
+        }
+    }
+    if (rightImage.empty() && context.auxiliaryRaster) {
+        try {
+            auto rightLayer = io::loadRasterDataset(context.auxiliaryRaster->path(), {});
+            if (rightLayer && rightLayer->bandCount() > 0 && rightLayer->band(0).hasSamples()) {
                 cv::Mat rf = rasterBandToMat(rightLayer->band(0));
                 rightImage = stretchTo8U(rf, rightLayer->band(0).minValue, rightLayer->band(0).maxValue);
             }
+        } catch (const std::exception& e) {
+            errorMsg += " | GDAL 右影像: " + std::string(e.what());
         }
-    } catch (const std::exception& e) {
-        errorMsg = "GDAL: " + std::string(e.what());
-        std::cerr << "GDAL 读取失败: " << e.what() << std::endl;
     }
 #endif
 
-    // 优先级 2：OpenCV 直接读取
+    // 优先级 3：OpenCV 直接读取（支持常规图片格式）
     if (leftImage.empty()) {
-        leftImage = cv::imread(leftImagePath.toStdString(), cv::IMREAD_GRAYSCALE);
+        leftImage = cv::imread(input.path().toStdString(), cv::IMREAD_GRAYSCALE);
         if (leftImage.empty()) {
-            errorMsg += " | OpenCV imread 失败: " + leftImagePath.toStdString();
+            errorMsg += " | OpenCV imread 失败: " + input.path().toStdString();
         }
     }
-    if (rightImage.empty()) {
-        rightImage = cv::imread(rightImagePath.toStdString(), cv::IMREAD_GRAYSCALE);
+    if (rightImage.empty() && context.auxiliaryRaster) {
+        rightImage = cv::imread(context.auxiliaryRaster->path().toStdString(), cv::IMREAD_GRAYSCALE);
         if (rightImage.empty()) {
-            errorMsg += " | OpenCV imread 失败: " + rightImagePath.toStdString();
+            errorMsg += " | OpenCV imread 失败: " + context.auxiliaryRaster->path().toStdString();
         }
     }
 
-    // 优先级 3：如果路径无效或文件不存在，产生模拟数据
+    // 兜底：如果所有方式都失败，产生模拟数据
     if (leftImage.empty() && rightImage.empty()) {
-        // 模拟生成 DEM 数据
         const int demW = 256, demH = 256;
         QVector<float> elevations(demW * demH);
         for (int y = 0; y < demH; ++y) {
@@ -373,7 +390,7 @@ ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer& input, c
         auto dem = std::make_shared<DemLayer>(demName, QStringLiteral("模拟DEM"), demW, demH, elevations);
         std::array<double, 6> gt = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
         dem->setGeoTransform(gt);
-        return {{}, QStringLiteral("DEM 重建完成（模拟）：%1，尺寸 %2x%3。")
+        return {{}, QStringLiteral("DEM 重建完成（模拟）：%1，尺寸 %2x%3。将两个栅格图层加载到工程中即可进行真实 SGBM 立体匹配。")
                      .arg(demName).arg(demW).arg(demH), dem};
     }
 
@@ -445,7 +462,7 @@ ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer& input, c
         outputDir.isEmpty() ? QStringLiteral("dem.tif") : outputDir + "/dem.tif",
         demWidth, demHeight, elevations);
 
-    dem->setSourceRasterPath(leftImagePath);
+    dem->setSourceRasterPath(input.path());
 
     return {{}, QStringLiteral("DEM 重建完成：%1").arg(dem->name()), dem};
 }

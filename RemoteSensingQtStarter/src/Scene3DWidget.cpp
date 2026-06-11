@@ -30,7 +30,27 @@ Scene3DWidget::Scene3DWidget(QWidget *parent) : QOpenGLWidget(parent) {}
 
 void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
     m_points = points;
-    update(); // 请求重绘
+    if (!points.isEmpty()) {
+        meshVertices_.clear();
+        meshFaces_.clear();
+    }
+    update();
+}
+
+void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces) {
+    meshVertices_ = vertices;
+    meshFaces_ = faces;
+    if (!vertices.isEmpty()) {
+        m_points.clear();
+    }
+    update();
+}
+
+void Scene3DWidget::clearData() {
+    m_points.clear();
+    meshVertices_.clear();
+    meshFaces_.clear();
+    update();
 }
 
 // ── OpenGL 初始化 ────────────────────────────
@@ -52,14 +72,80 @@ void Scene3DWidget::initializeGL() {
     glPointSize(2.0f);
 }
 
+// ── 计算数据包围盒 ──────────────────────────
+static void computeBounds(const QVector<QVector3D> &points,
+                          const QVector<QVector3D> &meshVerts,
+                          QVector3D &center, float &halfExtent) {
+    float cx = 0, cy = 0, cz = 0;
+    int count = 0;
+
+    auto addPoint = [&](float x, float y, float z) {
+        cx += x;
+        cy += y;
+        cz += z;
+        ++count;
+    };
+
+    for (const auto &p : points) {
+        addPoint(p.x(), p.y(), p.z());
+    }
+    for (const auto &v : meshVerts) {
+        addPoint(v.x(), v.y(), v.z());
+    }
+
+    if (count == 0) {
+        center = QVector3D(0, 0, 0);
+        halfExtent = 1.0f;
+        return;
+    }
+
+    cx /= count;
+    cy /= count;
+    cz /= count;
+    center = QVector3D(cx, cy, cz);
+
+    float maxDist = 0;
+    for (const auto &p : points) {
+        const float dx = p.x() - cx;
+        const float dy = p.y() - cy;
+        const float dz = p.z() - cz;
+        maxDist = std::max(maxDist, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    for (const auto &v : meshVerts) {
+        const float dx = v.x() - cx;
+        const float dy = v.y() - cy;
+        const float dz = v.z() - cz;
+        maxDist = std::max(maxDist, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    halfExtent = maxDist > 0 ? maxDist : 1.0f;
+}
+
+// ── 计算三角面法向量 ────────────────────────
+static QVector3D faceNormal(const QVector3D &a, const QVector3D &b, const QVector3D &c) {
+    QVector3D ab = b - a;
+    QVector3D ac = c - a;
+    QVector3D n = QVector3D::crossProduct(ab, ac);
+    float len = n.length();
+    if (len > 1e-10f) n /= len;
+    return n;
+}
+
 // ── 每帧绘制 ─────────────────────────────────
 void Scene3DWidget::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    const bool hasPoints = !m_points.isEmpty();
+    const bool hasMesh = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
+
+    // 计算包围盒（用于设置视口和坐标轴）
+    QVector3D center;
+    float halfExtent;
+    computeBounds(m_points, meshVertices_, center, halfExtent);
+
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     const float aspect = static_cast<float>(width()) / std::max(height(), 1);
-    const float zFar = m_halfExtent * 20.0f + 10.0f;
+    const float zFar = halfExtent * 20.0f + 10.0f;
     const float zNear = 0.01f;
     float projMatrix[16];
     const float f = 1.0f / std::tan(45.0f * 3.14159265f / 360.0f);
@@ -84,60 +170,107 @@ void Scene3DWidget::paintGL() {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    // 相机位置：先从原点往后拉，让归一化后的点云在可见范围内
+    const float scale = (halfExtent > 0) ? (1.0f / halfExtent) : 1.0f;
+
+    // 相机位置
     glTranslatef(0.0f, 0.0f, -3.0f * m_zoom);
     glRotatef(m_rotX, 1.0f, 0.0f, 0.0f);
     glRotatef(m_rotY, 0.0f, 1.0f, 0.0f);
 
     glDisable(GL_LIGHTING); // 坐标轴不需要光照
     glBegin(GL_LINES);
-    const float axisLen = m_halfExtent * 1.5f;
+    const float axisLen = halfExtent * 1.5f;
     glColor3f(1.0f, 0.2f, 0.2f);
-    glVertex3f(m_center.x() - axisLen, m_center.y(), m_center.z());
-    glVertex3f(m_center.x() + axisLen, m_center.y(), m_center.z());
+    glVertex3f((center.x() - axisLen) * scale, (center.y()) * scale, (center.z()) * scale);
+    glVertex3f((center.x() + axisLen) * scale, (center.y()) * scale, (center.z()) * scale);
     glColor3f(0.2f, 1.0f, 0.2f);
-    glVertex3f(m_center.x(), m_center.y() - axisLen, m_center.z());
-    glVertex3f(m_center.x(), m_center.y() + axisLen, m_center.z());
+    glVertex3f((center.x()) * scale, (center.y() - axisLen) * scale, (center.z()) * scale);
+    glVertex3f((center.x()) * scale, (center.y() + axisLen) * scale, (center.z()) * scale);
     glColor3f(0.2f, 0.2f, 1.0f);
-    glVertex3f(m_center.x(), m_center.y(), m_center.z() - axisLen);
-    glVertex3f(m_center.x(), m_center.y(), m_center.z() + axisLen);
+    glVertex3f((center.x()) * scale, (center.y()) * scale, (center.z() - axisLen) * scale);
+    glVertex3f((center.x()) * scale, (center.y()) * scale, (center.z() + axisLen) * scale);
     glEnd();
+
+    // ── 绘制 Mesh ──────────────────────────
+    if (hasMesh) {
+        glEnable(GL_LIGHTING);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+        glBegin(GL_TRIANGLES);
+        for (const auto &face : meshFaces_) {
+            if (face.a < 0 || face.a >= meshVertices_.size() ||
+                face.b < 0 || face.b >= meshVertices_.size() ||
+                face.c < 0 || face.c >= meshVertices_.size())
+                continue;
+
+            const QVector3D &va = meshVertices_[face.a];
+            const QVector3D &vb = meshVertices_[face.b];
+            const QVector3D &vc = meshVertices_[face.c];
+
+            // 基于面法向量的简单着色（利用 Z 分量）
+            QVector3D n = faceNormal(va, vb, vc);
+            float shade = 0.3f + 0.7f * std::abs(n.z());
+            glColor3f(0.5f * shade, 0.7f * shade, 0.9f * shade);
+
+            glNormal3f(n.x(), n.y(), n.z());
+            glVertex3f((va.x() - center.x()) * scale,
+                       (va.y() - center.y()) * scale,
+                       (va.z() - center.z()) * scale);
+            glVertex3f((vb.x() - center.x()) * scale,
+                       (vb.y() - center.y()) * scale,
+                       (vb.z() - center.z()) * scale);
+            glVertex3f((vc.x() - center.x()) * scale,
+                       (vc.y() - center.y()) * scale,
+                       (vc.z() - center.z()) * scale);
+        }
+        glEnd();
+
+        // 绘制线框，让三角面边界可见
+        glDisable(GL_LIGHTING);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glLineWidth(1.0f);
+        glColor3f(0.1f, 0.1f, 0.1f);
+
+        glBegin(GL_TRIANGLES);
+        for (const auto &face : meshFaces_) {
+            if (face.a < 0 || face.a >= meshVertices_.size() ||
+                face.b < 0 || face.b >= meshVertices_.size() ||
+                face.c < 0 || face.c >= meshVertices_.size())
+                continue;
+            const QVector3D &va = meshVertices_[face.a];
+            const QVector3D &vb = meshVertices_[face.b];
+            const QVector3D &vc = meshVertices_[face.c];
+            glVertex3f((va.x() - center.x()) * scale,
+                       (va.y() - center.y()) * scale,
+                       (va.z() - center.z()) * scale);
+            glVertex3f((vb.x() - center.x()) * scale,
+                       (vb.y() - center.y()) * scale,
+                       (vb.z() - center.z()) * scale);
+            glVertex3f((vc.x() - center.x()) * scale,
+                       (vc.y() - center.y()) * scale,
+                       (vc.z() - center.z()) * scale);
+        }
+        glEnd();
+
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
 
     // ── 绘制点云 ──────────────────────────
-    if (m_points.isEmpty()) {
-        // 无数据时画提示文字（通过 QPainter 叠加）
+    if (hasPoints) {
+        glEnable(GL_LIGHTING);
+        glBegin(GL_POINTS);
+        glColor3f(0.6f, 0.8f, 1.0f); // 浅蓝色点
+        for (const auto &p : m_points) {
+            glVertex3f((p.x() - center.x()) * scale,
+                       (p.y() - center.y()) * scale,
+                       (p.z() - center.z()) * scale);
+        }
+        glEnd();
+    }
+
+    if (!hasPoints && !hasMesh) {
         return;
     }
-
-    // 计算点云中心，居中显示
-    float cx = 0, cy = 0, cz = 0;
-    for (const auto &p : m_points) {
-        cx += p.x();
-        cy += p.y();
-        cz += p.z();
-    }
-    const float invN = 1.0f / m_points.size();
-    cx *= invN;
-    cy *= invN;
-    cz *= invN;
-
-    // 计算点云范围，用于自动缩放
-    float maxDist = 0;
-    for (const auto &p : m_points) {
-        const float dx = p.x() - cx;
-        const float dy = p.y() - cy;
-        const float dz = p.z() - cz;
-        maxDist = std::max(maxDist, std::sqrt(dx * dx + dy * dy + dz * dz));
-    }
-    const float scale = (maxDist > 0) ? (1.0f / maxDist) : 1.0f;
-
-    glBegin(GL_POINTS);
-    glColor3f(0.6f, 0.8f, 1.0f); // 浅蓝色点
-    for (const auto &p : m_points) {
-        // 平移至中心并缩放到合理大小
-        glVertex3f((p.x() - cx) * scale, (p.y() - cy) * scale, (p.z() - cz) * scale);
-    }
-    glEnd();
 }
 
 // ── 鼠标交互 ─────────────────────────────────
@@ -157,25 +290,15 @@ void Scene3DWidget::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void Scene3DWidget::fitToBounds() {
-    // TODO: 根据当前点云数据自动调整相机位置和缩放
-    if (m_points.isEmpty()) return;
+    QVector3D center;
+    float halfExtent;
+    computeBounds(m_points, meshVertices_, center, halfExtent);
 
-    float cx = 0, cy = 0, cz = 0;
-    for (const auto &p : m_points) {
-        cx += p.x(); cy += p.y(); cz += p.z();
-    }
-    const float invN = 1.0f / m_points.size();
-    m_center = QVector3D(cx * invN, cy * invN, cz * invN);
-
-    float maxDist = 0;
-    for (const auto &p : m_points) {
-        const float dx = p.x() - m_center.x();
-        const float dy = p.y() - m_center.y();
-        const float dz = p.z() - m_center.z();
-        maxDist = std::max(maxDist, std::sqrt(dx * dx + dy * dy + dz * dz));
-    }
-    m_halfExtent = maxDist > 0 ? maxDist : 1.0f;
+    m_center = center;
+    m_halfExtent = halfExtent;
     m_zoom = 1.0f;
+    m_rotX = 0;
+    m_rotY = 0;
     update();
 }
 

@@ -1094,7 +1094,7 @@ void MainWindow::runDemReconstruction() {
 
     // DEM 重建（使用统一 ProcessingAlgorithm 接口）
     ProcessingContext ctx;
-    ctx.parameters["rightImagePath"] = rightImage->path();
+    ctx.auxiliaryRaster = rightImage.get();
     ctx.parameters["outputDirectory"] = outputDir;
 
     DemReconstructionAlgorithm algorithm;
@@ -1363,7 +1363,51 @@ void MainWindow::runPointCloudToDem() {
 
 // 当图层树选中项改变时，刷新影像显示和菜单状态
 void MainWindow::onSelectionChanged() {
-    displayRaster(selectedRaster(), selectedBandIndex());
+    const auto selected = selectedRaster();
+    if (selected) {
+        displayRaster(selected, selectedBandIndex());
+    } else {
+        // 检查是否选中了 3D 类型的图层
+        const auto indices = selectedLayerIndices();
+        for (int idx : indices) {
+            try {
+                const auto layer = layers_.at(idx);
+                if (layer->type() == DataType::PointCloud) {
+                    const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer);
+                    if (pc && !pc->points().isEmpty()) {
+                        scene3DWidget_->setPoints(pc->points());
+                        tabs_->setCurrentWidget(scene3DWidget_);
+                    }
+                } else if (layer->type() == DataType::Mesh) {
+                    const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
+                    if (mesh && !mesh->vertices().isEmpty()) {
+                        scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                        tabs_->setCurrentWidget(scene3DWidget_);
+                    }
+                } else if (layer->type() == DataType::Dem) {
+                    const auto dem = std::dynamic_pointer_cast<DemLayer>(layer);
+                    if (dem) {
+                        QVector<QVector3D> demPoints;
+                        const auto &elevs = dem->elevations();
+                        const int w = dem->width();
+                        const int h = dem->height();
+                        demPoints.reserve(elevs.size());
+                        for (int y = 0; y < h; ++y) {
+                            for (int x = 0; x < w; ++x) {
+                                float z = elevs[y * w + x];
+                                demPoints.append(QVector3D(
+                                    static_cast<float>(x),
+                                    static_cast<float>(y), z));
+                            }
+                        }
+                        scene3DWidget_->setPoints(demPoints);
+                        tabs_->setCurrentWidget(scene3DWidget_);
+                    }
+                }
+            } catch (...) {
+            }
+        }
+    }
     updateActionStates();
 }
 
@@ -1386,10 +1430,47 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
         if (layer->type() == DataType::PointCloud) {
             if (visible) {
                 const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer);
-                if (pc)
+                if (pc) {
                     scene3DWidget_->setPoints(pc->points());
+                    tabs_->setCurrentWidget(scene3DWidget_);
+                }
             } else {
                 scene3DWidget_->setPoints({});
+            }
+        } else if (layer->type() == DataType::Mesh) {
+            if (visible) {
+                const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
+                if (mesh) {
+                    scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                    tabs_->setCurrentWidget(scene3DWidget_);
+                }
+            } else {
+                scene3DWidget_->clearData();
+            }
+        } else if (layer->type() == DataType::Dem) {
+            if (visible) {
+                const auto dem = std::dynamic_pointer_cast<DemLayer>(layer);
+                if (dem) {
+                    // 将 DEM 高程转为点云显示
+                    QVector<QVector3D> demPoints;
+                    const auto &elevs = dem->elevations();
+                    const int w = dem->width();
+                    const int h = dem->height();
+                    demPoints.reserve(elevs.size());
+                    for (int y = 0; y < h; ++y) {
+                        for (int x = 0; x < w; ++x) {
+                            float z = elevs[y * w + x];
+                            demPoints.append(QVector3D(
+                                static_cast<float>(x),
+                                static_cast<float>(y),
+                                z));
+                        }
+                    }
+                    scene3DWidget_->setPoints(demPoints);
+                    tabs_->setCurrentWidget(scene3DWidget_);
+                }
+            } else {
+                scene3DWidget_->clearData();
             }
         } else if (layer->type() == DataType::Raster) {
             // 二维影像图层：刷新当前显示的影像
