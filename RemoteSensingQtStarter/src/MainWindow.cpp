@@ -258,6 +258,21 @@ void MainWindow::createMenus() {
     orthoAction_ = photogrammetryMenu->addAction(
         QStringLiteral("正射影像校正...")); // 添加"正射影像校正"并保存指针
     connect(orthoAction_, &QAction::triggered, this, &MainWindow::runOrthorectification);
+
+    // ---- "点云处理" 菜单 ----
+    auto *pcMenu = menuBar()->addMenu(QStringLiteral("点云处理"));  // 创建"点云处理"菜单
+    downsampleAction_ =
+        pcMenu->addAction(QStringLiteral("体素降采样...")); // 添加"体素降采样"并保存指针
+    connect(downsampleAction_, &QAction::triggered, this, &MainWindow::runPointCloudDownsample);
+    filterAction_ =
+        pcMenu->addAction(QStringLiteral("统计滤波...")); // 添加"统计滤波"并保存指针
+    connect(filterAction_, &QAction::triggered, this, &MainWindow::runPointCloudFilter);
+    pcToDemAction_ =
+        pcMenu->addAction(QStringLiteral("点云转 DEM...")); // 添加"点云转 DEM"并保存指针
+    connect(pcToDemAction_, &QAction::triggered, this, &MainWindow::runPointCloudToDem);
+    exportPlyAction_ =
+        pcMenu->addAction(QStringLiteral("导出 PLY...")); // 添加"导出 PLY"并保存指针
+    connect(exportPlyAction_, &QAction::triggered, this, &MainWindow::exportPly);
 }
 
 // 构建界面布局：左侧图层树 + 右侧影像/三维标签页 + 底部日志面板
@@ -1077,43 +1092,18 @@ void MainWindow::runDemReconstruction() {
     if (outputDir.isEmpty())
         return;
 
-    // 模拟 DEM 重建
-    DemReconstructionPipeline::Inputs inputs;
-    inputs.leftImagePath = leftImage->path();
-    inputs.rightImagePath = rightImage->path();
-    inputs.outputDirectory = outputDir;
+    // DEM 重建（使用统一 ProcessingAlgorithm 接口）
+    ProcessingContext ctx;
+    ctx.parameters["rightImagePath"] = rightImage->path();
+    ctx.parameters["outputDirectory"] = outputDir;
 
-    try {
-        DemReconstructionPipeline pipeline;
-        auto dem = pipeline.reconstruct(inputs); // 这会抛异常（TODO）
-        if (dem) {
-            layers_.add(dem);
-            refreshLayerTree();
-            appendLog(QStringLiteral("DEM 重建完成：%1").arg(dem->name()));
-        }
-    } catch (const std::exception &e) {
-        // 模拟生成 DEM
-        const int demW = 256, demH = 256;
-        QVector<float> elevations(demW * demH);
-        for (int y = 0; y < demH; ++y) {
-            for (int x = 0; x < demW; ++x) {
-                // 模拟地形：正弦波丘陵
-                elevations[y * demW + x] = 100.0f +
-                                           20.0f * std::sin(x * 0.05f) * std::cos(y * 0.05f) +
-                                           10.0f * std::sin(x * 0.02f + y * 0.03f);
-            }
-        }
-        const QString demName = leftImage->name() + QStringLiteral("_DEM");
-        auto dem =
-            std::make_shared<DemLayer>(demName, QStringLiteral("模拟DEM"), demW, demH, elevations);
-        std::array<double, 6> gt = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
-        dem->setGeoTransform(gt);
-        layers_.add(dem);
+    DemReconstructionAlgorithm algorithm;
+    const auto result = algorithm.execute(*leftImage, ctx);
+
+    appendLog(result.message);
+    if (result.demResult) {
+        layers_.add(result.demResult);
         refreshLayerTree();
-        appendLog(QStringLiteral("DEM 重建完成（模拟）：%1，尺寸 %2x%3。")
-                      .arg(demName)
-                      .arg(demW)
-                      .arg(demH));
     }
 }
 
@@ -1139,9 +1129,12 @@ void MainWindow::runOrthorectification() {
         return;
     }
 
-    // 模拟执行正射校正
-    OrthorectificationPipeline pipeline;
-    const auto result = pipeline.rectify(*raster, *dem);
+    // 正射校正（使用统一 ProcessingAlgorithm 接口，DEM 通过 context 传递）
+    ProcessingContext ctx;
+    ctx.auxiliaryDem = dem.get();
+
+    OrthorectificationAlgorithm algorithm;
+    const auto result = algorithm.execute(*raster, ctx);
 
     // 模拟生成正射影像
     QImage orthoImage = raster->currentDisplayImage();
@@ -1259,17 +1252,29 @@ void MainWindow::runPointCloudDownsample() {
     }
 
     const auto &points = pcLayer->points();
-    PointCloudFilterAlgorithm algo;
-    auto filtered = algo.voxelDownsample(points, 0.1);
+
+    // 体素降采样（使用统一 ProcessingAlgorithm 接口）
+    ProcessingContext ctx;
+    ctx.pointCloudData = &points;
+    ctx.parameters["voxelSize"] = 0.1;
+
+    // 构造一个最小 RasterLayer 满足接口要求（算法内部忽略该参数）
+    RasterLayer dummyInput(pcLayer->name(), pcLayer->path());
+    PointCloudVoxelDownsampleAlgorithm algo;
+    const auto result = algo.execute(dummyInput, ctx);
+
+    if (result.pointCloudResult.isEmpty() && !result.message.isEmpty()) {
+        appendLog(result.message);
+        return;
+    }
 
     auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_降采样"),
-                                                      QString(), filtered);
+                                                      QString(), result.pointCloudResult);
     layers_.add(newLayer);
-    scene3DWidget_->setPoints(filtered);
+    scene3DWidget_->setPoints(result.pointCloudResult);
     tabs_->setCurrentWidget(scene3DWidget_);
     refreshLayerTree();
-    appendLog(
-        QStringLiteral("体素降采样完成：%1 → %2 个点").arg(points.size()).arg(filtered.size()));
+    appendLog(result.message);
 }
 
 // ── 点云统计滤波 ──
@@ -1291,16 +1296,29 @@ void MainWindow::runPointCloudFilter() {
     }
 
     const auto &points = pcLayer->points();
-    PointCloudFilterAlgorithm algo;
-    auto filtered = algo.statisticalOutlierRemoval(points, 20, 2.0);
+
+    // 统计滤波（使用统一 ProcessingAlgorithm 接口）
+    ProcessingContext ctx;
+    ctx.pointCloudData = &points;
+    ctx.parameters["meanK"] = 20;
+    ctx.parameters["stddevThreshold"] = 2.0;
+
+    RasterLayer dummyInput(pcLayer->name(), pcLayer->path());
+    PointCloudStatisticalFilterAlgorithm algo;
+    const auto result = algo.execute(dummyInput, ctx);
+
+    if (result.pointCloudResult.isEmpty() && !result.message.isEmpty()) {
+        appendLog(result.message);
+        return;
+    }
 
     auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_滤波"),
-                                                      QString(), filtered);
+                                                      QString(), result.pointCloudResult);
     layers_.add(newLayer);
-    scene3DWidget_->setPoints(filtered);
+    scene3DWidget_->setPoints(result.pointCloudResult);
     tabs_->setCurrentWidget(scene3DWidget_);
     refreshLayerTree();
-    appendLog(QStringLiteral("统计滤波完成：%1 → %2 个点").arg(points.size()).arg(filtered.size()));
+    appendLog(result.message);
 }
 
 // ── 点云转 DEM ──
@@ -1322,19 +1340,24 @@ void MainWindow::runPointCloudToDem() {
     }
 
     const auto &points = pcLayer->points();
-    PointCloudToDemAlgorithm algo;
-    PointCloudToDemAlgorithm::Parameters params;
-    params.gridResolution = 1.0;
-    params.useMaxZ = true;
 
-    auto dem = algo.convert(points, params, pcLayer->name() + QStringLiteral("_DSM"));
-    if (dem) {
-        layers_.add(std::static_pointer_cast<DataObject>(dem));
+    // 点云转 DEM（使用统一 ProcessingAlgorithm 接口）
+    ProcessingContext ctx;
+    ctx.pointCloudData = &points;
+    ctx.parameters["gridResolution"] = 1.0;
+    ctx.parameters["useMaxZ"] = true;
+    ctx.parameters["layerName"] = pcLayer->name() + QStringLiteral("_DSM");
+
+    RasterLayer dummyInput(pcLayer->name(), pcLayer->path());
+    rs::PointCloudToDemAlgorithm algo;
+    const auto result = algo.execute(dummyInput, ctx);
+
+    if (result.demResult) {
+        layers_.add(std::static_pointer_cast<DataObject>(result.demResult));
         refreshLayerTree();
-        appendLog(QStringLiteral("点云转 DEM 完成：%1（%2x%3）")
-                      .arg(dem->name())
-                      .arg(dem->width())
-                      .arg(dem->height()));
+        appendLog(result.message);
+    } else {
+        appendLog(result.message);
     }
 }
 
@@ -1662,6 +1685,7 @@ int MainWindow::selectedBandIndex() const {
 void MainWindow::updateActionStates() {
     int selectedRasters = 0;
     int selectedDems = 0;
+    int selectedPointClouds = 0;
     for (const int index : selectedLayerIndices()) {
         try {
             const auto layer = layers_.at(index);
@@ -1669,12 +1693,15 @@ void MainWindow::updateActionStates() {
                 ++selectedRasters;
             } else if (layer->type() == DataType::Dem) {
                 ++selectedDems;
+            } else if (layer->type() == DataType::PointCloud) {
+                ++selectedPointClouds;
             }
         } catch (const std::exception &) {
         }
     }
 
     const bool hasOneRaster = selectedRasters == 1;
+    const bool hasPointCloud = selectedPointClouds >= 1;
     if (deleteLayerAction_) {
         deleteLayerAction_->setEnabled(!selectedLayerIndices().empty());
     }
@@ -1698,6 +1725,18 @@ void MainWindow::updateActionStates() {
     }
     if (orthoAction_) {
         orthoAction_->setEnabled(selectedRasters >= 1 && selectedDems >= 1);
+    }
+    if (downsampleAction_) {
+        downsampleAction_->setEnabled(hasPointCloud);
+    }
+    if (filterAction_) {
+        filterAction_->setEnabled(hasPointCloud);
+    }
+    if (pcToDemAction_) {
+        pcToDemAction_->setEnabled(hasPointCloud);
+    }
+    if (exportPlyAction_) {
+        exportPlyAction_->setEnabled(hasPointCloud);
     }
 }
 

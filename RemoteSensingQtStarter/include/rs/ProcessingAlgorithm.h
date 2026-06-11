@@ -5,6 +5,8 @@
 #include <QImage>        // Qt 图像类，用于存储算法输出的结果图像
 #include <QString>       // Qt 字符串，用于参数名称和描述文本
 #include <QVariantMap>   // Qt 泛型映射表，存储参数名到参数值的键值对
+#include <QVector3D>     // Qt 三维向量，用于点云数据传递
+#include <memory>        // std::shared_ptr，用于 DemLayer 等共享指针
 #include <vector>        // std::vector，用于存储参数定义列表
 
 namespace rs {  // 遥感（Remote Sensing）命名空间
@@ -23,6 +25,12 @@ struct AlgorithmParameter {
 struct ProcessingContext {
     int bandIndex {-1};     // 当前选中的波段索引（-1 表示未选中具体波段或处理 RGB 合成图）
     QVariantMap parameters;  // 用户通过对话框设置的参数值（键=参数key，值=用户输入的值）
+
+    // ── 多输入算法所需的辅助数据 ──
+    // 算法按需读取；不需要时为 nullptr / 空
+    const class RasterLayer* auxiliaryRaster {nullptr}; // 第二个栅格（如立体像对的右影像）
+    const class DemLayer*     auxiliaryDem    {nullptr}; // DEM 输入（正射校正 / DEM 重建等）
+    const QVector<QVector3D>* pointCloudData  {nullptr}; // 点云数据（点云算法需要）
 };
 
 // 算法处理的结果
@@ -30,6 +38,10 @@ struct ProcessingContext {
 struct ProcessingResult {
     QImage image;    // 算法输出的结果图像（如均衡化后的影像、特征提取结果图等）
     QString message; // 处理结果的消息文本（如 "处理完成" 或错误说明）
+
+    // ── 非图像输出（算法按需填充） ──
+    std::shared_ptr<class DemLayer> demResult;       // DEM 输出（DEM 重建 / 点云转 DEM）
+    QVector<QVector3D>              pointCloudResult; // 点云输出（体素降采样 / 统计滤波）
 };
 
 // 处理算法的抽象基类
