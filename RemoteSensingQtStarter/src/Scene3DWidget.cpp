@@ -147,7 +147,8 @@ static QVector3D faceNormal(const QVector3D &a, const QVector3D &b, const QVecto
 // ── 每帧绘制 ─────────────────────────────────
 void Scene3DWidget::paintGL() {
     const bool hasPoints = !m_points.isEmpty();
-    const bool hasMesh = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
+    const bool hasMeshFaces = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
+    const bool hasMeshVerticesOnly = !meshVertices_.isEmpty() && meshFaces_.isEmpty();
 
     // 清屏：浅粉色背景
     glClearColor(1.0f, 0.94f, 0.96f, 1.0f);
@@ -208,7 +209,7 @@ void Scene3DWidget::paintGL() {
     glEnd();
 
     // ── 绘制 Mesh ──────────────────────────
-    if (hasMesh) {
+    if (hasMeshFaces) {
         glEnable(GL_LIGHTING);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
@@ -269,6 +270,17 @@ void Scene3DWidget::paintGL() {
         glEnd();
 
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    } else if (hasMeshVerticesOnly) {
+        glDisable(GL_LIGHTING);
+        glPointSize(3.0f);
+        glBegin(GL_POINTS);
+        glColor3f(0.85f, 0.35f, 0.55f);
+        for (const auto &v : meshVertices_) {
+            glVertex3f((v.x() - center.x()) * scale, (v.y() - center.y()) * scale,
+                       (v.z() - center.z()) * scale);
+        }
+        glEnd();
+        glPointSize(2.0f);
     }
 
     // ── 绘制点云 ──────────────────────────
@@ -284,7 +296,7 @@ void Scene3DWidget::paintGL() {
         glEnd();
     }
 
-    if (!hasPoints && !hasMesh) {
+    if (!hasPoints && !hasMeshFaces && !hasMeshVerticesOnly) {
         return;
     }
 }

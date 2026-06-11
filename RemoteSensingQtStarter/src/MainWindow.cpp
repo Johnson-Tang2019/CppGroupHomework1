@@ -9,7 +9,7 @@
 #include <QDialog>
 #include <QFutureWatcher>
 #include <QProgressDialog>
-#include <QtConcurrent>
+#include <QtConcurrent/QtConcurrent>
 
 namespace rs {
 namespace {
@@ -199,6 +199,153 @@ QTreeWidgetItem *ensureTopFolder(QTreeWidget *tree, const QString &name) {
     folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) |
                      Qt::ItemIsEnabled); // 不可选中，仅启用
     return folder;
+}
+
+qint32 readInt32LeBytes(const char *data) {
+    const auto *b = reinterpret_cast<const unsigned char *>(data);
+    const quint32 value = (static_cast<quint32>(b[0])) | (static_cast<quint32>(b[1]) << 8) |
+                          (static_cast<quint32>(b[2]) << 16) | (static_cast<quint32>(b[3]) << 24);
+    return static_cast<qint32>(value);
+}
+
+struct LoadedMeshData {
+    QVector<QVector3D> vertices;
+    QVector<Face> faces;
+};
+
+LoadedMeshData loadMeshFromPly(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        throw std::runtime_error("无法打开 PLY 文件");
+    }
+    const QByteArray allData = file.readAll();
+    file.close();
+
+    const int headerEndPos = allData.indexOf("end_header");
+    if (headerEndPos < 0) {
+        throw std::runtime_error("PLY 缺少 end_header");
+    }
+    const int nlPos = allData.indexOf('\n', headerEndPos);
+    const int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
+
+    bool isAscii = false;
+    int vertexCount = 0;
+    int faceCount = 0;
+    int vertexPropCount = 0;
+    bool inVertex = false;
+
+    QTextStream headerStream(allData.left(headerBytes));
+    while (!headerStream.atEnd()) {
+        const QString line = headerStream.readLine().trimmed();
+        if (line.startsWith(QLatin1String("element vertex"))) {
+            vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+            inVertex = true;
+            continue;
+        }
+        if (line.startsWith(QLatin1String("element face"))) {
+            faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+            inVertex = false;
+            continue;
+        }
+        if (inVertex && line.startsWith(QLatin1String("property "))) {
+            ++vertexPropCount;
+        }
+        if (line.contains(QLatin1String("format ascii"))) {
+            isAscii = true;
+        }
+    }
+
+    if (vertexCount <= 0) {
+        throw std::runtime_error("PLY 顶点数量无效");
+    }
+
+    LoadedMeshData mesh;
+    if (isAscii) {
+        QTextStream in(allData);
+        while (!in.atEnd()) {
+            if (in.readLine().trimmed() == QLatin1String("end_header")) {
+                break;
+            }
+        }
+
+        mesh.vertices.reserve(vertexCount);
+        for (int i = 0; i < vertexCount && !in.atEnd(); ++i) {
+            const QString line = in.readLine().trimmed();
+            if (line.isEmpty()) {
+                --i;
+                continue;
+            }
+            const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            if (parts.size() < 3) {
+                continue;
+            }
+            mesh.vertices.append(
+                QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+        }
+
+        mesh.faces.reserve(faceCount);
+        for (int i = 0; i < faceCount && !in.atEnd(); ++i) {
+            const QString line = in.readLine().trimmed();
+            if (line.isEmpty()) {
+                --i;
+                continue;
+            }
+            const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            if (parts.size() < 4) {
+                continue;
+            }
+            const int n = parts[0].toInt();
+            if (n < 3 || parts.size() < n + 1) {
+                continue;
+            }
+            const int i0 = parts[1].toInt();
+            for (int t = 1; t < n - 1; ++t) {
+                Face face;
+                face.a = i0;
+                face.b = parts[1 + t].toInt();
+                face.c = parts[2 + t].toInt();
+                mesh.faces.append(face);
+            }
+        }
+    } else {
+        if (vertexPropCount < 3) {
+            throw std::runtime_error("PLY 顶点属性数不足");
+        }
+        const int vertexSize = vertexPropCount * static_cast<int>(sizeof(float));
+        int offset = headerBytes;
+
+        mesh.vertices.reserve(vertexCount);
+        for (int i = 0; i < vertexCount; ++i) {
+            if (offset + vertexSize > allData.size()) {
+                break;
+            }
+            const float *f = reinterpret_cast<const float *>(allData.constData() + offset);
+            mesh.vertices.append(QVector3D(f[0], f[1], f[2]));
+            offset += vertexSize;
+        }
+
+        mesh.faces.reserve(faceCount);
+        for (int i = 0; i < faceCount; ++i) {
+            if (offset >= allData.size()) {
+                break;
+            }
+            const quint8 n = static_cast<quint8>(allData[offset++]);
+            if (n < 3 || offset + n * 4 > allData.size()) {
+                break;
+            }
+            const int i0 = readInt32LeBytes(allData.constData() + offset);
+            for (int t = 1; t < n - 1; ++t) {
+                Face face;
+                face.a = i0;
+                face.b = readInt32LeBytes(allData.constData() + offset + t * 4);
+                face.c = readInt32LeBytes(allData.constData() + offset + (t + 1) * 4);
+                mesh.faces.append(face);
+            }
+            offset += n * 4;
+        }
+    }
+
+    return mesh;
 }
 
 } // namespace
@@ -595,13 +742,13 @@ void MainWindow::openPointCloud() {
                     throw std::runtime_error("PLY 顶点属性数不足");
                 }
                 int vertexSize = propCount * sizeof(float);
-                const char *data = allData.constData() + headerBytes;
+                const char *vertexBytes = allData.constData() + headerBytes;
                 int remaining = allData.size() - headerBytes;
                 int maxVerts = remaining / vertexSize;
                 int n = std::min(vertexCount, maxVerts);
                 points.reserve(n);
                 for (int i = 0; i < n; ++i) {
-                    const float *f = reinterpret_cast<const float *>(data + i * vertexSize);
+                    const float *f = reinterpret_cast<const float *>(vertexBytes + i * vertexSize);
                     points.append(QVector3D(f[0], f[1], f[2]));
                 }
             }
@@ -710,64 +857,24 @@ void MainWindow::openMesh() {
                     vertices.append(
                         QVector3D(parts[1].toFloat(), parts[2].toFloat(), parts[3].toFloat()));
                 } else if (parts[0] == QStringLiteral("f") && parts.size() >= 4) {
-                    Face face;
-                    // OBJ 索引从 1 开始，需要减 1
-                    face.a = parts[1].section(QLatin1Char('/'), 0, 0).toInt() - 1;
-                    face.b = parts[2].section(QLatin1Char('/'), 0, 0).toInt() - 1;
-                    face.c = parts[3].section(QLatin1Char('/'), 0, 0).toInt() - 1;
-                    faces.append(face);
+                    const auto parseIndex = [](const QString &token) {
+                        return token.section(QLatin1Char('/'), 0, 0).toInt() - 1;
+                    };
+                    const int i0 = parseIndex(parts[1]);
+                    for (int t = 2; t < parts.size() - 1; ++t) {
+                        Face face;
+                        face.a = i0;
+                        face.b = parseIndex(parts[t]);
+                        face.c = parseIndex(parts[t + 1]);
+                        faces.append(face);
+                    }
                 }
             }
             file.close();
         } else if (ext == QStringLiteral("ply")) {
-            // PLY 格式（同点云读取方式，但同时读取面片信息）
-            QFile file(path);
-            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                throw std::runtime_error("无法打开 PLY 文件");
-            }
-            QTextStream in(&file);
-            int vertexCount = 0, faceCount = 0;
-            bool headerEnd = false;
-            int readVerts = 0, readFaces = 0;
-            bool readingVerts = true;
-
-            while (!in.atEnd()) {
-                const QString line = in.readLine().trimmed();
-                if (!headerEnd) {
-                    if (line.startsWith(QStringLiteral("element vertex"))) {
-                        vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                    } else if (line.startsWith(QStringLiteral("element face"))) {
-                        faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                    } else if (line == QStringLiteral("end_header")) {
-                        headerEnd = true;
-                        vertices.reserve(vertexCount);
-                        faces.reserve(faceCount);
-                    }
-                    continue;
-                }
-
-                if (readingVerts && readVerts < vertexCount) {
-                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                    if (parts.size() >= 3) {
-                        vertices.append(
-                            QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
-                    }
-                    ++readVerts;
-                    if (readVerts >= vertexCount)
-                        readingVerts = false;
-                } else if (readFaces < faceCount) {
-                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                    if (parts.size() >= 4) {
-                        Face face;
-                        face.a = parts[1].toInt();
-                        face.b = parts[2].toInt();
-                        face.c = parts[3].toInt();
-                        faces.append(face);
-                    }
-                    ++readFaces;
-                }
-            }
-            file.close();
+            const LoadedMeshData plyMesh = loadMeshFromPly(path);
+            vertices = plyMesh.vertices;
+            faces = plyMesh.faces;
         } else {
             throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 OBJ/PLY");
         }
@@ -779,12 +886,19 @@ void MainWindow::openMesh() {
         auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
         layers_.add(layer);
         scene3DWidget_->setMesh(vertices, faces);
+        scene3DWidget_->fitToBounds();
         tabs_->setCurrentWidget(scene3DWidget_);
         scene3DWidget_->update();
-        appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
-                      .arg(info.fileName())
-                      .arg(vertices.size())
-                      .arg(faces.size()));
+        if (faces.isEmpty()) {
+            appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，未读取到三角面，已在三维场景显示顶点）")
+                          .arg(info.fileName())
+                          .arg(vertices.size()));
+        } else {
+            appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
+                          .arg(info.fileName())
+                          .arg(vertices.size())
+                          .arg(faces.size()));
+        }
     } catch (const std::exception &e) {
         appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")
                       .arg(info.fileName(), QString::fromUtf8(e.what())));
@@ -803,51 +917,20 @@ void MainWindow::openDem() {
 
     const QFileInfo info(path);
     try {
-        // 使用 GDAL 读取 DEM 文件
-        GDALAllRegister();
-        GDALDataset *dataset = static_cast<GDALDataset *>(
-            GDALOpenEx(path.toUtf8().constData(), GA_ReadOnly, nullptr, nullptr, nullptr));
-        if (!dataset) {
-            throw std::runtime_error("无法打开 DEM 文件");
-        }
-
-        const int width = dataset->GetRasterXSize();
-        const int height = dataset->GetRasterYSize();
-        const int bandCount = dataset->GetRasterCount();
-
-        if (width <= 0 || height <= 0 || bandCount < 1) {
-            GDALClose(dataset);
-            throw std::runtime_error("DEM 尺寸或波段数无效");
-        }
-
-        // 读取地理变换
-        std::array<double, 6> geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
-        if (dataset->GetGeoTransform(geoTransform.data()) != CE_None) {
-            geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
-        }
-
-        // 读取高程数据（取第一个波段）
-        const int pixelCount = width * height;
-        QVector<float> elevations(pixelCount);
-        GDALRasterBand *gdalBand = dataset->GetRasterBand(1);
-        CPLErr err = gdalBand->RasterIO(GF_Read, 0, 0, width, height, elevations.data(), width,
-                                        height, GDT_Float32, 0, 0, nullptr);
-        GDALClose(dataset);
-
-        if (err != CE_None) {
-            throw std::runtime_error("读取 DEM 像素数据失败");
-        }
-
-        // 创建 DEM 图层
-        auto dem = std::make_shared<DemLayer>(info.fileName(), path, width, height, elevations);
-        dem->setGeoTransform(geoTransform);
-        dem->setSourceRasterPath(path);
+        const auto dem = io::loadDemDataset(path, info.fileName());
         layers_.add(dem);
-        appendLog(
-            QStringLiteral("已加载 DEM：%1（%2x%3）").arg(info.fileName()).arg(width).arg(height));
+        appendLog(QStringLiteral("已加载 DEM：%1（%2x%3）")
+                      .arg(info.fileName())
+                      .arg(dem->width())
+                      .arg(dem->height()));
     } catch (const std::exception &e) {
-        appendLog(QStringLiteral("DEM 加载失败 [%1]：%2")
-                      .arg(info.fileName(), QString::fromUtf8(e.what())));
+        const QString reason = QString::fromUtf8(e.what());
+        appendLog(QStringLiteral("DEM 加载失败 [%1]：%2").arg(info.fileName(), reason));
+        if (reason.contains(QStringLiteral("未启用 GDAL"))) {
+            QMessageBox::warning(this, QStringLiteral("GDAL 未启用"),
+                                 QStringLiteral("当前构建未启用 GDAL，无法读取 DEM 文件。\n"
+                                                "请使用 MSYS2 脚本 build_msys2_ucrt.ps1 构建，或在 CMake 中启用 GDAL。"));
+        }
     }
     refreshLayerTree();
     updateActionStates();
@@ -1024,7 +1107,6 @@ void MainWindow::runFeatureExtraction() {
     if (!ok)
         return;
 
-    // 模拟执行特征提取
     FeatureExtractionAlgorithm algorithm;
     ProcessingContext ctx;
     ctx.bandIndex = selectedBandIndex();
@@ -1032,45 +1114,22 @@ void MainWindow::runFeatureExtraction() {
     ctx.parameters[QStringLiteral("maxFeatures")] = maxFeatures;
     const auto result = algorithm.execute(*raster, ctx);
 
-    // 模拟生成特征点标注图
-    QImage featureImage;
-    if (selectedBandIndex() >= 0 && selectedBandIndex() < raster->bandCount()) {
-        featureImage = io::renderSingleBandGray(*raster, selectedBandIndex());
-    } else {
-        featureImage = raster->currentDisplayImage();
-    }
-
-    if (featureImage.isNull()) {
-        appendLog(QStringLiteral("特征提取失败：无法获取影像数据。"));
+    if (result.image.isNull()) {
+        appendLog(result.message.isEmpty() ? QStringLiteral("特征提取失败：未生成结果图像。")
+                                           : result.message);
         return;
     }
 
-    // 在图像上绘制模拟特征点（绿色圆圈）
-    featureImage = featureImage.convertedTo(QImage::Format_RGB32);
-    QPainter painter(&featureImage);
-    painter.setPen(QPen(Qt::green, 2));
-    // 生成一些随机分布的特征点
-    const int numPoints = std::min(maxFeatures, 500);
-    for (int i = 0; i < numPoints; ++i) {
-        const int px = (i * 7919 + 137) % featureImage.width();
-        const int py = (i * 6271 + 271) % featureImage.height();
-        painter.drawEllipse(QPoint(px, py), 4, 4);
-    }
-    painter.end();
-
-    // 显示并添加结果图层
     const QString resultName = raster->name() + QStringLiteral("_特征_") + method;
     auto resultLayer = std::make_shared<RasterLayer>(resultName, QStringLiteral(""),
-                                                     QVector<RasterBand>{}, featureImage);
-    resultLayer->setRenderDescription(
-        QStringLiteral("%1 特征提取（%2点）").arg(method).arg(numPoints));
+                                                     QVector<RasterBand>{}, result.image);
+    resultLayer->setCurrentDisplayImage(result.image);
+    resultLayer->setRenderDescription(QStringLiteral("%1 特征提取结果").arg(method));
     layers_.add(resultLayer);
     refreshLayerTree();
     displayRaster(resultLayer, -1);
     tabs_->setCurrentIndex(0);
-    appendLog(QStringLiteral("特征提取完成（模拟）：%1，%2方法，%3个特征点。")
-                  .arg(raster->name(), method)
-                  .arg(numPoints));
+    appendLog(result.message);
 }
 
 // 执行 DEM 重建流程
@@ -1430,6 +1489,7 @@ void MainWindow::onSelectionChanged() {
                     const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
                     if (mesh && !mesh->vertices().isEmpty()) {
                         scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                        scene3DWidget_->fitToBounds();
                         tabs_->setCurrentWidget(scene3DWidget_);
                     }
                 } else if (layer->type() == DataType::Dem) {
@@ -1490,6 +1550,7 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
                 const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
                 if (mesh) {
                     scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                    scene3DWidget_->fitToBounds();
                     tabs_->setCurrentWidget(scene3DWidget_);
                 }
             } else {

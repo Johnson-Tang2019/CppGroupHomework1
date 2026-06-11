@@ -1,7 +1,9 @@
 #include "rs/MainWindow.h"
 #include <QApplication>
 #include <QDebug>
+#ifdef RS_WITH_GDAL
 #include <gdal_priv.h>
+#endif
 //2026.6.6
 
 int main(int argc, char *argv[]) {
