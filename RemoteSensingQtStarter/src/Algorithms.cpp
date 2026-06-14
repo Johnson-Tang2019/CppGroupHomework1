@@ -75,32 +75,6 @@ static QImage matToQImage(const cv::Mat& mat) {
     return QImage();
 }
 
-// ── 辅助函数：使用 Qt 原生窗口替换 OpenCV 的 imshow ──
-static void showAndWait(const std::string& winName, const cv::Mat& img) {
-    QImage qImg = matToQImage(img);
-
-    if (qImg.isNull()) return;
-    QDialog dialog;
-    dialog.setWindowTitle(QString::fromStdString(winName));
-    // 增加窗口最大化按钮，方便查看大图
-    dialog.setWindowFlags(dialog.windowFlags() | Qt::WindowMaximizeButtonHint);
-    // 用 QLabel 来承载图像
-    QLabel* label = new QLabel(&dialog);
-    label->setPixmap(QPixmap::fromImage(qImg));
-    label->setAlignment(Qt::AlignCenter);
-
-    // 设置布局，去除边缘留白
-    QVBoxLayout* layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(label);
-
-    dialog.setLayout(layout);
-    
-    // 使用 exec() 弹出模态对话框。
-    // 这会阻塞当前算法流程（等待用户看完图像），但绝不会阻塞主程序的重绘，
-    // 用户点击 "X" 或按 ESC 键关闭后，代码安全返回，不会发送任何退出程序的信号！
-    dialog.exec();
-}
 // 1. 灰度直方图算法（基于真实波段像素数据）
 
 QString HistogramAlgorithm::name() const { return QStringLiteral("灰度直方图"); }
@@ -166,10 +140,6 @@ ProcessingResult HistogramAlgorithm::execute(const RasterLayer& input, const Pro
                        + " | Valid pixels: " + std::to_string(validCount);
     cv::putText(histImage, info, cv::Point(10, 25),
                 cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
-        cv::putText(histImage, "Close window to continue", cv::Point(10, hist_h - 8),
-                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(200, 200, 200), 1);
-
-        showAndWait("Histogram - " + bandInfo.name.toStdString(), histImage);
 
     // 返回直方图图像
     cv::Mat histRGB;
@@ -227,9 +197,8 @@ ProcessingResult HistogramEqualizationAlgorithm::execute(const RasterLayer& inpu
         cv::Mat result;
         cv::cvtColor(lab, result, cv::COLOR_Lab2BGR);
 
-        cv::putText(result, "CLAHE Enhanced (RGB) - Press ANY KEY",
+        cv::putText(result, "CLAHE Enhanced (RGB)",
                     cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
-        showAndWait("CLAHE Enhanced", result);
 
         // 将结果转回 QImage
         cv::cvtColor(result, result, cv::COLOR_BGR2RGB);
@@ -253,9 +222,8 @@ ProcessingResult HistogramEqualizationAlgorithm::execute(const RasterLayer& inpu
         // 并排显示原图和处理结果
         cv::Mat display;
         cv::hconcat(gray8u, result, display);
-        cv::putText(display, "Original | CLAHE - Press ANY KEY",
+        cv::putText(display, "Original | CLAHE",
                     cv::Point(10, 25), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1);
-        showAndWait("CLAHE Band " + std::to_string(bandIdx + 1), display);
 
         QImage resultImg(result.data, result.cols, result.rows, result.step, QImage::Format_Grayscale8);
         return {resultImg.copy(), QStringLiteral("CLAHE 均衡化完成")};
@@ -330,8 +298,6 @@ ProcessingResult FeatureExtractionAlgorithm::execute(const RasterLayer& input, c
                        " keypoints";
     cv::putText(outputImage, info, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
                 cv::Scalar(0, 0, 255), 2);
-
-    showAndWait((method + " Features").toStdString(), outputImage);
 
     QImage resultImg = matToQImage(outputImage);
     return {resultImg,
@@ -610,15 +576,6 @@ ProcessingResult OrthorectificationAlgorithm::execute(const RasterLayer& input, 
     // 执行重采样
     cv::Mat orthoImage;
     cv::remap(srcImage, orthoImage, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
-
-    // 显示校正前后对比
-    cv::Mat display;
-    cv::hconcat(srcImage, orthoImage, display);
-    std::string info = "Original | Orthorectified - Press ANY KEY";
-    cv::putText(display, info, cv::Point(10, 30),
-                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
-
-    showAndWait("Orthorectification", display);
 
     // 转回 QImage
     cv::Mat resultRGB;

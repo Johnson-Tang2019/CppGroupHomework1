@@ -35,6 +35,10 @@ public:
     // ---- 可写访问器（setter） ----
     void setVisible(bool visible) { visible_ = visible; }  // 设置图层可见性（用于图层树勾选切换）
 
+    // 图层树分组：非空时归入「处理结果/<treeGroup>」，空则按 type 归入源数据目录
+    const QString &treeGroup() const { return treeGroup_; }
+    void setTreeGroup(QString group) { treeGroup_ = std::move(group); }
+
     // 纯虚函数：返回图层的简要描述信息
     // 子类必须实现，例如 "3 Bands, 1024x1024" 或 "1.2M Points"
     virtual QString summary() const = 0;
@@ -44,6 +48,7 @@ private:
     QString path_;       // 文件路径（如 "C:/data/IMG_2024.tif"）
     DataType type_;      // 数据类型（Raster/PointCloud/Mesh/Dem/Result）
     bool visible_ {true};  // 可见性标志，默认为 true（显示状态）
+    QString treeGroup_;    // 处理结果树分组名（如「Canny 边缘检测」）
 };
 
 } // namespace rs

@@ -102,7 +102,10 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx = {});
     void applyProcessingResult(const ProcessingResult &result,
                                const std::shared_ptr<RasterLayer> &source,
+                               const QString &treeGroup,
                                const QString &suffix = QStringLiteral("_结果"));
+    void revealLayerInTree(int layerIndex);
+    void exportLayerImage(int layerIndex);
 
     // ============ 状态管理 ============
     void updateActionStates(); // 根据选中图层类型更新菜单项的启用/禁用状态

@@ -11,6 +11,7 @@
 #include <QDialog>
 #include <QFutureWatcher>
 #include <QProgressDialog>
+#include <QTreeWidgetItemIterator>
 #include <QtConcurrent/QtConcurrent>
 
 namespace rs {
@@ -574,7 +575,8 @@ void MainWindow::createMenus() {
                 if (!csvPath.isEmpty())
                     ctx.parameters[QStringLiteral("csvPath")] = csvPath;
                 const auto result = algo.execute(*pred, ctx);
-                applyProcessingResult(result, pred, QStringLiteral("_精度"));
+                applyProcessingResult(result, pred, QStringLiteral("混淆矩阵精度评价"),
+                                      QStringLiteral("_精度"));
             });
 
     auto *indexMenu = menuBar()->addMenu(QStringLiteral("遥感指数"));
@@ -602,7 +604,7 @@ void MainWindow::createMenus() {
                     return;
                 }
                 const auto result = algo.execute(*raster, ctx);
-                applyProcessingResult(result, raster, QStringLiteral("_") + index);
+                applyProcessingResult(result, raster, index, QStringLiteral("_") + index);
             });
     connect(indexMenu->addAction(QStringLiteral("多时相指数对比...")), &QAction::triggered, this,
             [this]() {
@@ -629,7 +631,8 @@ void MainWindow::createMenus() {
                 ctx.auxiliaryRaster = t2.get();
                 ctx.parameters[QStringLiteral("index")] = QStringLiteral("NDVI");
                 const auto result = algo.execute(*t1, ctx);
-                applyProcessingResult(result, t1, QStringLiteral("_时相对比"));
+                applyProcessingResult(result, t1, QStringLiteral("多时相指数对比"),
+                                      QStringLiteral("_时相对比"));
             });
     connect(indexMenu->addAction(QStringLiteral("导出指数统计 CSV...")), &QAction::triggered, this,
             [this]() {
@@ -1306,7 +1309,7 @@ void MainWindow::runHistogram() {
 
     HistogramAlgorithm algorithm;
     const auto result = algorithm.execute(*raster, ctx);
-    applyProcessingResult(result, raster, QStringLiteral("_直方图"));
+    applyProcessingResult(result, raster, QStringLiteral("灰度直方图"), QStringLiteral("_直方图"));
 }
 
 // 执行直方图均衡化算法
@@ -1399,7 +1402,7 @@ void MainWindow::runDemReconstruction() {
 
     auto *watcher = new QFutureWatcher<ProcessingResult>(this);
     connect(watcher, &QFutureWatcher<ProcessingResult>::finished, this,
-            [this, watcher, progress]() {
+            [this, watcher, progress, leftCopy]() {
                 progress->close();
                 progress->deleteLater();
 
@@ -1408,22 +1411,20 @@ void MainWindow::runDemReconstruction() {
 
                 appendLog(result.message);
                 if (result.demResult) {
+                    result.demResult->setTreeGroup(QStringLiteral("DEM 重建"));
                     layers_.add(result.demResult);
-                    refreshLayerTree();
                 }
                 if (!result.image.isNull()) {
-                    QDialog preview(this);
-                    preview.setWindowTitle(QStringLiteral("DEM 重建结果"));
-                    preview.setWindowFlags(preview.windowFlags() | Qt::WindowMaximizeButtonHint);
-                    auto *label = new QLabel(&preview);
-                    label->setPixmap(QPixmap::fromImage(result.image));
-                    label->setAlignment(Qt::AlignCenter);
-                    auto *layout = new QVBoxLayout(&preview);
-                    layout->setContentsMargins(0, 0, 0, 0);
-                    layout->addWidget(label);
-                    preview.resize(qMin(result.image.width() + 40, 1280),
-                                   qMin(result.image.height() + 60, 800));
-                    preview.exec();
+                    auto preview = std::make_shared<RasterLayer>(
+                        leftCopy->name() + QStringLiteral("_DEM预览"), QString(),
+                        QVector<RasterBand>{}, result.image);
+                    preview->setTreeGroup(QStringLiteral("DEM 重建"));
+                    preview->setRenderDescription(QStringLiteral("立体匹配预览"));
+                    layers_.add(preview);
+                }
+                refreshLayerTree();
+                if (result.demResult || !result.image.isNull()) {
+                    revealLayerInTree(layers_.size() - 1);
                 }
                 updateActionStates();
             });
@@ -1473,13 +1474,11 @@ void MainWindow::runOrthorectification() {
     const QString resultName = raster->name() + QStringLiteral("_正射");
     auto resultLayer = std::make_shared<RasterLayer>(resultName, QString(), QVector<RasterBand>{},
                                                      result.image);
-    resultLayer->setRenderDescription(QStringLiteral("GDAL/OpenCV 正射校正"));
-    if (result.rasterResult)
-        resultLayer = result.rasterResult;
+    resultLayer->setRenderDescription(QStringLiteral("正射校正结果"));
+    resultLayer->setTreeGroup(QStringLiteral("正射影像校正"));
     layers_.add(resultLayer);
     refreshLayerTree();
-    displayRaster(resultLayer, -1);
-    tabs_->setCurrentIndex(0);
+    revealLayerInTree(layers_.size() - 1);
     appendLog(result.message);
 }
 
@@ -1832,6 +1831,15 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         updateActionStates();
     });
 
+    // ── 导出 ──
+    if (layer->type() == DataType::Raster || layer->type() == DataType::Dem) {
+        menu.addSeparator();
+        QAction *exportAction = menu.addAction(QStringLiteral("导出..."));
+        connect(exportAction, &QAction::triggered, this, [this, layerIndex]() {
+            exportLayerImage(layerIndex);
+        });
+    }
+
     // ── 缩放至范围 ──
     QAction *zoomAction = menu.addAction(QStringLiteral("缩放至范围"));
     connect(zoomAction, &QAction::triggered, this, [this, layer]() {
@@ -1915,30 +1923,30 @@ void MainWindow::refreshLayerTree() {
     auto *pointFolder = ensureChildFolder(sourceRoot, QStringLiteral("点云"));
     auto *meshFolder = ensureChildFolder(sourceRoot, QStringLiteral("Mesh"));
     auto *demFolder = ensureChildFolder(sourceRoot, QStringLiteral("DEM"));
-    auto *histogramFolder = ensureChildFolder(resultRoot, QStringLiteral("直方图"));
-    auto *equalizeFolder = ensureChildFolder(resultRoot, QStringLiteral("直方图均衡化"));
-    Q_UNUSED(histogramFolder)
-    Q_UNUSED(equalizeFolder)
 
     for (int i = 0; i < layers_.size(); ++i) {
         const auto layer = layers_.at(i);
         QTreeWidgetItem *parent = nullptr;
-        switch (layer->type()) {
-        case DataType::Raster:
-            parent = rasterFolder;
-            break;
-        case DataType::PointCloud:
-            parent = pointFolder;
-            break;
-        case DataType::Mesh:
-            parent = meshFolder;
-            break;
-        case DataType::Dem:
-            parent = demFolder;
-            break;
-        case DataType::Result:
-            parent = resultRoot;
-            break;
+        if (!layer->treeGroup().isEmpty()) {
+            parent = ensureChildFolder(resultRoot, layer->treeGroup());
+        } else {
+            switch (layer->type()) {
+            case DataType::Raster:
+                parent = rasterFolder;
+                break;
+            case DataType::PointCloud:
+                parent = pointFolder;
+                break;
+            case DataType::Mesh:
+                parent = meshFolder;
+                break;
+            case DataType::Dem:
+                parent = demFolder;
+                break;
+            case DataType::Result:
+                parent = resultRoot;
+                break;
+            }
         }
 
         auto *item = new QTreeWidgetItem(parent);
@@ -1950,12 +1958,7 @@ void MainWindow::refreshLayerTree() {
         item->setCheckState(0, layer->visible() ? Qt::Checked : Qt::Unchecked);
 
         if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
-            if (raster->bandCount() == 0) {
-                auto *child = new QTreeWidgetItem(item);
-                child->setText(0, QStringLiteral("TODO: GDAL 读取后显示 Band 1..N"));
-                child->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Band));
-                child->setFlags((child->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
-            } else {
+            if (raster->bandCount() > 0) {
                 for (int band = 0; band < raster->bandCount(); ++band) {
                     const auto &bandInfo = raster->band(band);
                     auto *child = new QTreeWidgetItem(item);
@@ -2131,18 +2134,87 @@ void MainWindow::executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, Pr
     if (ctx.bandIndex < 0)
         ctx.bandIndex = selectedBandIndex();
     const ProcessingResult result = algorithm.execute(*raster, ctx);
-    applyProcessingResult(result, raster);
+    applyProcessingResult(result, raster, algorithm.name());
+}
+
+void MainWindow::revealLayerInTree(int layerIndex) {
+    QTreeWidgetItemIterator it(layerTree_);
+    while (*it) {
+        QTreeWidgetItem *item = *it;
+        if (static_cast<NodeKind>(item->data(0, kNodeKindRole).toInt()) == NodeKind::Layer &&
+            item->data(0, kLayerIndexRole).toInt() == layerIndex) {
+            for (QTreeWidgetItem *parent = item->parent(); parent; parent = parent->parent()) {
+                parent->setExpanded(true);
+            }
+            return;
+        }
+        ++it;
+    }
+}
+
+void MainWindow::exportLayerImage(int layerIndex) {
+    std::shared_ptr<DataObject> layer;
+    try {
+        layer = layers_.at(layerIndex);
+    } catch (const std::exception &) {
+        return;
+    }
+
+    if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
+        QImage image = raster->currentDisplayImage();
+        if (image.isNull()) {
+            if (raster->bandCount() >= 3) {
+                image = io::renderRgbComposite(*raster, 0, 1, 2);
+            } else if (raster->bandCount() >= 1) {
+                image = io::renderSingleBandGray(*raster, 0);
+            }
+        }
+        if (image.isNull()) {
+            appendLog(QStringLiteral("导出失败 [%1]：没有可导出的影像。").arg(raster->name()));
+            return;
+        }
+
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("导出影像"), raster->name(),
+            QStringLiteral("PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;TIFF (*.tif *.tiff)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        if (!image.save(path)) {
+            appendLog(QStringLiteral("导出失败：无法写入 %1").arg(path));
+            return;
+        }
+        appendLog(QStringLiteral("已导出影像：%1 → %2").arg(raster->name(), path));
+        return;
+    }
+
+    if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("导出 DEM"), dem->name() + QStringLiteral(".tif"),
+            QStringLiteral("GeoTIFF (*.tif *.tiff)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        try {
+            io::exportDemAsGeoTiff(*dem, path);
+            appendLog(QStringLiteral("已导出 DEM：%1 → %2").arg(dem->name(), path));
+        } catch (const std::exception &e) {
+            appendLog(QStringLiteral("DEM 导出失败：%1").arg(QString::fromUtf8(e.what())));
+        }
+    }
 }
 
 void MainWindow::applyProcessingResult(const ProcessingResult &result,
                                        const std::shared_ptr<RasterLayer> &source,
-                                       const QString &suffix) {
+                                       const QString &treeGroup, const QString &suffix) {
     if (!result.message.isEmpty())
         appendLog(result.message);
 
+    int addedIndex = -1;
+
     if (result.demResult) {
-        layers_.add(result.demResult);
-        refreshLayerTree();
+        result.demResult->setTreeGroup(treeGroup);
+        addedIndex = layers_.add(result.demResult);
     }
 
     std::shared_ptr<RasterLayer> layer = result.rasterResult;
@@ -2153,21 +2225,15 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
     }
 
     if (layer) {
-        layers_.add(layer);
-        refreshLayerTree();
-        displayRaster(layer, -1);
-        tabs_->setCurrentIndex(0);
-    } else if (!result.image.isNull()) {
-        imageScene_->clear();
-        imageScene_->addPixmap(QPixmap::fromImage(result.image));
-        imageScene_->setSceneRect(result.image.rect());
-        imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
-        tabs_->setCurrentIndex(0);
+        layer->setTreeGroup(treeGroup);
+        addedIndex = layers_.add(layer);
     }
 
-    if (!result.pointCloudResult.isEmpty()) {
-        scene3DWidget_->setPoints(result.pointCloudResult);
-        tabs_->setCurrentWidget(scene3DWidget_);
+    if (addedIndex >= 0 || layer || result.demResult) {
+        refreshLayerTree();
+        if (addedIndex >= 0) {
+            revealLayerInTree(addedIndex);
+        }
     }
 
     updateActionStates();
