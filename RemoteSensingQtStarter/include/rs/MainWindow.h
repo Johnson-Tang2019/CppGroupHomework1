@@ -10,6 +10,7 @@
 #include <QByteArray>
 #include <QDataStream>
 #include <QDateTime>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -26,6 +27,7 @@
 #include <QPixmap>
 #include <QSet>
 #include <QSplitter>
+#include <QSize>
 #include <QStringList>
 #include <QTabWidget> // Qt 标签页控件，切换二维影像/三维场景
 #include <QTextEdit>  // Qt 文本编辑框，用于日志输出面板
@@ -84,6 +86,8 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void showLayerContextMenu(const QPoint &position);          // 右键上下文菜单
 
   private:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
     // ============ UI 构建 ============
     void createUi();    // 构建界面布局（分割器、图层树、标签页、日志面板）
     void createMenus(); // 构建菜单栏（数据、影像处理、摄影测量/三维）
@@ -123,6 +127,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     Scene3DWidget *scene3DWidget_{}; // 三维点云预览控件（基于 QOpenGLWidget）
     QTabWidget *tabs_{};             // 标签页控件（切换"二维影像"和"三维场景"）
     QTextEdit *logEdit_{};           // 日志输出面板（底部）
+    QLabel *coordLabel_{};           // 状态栏：光标经纬度/像素信息
 
     // ============ 菜单项指针（用于启用/禁用控制） ============
     QAction *deleteLayerAction_{};  // "删除选中图层"菜单项
@@ -142,6 +147,8 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
     LayerManager<DataObject> layers_; // 图层管理器，管理所有数据图层（影像、点云、DEM 等）
+    std::shared_ptr<RasterLayer> activeRasterForCoords_; // 当前二维视图用于显示坐标的影像
+    QSize activeDisplaySizeForCoords_; // 当前二维视图显示图像的像素尺寸（用于坐标映射）
 };
 
 } // namespace rs

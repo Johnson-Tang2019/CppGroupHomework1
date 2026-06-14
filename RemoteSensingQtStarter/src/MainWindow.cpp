@@ -17,14 +17,19 @@
     #include <QNetworkAccessManager>
     #include <QNetworkReply>
     #include <QNetworkRequest>
+    #include <QMouseEvent>
     #include <QProgressDialog>
     #include <QPushButton>
+    #include <QStatusBar>
     #include <QUrl>
     #include <QWheelEvent>
     #include <QTreeWidgetItemIterator>
     #include <QtConcurrent/QtConcurrent>
     #include <cmath>
     #include <functional>
+#ifdef RS_WITH_GDAL
+    #include <ogr_spatialref.h>
+#endif
 
     namespace rs {
     namespace {
@@ -40,6 +45,49 @@
         Layer,  // 图层节点，可选中/勾选
         Band    // 波段子节点，仅信息展示
     };
+
+    bool hasGeoreference(const RasterLayer &raster) {
+        const auto gt = raster.geoTransform();
+        constexpr double eps = 1e-12;
+        const bool hasDefaultGt = std::abs(gt[0] - 0.0) < eps && std::abs(gt[1] - 1.0) < eps &&
+                                  std::abs(gt[2] - 0.0) < eps && std::abs(gt[3] - 0.0) < eps &&
+                                  std::abs(gt[4] - 0.0) < eps && std::abs(gt[5] + 1.0) < eps;
+        return !raster.projection().trimmed().isEmpty() || !hasDefaultGt;
+    }
+
+#ifdef RS_WITH_GDAL
+    bool tryProjectToLonLat(const RasterLayer &raster, double x, double y, double &lon, double &lat) {
+        const QString wkt = raster.projection().trimmed();
+        if (wkt.isEmpty()) {
+            return false;
+        }
+
+        OGRSpatialReference src;
+        if (src.importFromWkt(wkt.toUtf8().data()) != OGRERR_NONE) {
+            return false;
+        }
+
+        OGRSpatialReference wgs84;
+        wgs84.SetWellKnownGeogCS("WGS84");
+
+        OGRCoordinateTransformation *ct = OGRCreateCoordinateTransformation(&src, &wgs84);
+        if (!ct) {
+            return false;
+        }
+
+        double tx = x;
+        double ty = y;
+        const int ok = ct->Transform(1, &tx, &ty);
+        OCTDestroyCoordinateTransformation(ct);
+        if (!ok) {
+            return false;
+        }
+
+        lon = tx;
+        lat = ty;
+        return true;
+    }
+#endif
 
     class ZoomableGraphicsView final : public QGraphicsView {
     public:
@@ -948,6 +996,11 @@
         imageView_ = new ZoomableGraphicsView(imageScene_, tabs_); // 创建图形视图（显示场景内容）
         imageView_->setDragMode(QGraphicsView::ScrollHandDrag); // 设置拖拽模式：手型抓手平移
         imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse); // 缩放时以鼠标位置为中心
+        imageView_->setMouseTracking(true);
+        if (imageView_->viewport()) {
+            imageView_->viewport()->setMouseTracking(true);
+            imageView_->viewport()->installEventFilter(this);
+        }
 
         // 三维场景页：QOpenGLWidget 点云预览
         scene3DWidget_ = new Scene3DWidget(tabs_);
@@ -1109,6 +1162,10 @@
 
         setCentralWidget(root); // 将分割器设为窗口的中心控件（填满整个窗口）
 
+        coordLabel_ = new QLabel(QStringLiteral(""), this);
+        coordLabel_->setMinimumWidth(260);
+        statusBar()->addPermanentWidget(coordLabel_);
+
         // ── 全局样式美化 ──
         setStyleSheet(QStringLiteral(R"(
             QMainWindow {
@@ -1252,6 +1309,23 @@
                 // 调用 RasterIO 中的 GDAL 读取函数，读取波段、投影、地理变换和缩略图
                 auto raster = rs::io::loadRasterDataset(path);
                 if (raster) {
+                    const QString ext = info.suffix().toLower();
+                    if ((ext == QStringLiteral("tif") || ext == QStringLiteral("tiff")) &&
+                        hasGeoreference(*raster)) {
+                        const auto gt = raster->geoTransform();
+                        appendLog(QStringLiteral("提示：该 GeoTIFF/GeoRaster 包含坐标信息（可用于经纬度显示）。"));
+                        QMessageBox::information(
+                            this, QStringLiteral("坐标信息已读取"),
+                            QStringLiteral("已检测到影像包含坐标信息。\n\n文件：%1\n\nGeoTransform:\n[%2, %3, %4, %5, %6, %7]\n\nProjection(WKT) 片段：\n%8")
+                                .arg(info.fileName())
+                                .arg(gt[0])
+                                .arg(gt[1])
+                                .arg(gt[2])
+                                .arg(gt[3])
+                                .arg(gt[4])
+                                .arg(gt[5])
+                                .arg(raster->projection().left(240)));
+                    }
                     layers_.add(raster); // 将图层添加到 LayerManager 中
                     appendLog(QStringLiteral("已加载影像：%1（%2 波段，%3x%4）")
                                 .arg(info.fileName())
@@ -2378,8 +2452,13 @@ void MainWindow::refreshLayerTree() {
 // 在 QGraphicsView 中显示选中的影像（优先显示选中波段）
 void MainWindow::displayRaster(const std::shared_ptr<RasterLayer> &raster, int bandIndex) {
     imageScene_->clear();
+    activeRasterForCoords_ = raster;
+    activeDisplaySizeForCoords_ = QSize();
     if (!raster) {
         imageScene_->addText(QStringLiteral("请选择一个遥感影像图层或波段。"));
+        if (coordLabel_) {
+            coordLabel_->setText(QString());
+        }
         return;
     }
 
@@ -2393,12 +2472,88 @@ void MainWindow::displayRaster(const std::shared_ptr<RasterLayer> &raster, int b
     if (image.isNull()) {
         imageScene_->addText(
             QStringLiteral("当前影像没有可显示的渲染结果。\n当前图层：%1").arg(raster->name()));
+        if (coordLabel_) {
+            coordLabel_->setText(QString());
+        }
         return;
     }
+    activeDisplaySizeForCoords_ = image.size();
 
     imageScene_->addPixmap(QPixmap::fromImage(image));
     imageScene_->setSceneRect(image.rect());
     imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (!imageView_ || !coordLabel_ || !event) {
+        return QMainWindow::eventFilter(watched, event);
+    }
+
+    if (watched == imageView_->viewport()) {
+        if (event->type() == QEvent::Leave) {
+            coordLabel_->setText(QString());
+            return QMainWindow::eventFilter(watched, event);
+        }
+        if (event->type() == QEvent::MouseMove) {
+            const auto raster = activeRasterForCoords_;
+            if (!raster || imageScene_->sceneRect().isEmpty()) {
+                coordLabel_->setText(QString());
+                return QMainWindow::eventFilter(watched, event);
+            }
+
+            const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            const QPoint viewPos = mouseEvent->pos();
+            const QPointF scenePos = imageView_->mapToScene(viewPos);
+            const QRectF rect = imageScene_->sceneRect();
+            if (!rect.contains(scenePos)) {
+                coordLabel_->setText(QString());
+                return QMainWindow::eventFilter(watched, event);
+            }
+
+            const int displayW = activeDisplaySizeForCoords_.isEmpty()
+                                     ? static_cast<int>(rect.width())
+                                     : activeDisplaySizeForCoords_.width();
+            const int displayH = activeDisplaySizeForCoords_.isEmpty()
+                                     ? static_cast<int>(rect.height())
+                                     : activeDisplaySizeForCoords_.height();
+            if (displayW <= 0 || displayH <= 0 || raster->bandCount() <= 0) {
+                coordLabel_->setText(QString());
+                return QMainWindow::eventFilter(watched, event);
+            }
+
+            const int rasterW = raster->band(0).width;
+            const int rasterH = raster->band(0).height;
+            if (rasterW <= 0 || rasterH <= 0) {
+                coordLabel_->setText(QString());
+                return QMainWindow::eventFilter(watched, event);
+            }
+
+            const double sx = static_cast<double>(rasterW) / static_cast<double>(displayW);
+            const double sy = static_cast<double>(rasterH) / static_cast<double>(displayH);
+            const double px = scenePos.x() * sx;
+            const double py = scenePos.y() * sy;
+
+            const auto gt = raster->geoTransform();
+            const double geoX = gt[0] + px * gt[1] + py * gt[2];
+            const double geoY = gt[3] + px * gt[4] + py * gt[5];
+
+            QString text = QStringLiteral("Pixel: (%1, %2)").arg(static_cast<int>(px)).arg(static_cast<int>(py));
+            if (hasGeoreference(*raster)) {
+                text += QStringLiteral("  Geo: (%1, %2)").arg(geoX, 0, 'f', 3).arg(geoY, 0, 'f', 3);
+#ifdef RS_WITH_GDAL
+                double lon = 0.0;
+                double lat = 0.0;
+                if (tryProjectToLonLat(*raster, geoX, geoY, lon, lat)) {
+                    text += QStringLiteral("  Lon/Lat: (%1, %2)").arg(lon, 0, 'f', 6).arg(lat, 0, 'f', 6);
+                }
+#endif
+            }
+            coordLabel_->setText(text);
+            return QMainWindow::eventFilter(watched, event);
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 // 获取当前选中的所有图层的索引列表（去重）
