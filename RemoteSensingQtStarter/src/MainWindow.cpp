@@ -6,10 +6,20 @@
 #include "rs/Scene3DWidget.h"
 
 #include <QApplication>
-#include <QDialog>
 #include <QFutureWatcher>
+#include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLineEdit>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProgressDialog>
+#include <QPushButton>
+#include <QUrl>
 #include <QtConcurrent>
+#include <functional>
 
 namespace rs {
 namespace {
@@ -24,6 +34,193 @@ enum class NodeKind {
     Folder, // 文件夹节点（如"源数据/遥感影像"），不可选中
     Layer,  // 图层节点，可选中/勾选
     Band    // 波段子节点，仅信息展示
+};
+
+class DeepSeekChatPanel final : public QWidget {
+  public:
+    explicit DeepSeekChatPanel(std::function<QString()> contextProvider,
+                               QWidget *parent = nullptr)
+        : QWidget(parent), contextProvider_(std::move(contextProvider)) {
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(6, 6, 6, 6);
+
+        auto *keyRow = new QHBoxLayout;
+        keyRow->addWidget(new QLabel(QStringLiteral("API Key:"), this));
+        apiKeyEdit_ = new QLineEdit(this);
+        apiKeyEdit_->setEchoMode(QLineEdit::Password);
+        apiKeyEdit_->setPlaceholderText(QStringLiteral("sk-... or DEEPSEEK_API_KEY"));
+        apiKeyEdit_->setText(QString::fromUtf8(qgetenv("DEEPSEEK_API_KEY")));
+        keyRow->addWidget(apiKeyEdit_, 1);
+        layout->addLayout(keyRow);
+
+        auto *modelRow = new QHBoxLayout;
+        modelRow->addWidget(new QLabel(QStringLiteral("Model:"), this));
+        modelEdit_ = new QLineEdit(QStringLiteral("deepseek-chat"), this);
+        modelRow->addWidget(modelEdit_, 1);
+        contextButton_ = new QPushButton(QStringLiteral("Insert File Info"), this);
+        modelRow->addWidget(contextButton_);
+        layout->addLayout(modelRow);
+
+        chatEdit_ = new QTextEdit(this);
+        chatEdit_->setReadOnly(true);
+        chatEdit_->setMinimumHeight(150);
+        chatEdit_->setPlaceholderText(QStringLiteral("Ask DeepSeek about the imported files, land-cover clues, C++, Qt, or processing workflow."));
+        layout->addWidget(chatEdit_, 8);
+
+        inputEdit_ = new QTextEdit(this);
+        inputEdit_->setMaximumHeight(110);
+        inputEdit_->setPlaceholderText(QStringLiteral("Type your message here. Imported layer information is attached automatically."));
+        layout->addWidget(inputEdit_, 1);
+
+        auto *buttonRow = new QHBoxLayout;
+        buttonRow->addStretch(1);
+        clearButton_ = new QPushButton(QStringLiteral("Clear"), this);
+        sendButton_ = new QPushButton(QStringLiteral("Send"), this);
+        buttonRow->addWidget(clearButton_);
+        buttonRow->addWidget(sendButton_);
+        layout->addLayout(buttonRow);
+
+        resetHistory();
+
+        connect(sendButton_, &QPushButton::clicked, this, [this]() { sendPrompt(); });
+        connect(clearButton_, &QPushButton::clicked, this, [this]() {
+            chatEdit_->clear();
+            resetHistory();
+        });
+        connect(contextButton_, &QPushButton::clicked, this, [this]() {
+            appendMessage(QStringLiteral("Imported file info"), currentLayerContext());
+        });
+    }
+
+  private:
+    void resetHistory() {
+        history_ = QJsonArray{
+            QJsonObject{{QStringLiteral("role"), QStringLiteral("system")},
+                        {QStringLiteral("content"),
+                         QStringLiteral("You are a helpful assistant for a Qt/C++ remote sensing application. Answer clearly and practically.")}}};
+    }
+
+    QString currentLayerContext() const {
+        if (!contextProvider_) {
+            return QStringLiteral("No layer context provider is available.");
+        }
+        const QString context = contextProvider_().trimmed();
+        return context.isEmpty() ? QStringLiteral("No imported layer is available.") : context;
+    }
+
+    void appendMessage(const QString &speaker, const QString &text) {
+        chatEdit_->append(QStringLiteral("<b>%1:</b>").arg(speaker.toHtmlEscaped()));
+        chatEdit_->append(text.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>")));
+        chatEdit_->append(QString());
+    }
+
+    void sendPrompt() {
+        const QString apiKey = apiKeyEdit_->text().trimmed();
+        const QString prompt = inputEdit_->toPlainText().trimmed();
+        const QString model = modelEdit_->text().trimmed().isEmpty()
+                                  ? QStringLiteral("deepseek-chat")
+                                  : modelEdit_->text().trimmed();
+
+        if (apiKey.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("DeepSeek API Key"),
+                                 QStringLiteral("Please enter your DeepSeek API key or set DEEPSEEK_API_KEY."));
+            return;
+        }
+        if (prompt.isEmpty()) {
+            return;
+        }
+
+        inputEdit_->clear();
+        appendMessage(QStringLiteral("You"), prompt);
+        sendButton_->setEnabled(false);
+        sendButton_->setText(QStringLiteral("Sending..."));
+
+        const QString layerContext = currentLayerContext();
+        const QString promptWithContext =
+            QStringLiteral("当前程序中已导入的数据如下。请只基于这些信息和用户问题回答；如果仅凭元数据无法可靠识别具体地物，请明确说明不确定性，并给出可验证的判断依据。\n\n%1\n\n用户问题：%2")
+                .arg(layerContext, prompt);
+
+        QJsonArray requestMessages = history_;
+        requestMessages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                           {QStringLiteral("content"), promptWithContext}});
+
+        QJsonObject body;
+        body.insert(QStringLiteral("model"), model);
+        body.insert(QStringLiteral("messages"), requestMessages);
+        body.insert(QStringLiteral("temperature"), 0.7);
+        body.insert(QStringLiteral("stream"), false);
+
+        QNetworkRequest request(QUrl(QStringLiteral("https://api.deepseek.com/chat/completions")));
+        request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
+
+        auto *reply = network_.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+        connect(reply, &QNetworkReply::finished, this, [this, reply, prompt]() {
+            handleReply(reply, prompt);
+            reply->deleteLater();
+        });
+    }
+
+    void handleReply(QNetworkReply *reply, const QString &prompt) {
+        sendButton_->setEnabled(true);
+        sendButton_->setText(QStringLiteral("Send"));
+
+        const QByteArray responseBody = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            appendMessage(QStringLiteral("Error"),
+                          reply->errorString() + QStringLiteral("\n") +
+                              QString::fromUtf8(responseBody));
+            return;
+        }
+
+        QJsonParseError parseError{};
+        const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+            appendMessage(QStringLiteral("Error"),
+                          QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
+            return;
+        }
+
+        const QJsonObject root = doc.object();
+        if (root.contains(QStringLiteral("error"))) {
+            const QJsonObject error = root.value(QStringLiteral("error")).toObject();
+            appendMessage(QStringLiteral("Error"),
+                          error.value(QStringLiteral("message"))
+                              .toString(QString::fromUtf8(responseBody)));
+            return;
+        }
+
+        const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
+        if (choices.isEmpty()) {
+            appendMessage(QStringLiteral("Error"), QStringLiteral("DeepSeek returned no choices."));
+            return;
+        }
+
+        const QJsonObject message =
+            choices.first().toObject().value(QStringLiteral("message")).toObject();
+        const QString answer = message.value(QStringLiteral("content")).toString().trimmed();
+        if (answer.isEmpty()) {
+            appendMessage(QStringLiteral("Error"), QStringLiteral("DeepSeek returned an empty answer."));
+            return;
+        }
+
+        history_.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                    {QStringLiteral("content"), prompt}});
+        history_.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("assistant")},
+                                    {QStringLiteral("content"), answer}});
+        appendMessage(QStringLiteral("DeepSeek"), answer);
+    }
+
+    QLineEdit *apiKeyEdit_{};
+    QLineEdit *modelEdit_{};
+    QTextEdit *chatEdit_{};
+    QTextEdit *inputEdit_{};
+    QPushButton *sendButton_{};
+    QPushButton *clearButton_{};
+    QPushButton *contextButton_{};
+    QNetworkAccessManager network_;
+    QJsonArray history_;
+    std::function<QString()> contextProvider_;
 };
 
 quint8 readUInt8At(QFile &file, qint64 offset) {
@@ -279,6 +476,7 @@ void MainWindow::createMenus() {
     exportPlyAction_ =
         pcMenu->addAction(QStringLiteral("导出 PLY...")); // 添加"导出 PLY"并保存指针
     connect(exportPlyAction_, &QAction::triggered, this, &MainWindow::exportPly);
+
 }
 
 // 构建界面布局：左侧图层树 + 右侧影像/三维标签页 + 底部日志面板
@@ -300,6 +498,8 @@ void MainWindow::createUi() {
 
     // ---- 右侧：上下分割（上方影像标签页 + 下方日志） ----
     auto *right = new QSplitter(Qt::Vertical, root); // 右侧垂直分割器
+    right->setChildrenCollapsible(false);
+    right->setHandleWidth(8);
 
     // 标签页控件：二维影像 / 三维场景
     tabs_ = new QTabWidget(right);          // 创建标签页控件
@@ -315,16 +515,157 @@ void MainWindow::createUi() {
     tabs_->addTab(imageView_, QStringLiteral("二维影像"));     // 添加"二维影像"标签页
     tabs_->addTab(scene3DWidget_, QStringLiteral("三维场景")); // 添加"三维场景"标签页
 
-    // 日志输出面板
-    logEdit_ = new QTextEdit(right); // 创建文本编辑框用于日志输出
-    logEdit_->setReadOnly(true);     // 设置为只读，用户不能编辑
-    logEdit_->setMaximumHeight(210); // 限制最大高度 210 像素
+    auto *bottomTabs = new QTabWidget(right);
+    bottomTabs->setMinimumHeight(180);
+
+    logEdit_ = new QTextEdit(bottomTabs);
+    logEdit_->setReadOnly(true);
+    bottomTabs->addTab(logEdit_, QStringLiteral("Log"));
+
+    auto *aiPanel = new DeepSeekChatPanel([this]() {
+        QStringList lines;
+        lines << QStringLiteral("Imported layer count: %1").arg(layers_.size());
+        const auto selected = selectedLayerIndices();
+        if (!selected.empty()) {
+            QStringList selectedText;
+            for (int index : selected) {
+                selectedText << QString::number(index);
+            }
+            lines << QStringLiteral("Selected layer indexes: %1").arg(selectedText.join(QStringLiteral(", ")));
+        }
+
+        for (int i = 0; i < layers_.size(); ++i) {
+            const auto layer = layers_.at(i);
+            QString typeName = QStringLiteral("Unknown");
+            switch (layer->type()) {
+            case DataType::Raster:
+                typeName = QStringLiteral("Raster image");
+                break;
+            case DataType::PointCloud:
+                typeName = QStringLiteral("Point cloud");
+                break;
+            case DataType::Mesh:
+                typeName = QStringLiteral("Mesh");
+                break;
+            case DataType::Dem:
+                typeName = QStringLiteral("DEM");
+                break;
+            case DataType::Result:
+                typeName = QStringLiteral("Processing result");
+                break;
+            }
+
+            lines << QStringLiteral("\nLayer %1").arg(i);
+            lines << QStringLiteral("- Name: %1").arg(layer->name());
+            lines << QStringLiteral("- Type: %1").arg(typeName);
+            lines << QStringLiteral("- Path: %1").arg(layer->path());
+            lines << QStringLiteral("- Summary: %1").arg(layer->summary());
+            lines << QStringLiteral("- Visible: %1").arg(layer->visible() ? QStringLiteral("yes") : QStringLiteral("no"));
+
+            if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
+                lines << QStringLiteral("- Render: %1").arg(raster->renderDescription());
+                lines << QStringLiteral("- Projection: %1").arg(raster->projection().left(240));
+                const auto gt = raster->geoTransform();
+                lines << QStringLiteral("- GeoTransform: [%1, %2, %3, %4, %5, %6]")
+                             .arg(gt[0])
+                             .arg(gt[1])
+                             .arg(gt[2])
+                             .arg(gt[3])
+                             .arg(gt[4])
+                             .arg(gt[5]);
+                const QImage &display = raster->currentDisplayImage();
+                if (!display.isNull()) {
+                    lines << QStringLiteral("- Display image: %1 x %2").arg(display.width()).arg(display.height());
+                }
+                const int bandLimit = std::min(raster->bandCount(), 8);
+                lines << QStringLiteral("- Band count: %1").arg(raster->bandCount());
+                for (int band = 0; band < bandLimit; ++band) {
+                    const auto &b = raster->band(band);
+                    lines << QStringLiteral("  Band %1: %2, %3 x %4, min=%5, max=%6, nodata=%7")
+                                 .arg(band + 1)
+                                 .arg(b.name.isEmpty() ? QStringLiteral("(unnamed)") : b.name)
+                                 .arg(b.width)
+                                 .arg(b.height)
+                                 .arg(b.minValue)
+                                 .arg(b.maxValue)
+                                 .arg(b.hasNoDataValue ? QString::number(b.noDataValue) : QStringLiteral("none"));
+                }
+                lines << QStringLiteral("- Land-cover note: metadata and band ranges can suggest clues, but reliable object identification needs visual interpretation or a trained classifier.");
+            } else if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
+                const auto &elevations = dem->elevations();
+                if (!elevations.isEmpty()) {
+                    float minZ = elevations.front();
+                    float maxZ = elevations.front();
+                    double sumZ = 0.0;
+                    for (float z : elevations) {
+                        minZ = std::min(minZ, z);
+                        maxZ = std::max(maxZ, z);
+                        sumZ += z;
+                    }
+                    lines << QStringLiteral("- Elevation min/max/mean: %1 / %2 / %3")
+                                 .arg(minZ)
+                                 .arg(maxZ)
+                                 .arg(sumZ / elevations.size());
+                }
+            } else if (const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
+                const auto &points = pc->points();
+                if (!points.isEmpty()) {
+                    QVector3D minP = points.front();
+                    QVector3D maxP = points.front();
+                    for (const QVector3D &p : points) {
+                        minP.setX(std::min(minP.x(), p.x()));
+                        minP.setY(std::min(minP.y(), p.y()));
+                        minP.setZ(std::min(minP.z(), p.z()));
+                        maxP.setX(std::max(maxP.x(), p.x()));
+                        maxP.setY(std::max(maxP.y(), p.y()));
+                        maxP.setZ(std::max(maxP.z(), p.z()));
+                    }
+                    lines << QStringLiteral("- Bounds: min(%1, %2, %3), max(%4, %5, %6)")
+                                 .arg(minP.x())
+                                 .arg(minP.y())
+                                 .arg(minP.z())
+                                 .arg(maxP.x())
+                                 .arg(maxP.y())
+                                 .arg(maxP.z());
+                }
+            } else if (const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
+                const auto &vertices = mesh->vertices();
+                if (!vertices.isEmpty()) {
+                    QVector3D minP = vertices.front();
+                    QVector3D maxP = vertices.front();
+                    for (const QVector3D &p : vertices) {
+                        minP.setX(std::min(minP.x(), p.x()));
+                        minP.setY(std::min(minP.y(), p.y()));
+                        minP.setZ(std::min(minP.z(), p.z()));
+                        maxP.setX(std::max(maxP.x(), p.x()));
+                        maxP.setY(std::max(maxP.y(), p.y()));
+                        maxP.setZ(std::max(maxP.z(), p.z()));
+                    }
+                    lines << QStringLiteral("- Vertex bounds: min(%1, %2, %3), max(%4, %5, %6)")
+                                 .arg(minP.x())
+                                 .arg(minP.y())
+                                 .arg(minP.z())
+                                 .arg(maxP.x())
+                                 .arg(maxP.y())
+                                 .arg(maxP.z());
+                    lines << QStringLiteral("- Face count: %1").arg(mesh->faces().size());
+                }
+            }
+        }
+        return lines.join(QStringLiteral("\n"));
+    }, bottomTabs);
+    bottomTabs->addTab(aiPanel, QStringLiteral("AI Assistant"));
+
+    auto *aiMenu = menuBar()->addMenu(QStringLiteral("AI"));
+    connect(aiMenu->addAction(QStringLiteral("Show AI Assistant")), &QAction::triggered, this,
+            [bottomTabs, aiPanel]() { bottomTabs->setCurrentWidget(aiPanel); });
 
     // 设置分割器拉伸比例（控件随窗口缩放时的比例分配）
     root->setStretchFactor(0, 1);  // 第0个（图层树）：拉伸因子 = 1
     root->setStretchFactor(1, 5);  // 第1个（右侧区域）：拉伸因子 = 5
     right->setStretchFactor(0, 5); // 第0个（影像标签页）：拉伸因子 = 5
-    right->setStretchFactor(1, 1); // 第1个（日志面板）：拉伸因子 = 1
+    right->setStretchFactor(1, 2); // 第1个（日志面板）：拉伸因子 = 2
+    right->setSizes({620, 300});
 
     setCentralWidget(root); // 将分割器设为窗口的中心控件（填满整个窗口）
 
@@ -595,13 +936,13 @@ void MainWindow::openPointCloud() {
                     throw std::runtime_error("PLY 顶点属性数不足");
                 }
                 int vertexSize = propCount * sizeof(float);
-                const char *data = allData.constData() + headerBytes;
+                const char *vertexData = allData.constData() + headerBytes;
                 int remaining = allData.size() - headerBytes;
                 int maxVerts = remaining / vertexSize;
                 int n = std::min(vertexCount, maxVerts);
                 points.reserve(n);
                 for (int i = 0; i < n; ++i) {
-                    const float *f = reinterpret_cast<const float *>(data + i * vertexSize);
+                    const float *f = reinterpret_cast<const float *>(vertexData + i * vertexSize);
                     points.append(QVector3D(f[0], f[1], f[2]));
                 }
             }

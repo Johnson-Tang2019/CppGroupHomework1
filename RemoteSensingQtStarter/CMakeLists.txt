@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent Network)
 set(QT_PACKAGE Qt6)
 
 find_package(OpenCV QUIET COMPONENTS core imgproc features2d calib3d)
@@ -41,7 +41,7 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/resources/app.ico"
 target_link_libraries(RemoteSensingQtStarter PRIVATE ${OpenCV_LIBS})
 
 target_include_directories(RemoteSensingQtStarter PRIVATE include)
-target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets ${QT_PACKAGE}::Concurrent opengl32)
+target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets ${QT_PACKAGE}::Concurrent ${QT_PACKAGE}::Network opengl32)
 
 if(OpenCV_FOUND)
     target_compile_definitions(RemoteSensingQtStarter PRIVATE RS_WITH_OPENCV=1)
