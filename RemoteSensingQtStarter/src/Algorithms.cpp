@@ -694,7 +694,7 @@ ProcessingResult PointCloudVoxelDownsampleAlgorithm::execute(
     double voxelSize = context.parameters.value("voxelSize", 0.1).toDouble();
 
     if (points.isEmpty() || voxelSize <= 0) {
-        return {{}, QStringLiteral("体素降采样：点云为空或体素大小无效"), nullptr, points};
+        return {{}, QStringLiteral("体素降采样：点云为空或体素大小无效"), nullptr, nullptr, points};
     }
 
     // 用 std::map 对体素网格内的点取均值
@@ -721,7 +721,7 @@ ProcessingResult PointCloudVoxelDownsampleAlgorithm::execute(
     }
 
     return {{}, QStringLiteral("体素降采样完成：%1 → %2 个点").arg(points.size()).arg(result.size()),
-            nullptr, result};
+            nullptr, nullptr, result};
 }
 
 
@@ -752,7 +752,7 @@ ProcessingResult PointCloudStatisticalFilterAlgorithm::execute(
     double stddevThreshold = context.parameters.value("stddevThreshold", 2.0).toDouble();
 
     if (points.isEmpty() || meanK < 3) {
-        return {{}, QStringLiteral("统计滤波：点云为空或邻居数太小"), nullptr, points};
+        return {{}, QStringLiteral("统计滤波：点云为空或邻居数太小"), nullptr, nullptr, points};
     }
     const int n = static_cast<int>(points.size());
 
@@ -782,7 +782,7 @@ ProcessingResult PointCloudStatisticalFilterAlgorithm::execute(
     }
 
     return {{}, QStringLiteral("统计滤波完成：%1 → %2 个点").arg(points.size()).arg(result.size()),
-            nullptr, result};
+            nullptr, nullptr, result};
 }
 
 

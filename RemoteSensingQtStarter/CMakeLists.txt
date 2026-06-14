@@ -17,13 +17,13 @@ if(MSVC)
     if(DEFINED OpenCV_DIR AND OpenCV_DIR MATCHES "[Mm]sys64|[Mm]ingw64")
         unset(OpenCV_DIR CACHE)
     endif()
-    find_package(OpenCV QUIET COMPONENTS core imgproc features2d calib3d imgcodecs)
+    find_package(OpenCV QUIET COMPONENTS core imgproc features2d calib3d imgcodecs ml)
     if(OpenCV_FOUND AND OpenCV_DIR MATCHES "[Mm]sys64|[Mm]ingw64")
         message(STATUS "Ignoring MSYS2/MinGW OpenCV for MSVC build")
         set(OpenCV_FOUND FALSE)
     endif()
 else()
-    find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d calib3d imgcodecs)
+    find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d calib3d imgcodecs ml)
 endif()
 
 set(RS_HAVE_OPENCV FALSE)
@@ -39,6 +39,8 @@ add_executable(RemoteSensingQtStarter WIN32
     src/main.cpp
     src/MainWindow.cpp
     src/Algorithms.cpp
+    src/ExtendedAlgorithms.cpp
+    src/RemoteSensingIndices.cpp
     src/RasterIO.cpp
     src/RasterRenderDialog.cpp
     src/Scene3DWidget.cpp
@@ -48,6 +50,8 @@ add_executable(RemoteSensingQtStarter WIN32
     resources/app.rc
     include/rs/ProcessingAlgorithm.h
     include/rs/Algorithms.h
+    include/rs/ExtendedAlgorithms.h
+    include/rs/RemoteSensingIndices.h
     include/rs/RasterIO.h
     include/rs/RasterRenderDialog.h
     include/rs/MainWindow.h
@@ -69,7 +73,8 @@ if(RS_HAVE_OPENCV)
             opencv_imgproc
             opencv_features2d
             opencv_calib3d
-            opencv_imgcodecs)
+            opencv_imgcodecs
+            opencv_ml)
     else()
         target_link_libraries(RemoteSensingQtStarter PRIVATE ${OpenCV_LIBS})
     endif()

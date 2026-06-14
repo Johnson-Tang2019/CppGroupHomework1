@@ -3,6 +3,7 @@
 #include "rs/DataObject.h"   // DataObject 基类型，LayerManager 管理该类型
 #include "rs/Geometry.h"     // RasterLayer 等子类型，用于类型转换和显示
 #include "rs/LayerManager.h" // LayerManager 模板，管理图层的增删查改
+#include "rs/ProcessingAlgorithm.h"
 
 #include <QAbstractItemView>
 #include <QAction> // Qt 菜单操作类，用于菜单项的启用/禁用控制
@@ -96,6 +97,12 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
     // ============ 日志 ============
     void appendLog(const QString &text); // 在日志面板追加带时间戳的消息
+
+    // ============ 算法执行辅助 ============
+    void executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx = {});
+    void applyProcessingResult(const ProcessingResult &result,
+                               const std::shared_ptr<RasterLayer> &source,
+                               const QString &suffix = QStringLiteral("_结果"));
 
     // ============ 状态管理 ============
     void updateActionStates(); // 根据选中图层类型更新菜单项的启用/禁用状态

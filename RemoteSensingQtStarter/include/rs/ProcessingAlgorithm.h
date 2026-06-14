@@ -41,6 +41,7 @@ struct ProcessingResult {
 
     // ── 非图像输出（算法按需填充） ──
     std::shared_ptr<class DemLayer> demResult;       // DEM 输出（DEM 重建 / 点云转 DEM）
+    std::shared_ptr<class RasterLayer> rasterResult; // 栅格输出（分类图 / 指数图 / 正射结果等）
     QVector<QVector3D>              pointCloudResult; // 点云输出（体素降采样 / 统计滤波）
 };
 

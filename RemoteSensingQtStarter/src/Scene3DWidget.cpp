@@ -47,6 +47,56 @@ void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs
     update();
 }
 
+void Scene3DWidget::setDem(const rs::DemLayer &dem, int maxGrid) {
+    m_points.clear();
+    meshVertices_.clear();
+    meshFaces_.clear();
+
+    const int w = dem.width();
+    const int h = dem.height();
+    if (w <= 0 || h <= 0)
+        return;
+
+    const int stepX = std::max(1, w / maxGrid);
+    const int stepY = std::max(1, h / maxGrid);
+    const auto &elevs = dem.elevations();
+    const auto gt = dem.geoTransform();
+
+    float zMin = elevs[0], zMax = elevs[0];
+    for (float z : elevs) {
+        zMin = std::min(zMin, z);
+        zMax = std::max(zMax, z);
+    }
+    const float zScale = (zMax - zMin) > 1e-6f ? 1.0f / (zMax - zMin) : 1.0f;
+
+    const int cols = (w + stepX - 1) / stepX;
+    const int rows = (h + stepY - 1) / stepY;
+    meshVertices_.reserve(cols * rows);
+
+    for (int gy = 0, y = 0; gy < rows; ++gy, y += stepY) {
+        for (int gx = 0, x = 0; gx < cols; ++gx, x += stepX) {
+            const int sx = std::min(x, w - 1);
+            const int sy = std::min(y, h - 1);
+            const float z = elevs[sy * w + sx];
+            const float wx = static_cast<float>(gt[0] + sx * gt[1] + sy * gt[2]);
+            const float wy = static_cast<float>(gt[3] + sx * gt[4] + sy * gt[5]);
+            meshVertices_.append(QVector3D(wx, wy, (z - zMin) * zScale * 100.0f));
+        }
+    }
+
+    for (int gy = 0; gy < rows - 1; ++gy) {
+        for (int gx = 0; gx < cols - 1; ++gx) {
+            const int i0 = gy * cols + gx;
+            const int i1 = i0 + 1;
+            const int i2 = i0 + cols;
+            const int i3 = i2 + 1;
+            meshFaces_.append({i0, i1, i2});
+            meshFaces_.append({i1, i3, i2});
+        }
+    }
+    update();
+}
+
 void Scene3DWidget::clearData() {
     m_points.clear();
     meshVertices_.clear();

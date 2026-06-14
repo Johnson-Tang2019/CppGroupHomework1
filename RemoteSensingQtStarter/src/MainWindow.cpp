@@ -4,6 +4,8 @@
 #include "rs/RasterIO.h"
 #include "rs/RasterRenderDialog.h"
 #include "rs/Scene3DWidget.h"
+#include "rs/ExtendedAlgorithms.h"
+#include "rs/RemoteSensingIndices.h"
 
 #include <QApplication>
 #include <QDialog>
@@ -396,11 +398,256 @@ void MainWindow::createMenus() {
     equalizeAction_ =
         enhanceMenu->addAction(QStringLiteral("直方图均衡化...")); // 添加"直方图均衡化"并保存指针
     connect(equalizeAction_, &QAction::triggered, this, &MainWindow::runHistogramEqualization);
+    connect(enhanceMenu->addAction(QStringLiteral("线性/百分比拉伸...")), &QAction::triggered, this,
+            [this]() {
+                QStringList modes = {QStringLiteral("percent"), QStringLiteral("linear")};
+                bool ok = false;
+                const QString mode = QInputDialog::getItem(
+                    this, QStringLiteral("拉伸模式"), QStringLiteral("选择拉伸方式："),
+                    {QStringLiteral("百分比拉伸"), QStringLiteral("线性拉伸")}, 0, false, &ok);
+                if (!ok)
+                    return;
+                StretchEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("mode")] =
+                    mode.contains(QStringLiteral("线性")) ? QStringLiteral("linear")
+                                                          : QStringLiteral("percent");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("CLAHE 增强...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const double clip =
+                    QInputDialog::getDouble(this, QStringLiteral("CLAHE"), QStringLiteral("clipLimit:"),
+                                            2.0, 0.1, 40.0, 1, &ok);
+                if (!ok)
+                    return;
+                const int tile = QInputDialog::getInt(this, QStringLiteral("CLAHE"),
+                                                      QStringLiteral("tileSize:"), 8, 2, 64, 1, &ok);
+                if (!ok)
+                    return;
+                ClaheEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("clipLimit")] = clip;
+                ctx.parameters[QStringLiteral("tileSize")] = tile;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("高斯滤波...")), &QAction::triggered, this,
+            [this]() {
+                DenoiseFilterAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("gaussian");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("中值滤波...")), &QAction::triggered, this,
+            [this]() {
+                DenoiseFilterAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("median");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("双边滤波...")), &QAction::triggered, this,
+            [this]() {
+                DenoiseFilterAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("bilateral");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("Unsharp 锐化...")), &QAction::triggered, this,
+            [this]() {
+                SharpenEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("method")] = QStringLiteral("unsharp");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("拉普拉斯锐化...")), &QAction::triggered, this,
+            [this]() {
+                SharpenEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("method")] = QStringLiteral("laplacian");
+                executeRasterAlgorithm(algo, ctx);
+            });
 
-    auto *featureMenu = rasterMenu->addMenu(QStringLiteral("特征")); // 创建子菜单"特征"
+    auto *featureMenu = rasterMenu->addMenu(QStringLiteral("特征与检测")); // 特征/边缘/检测
     featureAction_ = featureMenu->addAction(
-        QStringLiteral("ORB/SIFT 特征提取...")); // 添加"ORB/SIFT 特征提取"并保存指针
+        QStringLiteral("ORB/SIFT/AKAZE 特征提取...")); // 添加特征提取并保存指针
     connect(featureAction_, &QAction::triggered, this, &MainWindow::runFeatureExtraction);
+    connect(featureMenu->addAction(QStringLiteral("Canny 边缘检测...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int t1 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("低阈值:"),
+                                                    50, 1, 500, 1, &ok);
+                if (!ok)
+                    return;
+                const int t2 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("高阈值:"),
+                                                      150, 1, 500, 1, &ok);
+                if (!ok)
+                    return;
+                CannyEdgeAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("threshold1")] = t1;
+                ctx.parameters[QStringLiteral("threshold2")] = t2;
+                executeRasterAlgorithm(algo, ctx);
+            });
+
+    auto *classMenu = rasterMenu->addMenu(QStringLiteral("分类与检测"));
+    connect(classMenu->addAction(QStringLiteral("K-Means 无监督分类...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int k = QInputDialog::getInt(this, QStringLiteral("K-Means"),
+                                                   QStringLiteral("类别数 K："), 3, 2, 10, 1, &ok);
+                if (!ok)
+                    return;
+                KMeansClassificationAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("k")] = k;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(classMenu->addAction(QStringLiteral("SVM 地物分类...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int classes = QInputDialog::getInt(this, QStringLiteral("SVM"),
+                                                       QStringLiteral("类别数："), 3, 2, 10, 1, &ok);
+                if (!ok)
+                    return;
+                const int samples = QInputDialog::getInt(this, QStringLiteral("SVM"),
+                                                         QStringLiteral("训练样本数："), 500, 50, 5000,
+                                                         50, &ok);
+                if (!ok)
+                    return;
+                SvmClassificationAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("classes")] = classes;
+                ctx.parameters[QStringLiteral("trainSamples")] = samples;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(classMenu->addAction(QStringLiteral("轮廓目标检测...")), &QAction::triggered, this, [this]() {
+        ContourDetectionAlgorithm algo;
+        executeRasterAlgorithm(algo);
+    });
+    connect(classMenu->addAction(QStringLiteral("连通域目标检测...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int minArea = QInputDialog::getInt(this, QStringLiteral("连通域"),
+                                                         QStringLiteral("最小面积："), 100, 1, 100000,
+                                                         10, &ok);
+                if (!ok)
+                    return;
+                ConnectedComponentsAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("minArea")] = minArea;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(classMenu->addAction(QStringLiteral("混淆矩阵精度评价...")), &QAction::triggered, this,
+            [this]() {
+                const auto indices = selectedLayerIndices();
+                std::shared_ptr<RasterLayer> pred, ref;
+                for (int idx : indices) {
+                    try {
+                        auto r = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx));
+                        if (!r)
+                            continue;
+                        if (!pred)
+                            pred = r;
+                        else if (!ref)
+                            ref = r;
+                    } catch (...) {
+                    }
+                }
+                if (!pred || !ref) {
+                    appendLog(QStringLiteral("请选中两个栅格图层（预测结果 + 参考分类）。"));
+                    return;
+                }
+                const QString csvPath = QFileDialog::getSaveFileName(
+                    this, QStringLiteral("导出混淆矩阵 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
+                ConfusionMatrixAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.auxiliaryRaster = ref.get();
+                if (!csvPath.isEmpty())
+                    ctx.parameters[QStringLiteral("csvPath")] = csvPath;
+                const auto result = algo.execute(*pred, ctx);
+                applyProcessingResult(result, pred, QStringLiteral("_精度"));
+            });
+
+    auto *indexMenu = menuBar()->addMenu(QStringLiteral("遥感指数"));
+    connect(indexMenu->addAction(QStringLiteral("计算 NDVI/NDWI/NDBI...")), &QAction::triggered, this,
+            [this]() {
+                QStringList indices = {QStringLiteral("NDVI"), QStringLiteral("NDWI"),
+                                       QStringLiteral("NDBI")};
+                bool ok = false;
+                const QString index = QInputDialog::getItem(
+                    this, QStringLiteral("遥感指数"), QStringLiteral("选择指数："), indices, 0, false,
+                    &ok);
+                if (!ok)
+                    return;
+                const bool threshold = QMessageBox::question(
+                                           this, QStringLiteral("阈值分割"),
+                                           QStringLiteral("是否应用阈值分割掩膜？")) == QMessageBox::Yes;
+                RemoteSensingIndexAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("index")] = index;
+                ctx.parameters[QStringLiteral("applyThreshold")] = threshold;
+                ctx.parameters[QStringLiteral("threshold")] = 0.2;
+                const auto raster = selectedRaster();
+                if (!raster) {
+                    appendLog(QStringLiteral("请先选择遥感影像图层。"));
+                    return;
+                }
+                const auto result = algo.execute(*raster, ctx);
+                applyProcessingResult(result, raster, QStringLiteral("_") + index);
+            });
+    connect(indexMenu->addAction(QStringLiteral("多时相指数对比...")), &QAction::triggered, this,
+            [this]() {
+                const auto indices = selectedLayerIndices();
+                std::shared_ptr<RasterLayer> t1, t2;
+                for (int idx : indices) {
+                    try {
+                        auto r = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx));
+                        if (!r)
+                            continue;
+                        if (!t1)
+                            t1 = r;
+                        else if (!t2)
+                            t2 = r;
+                    } catch (...) {
+                    }
+                }
+                if (!t1 || !t2) {
+                    appendLog(QStringLiteral("请选中两个时相的栅格图层。"));
+                    return;
+                }
+                IndexTemporalCompareAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.auxiliaryRaster = t2.get();
+                ctx.parameters[QStringLiteral("index")] = QStringLiteral("NDVI");
+                const auto result = algo.execute(*t1, ctx);
+                applyProcessingResult(result, t1, QStringLiteral("_时相对比"));
+            });
+    connect(indexMenu->addAction(QStringLiteral("导出指数统计 CSV...")), &QAction::triggered, this,
+            [this]() {
+                const auto raster = selectedRaster();
+                if (!raster) {
+                    appendLog(QStringLiteral("请先选择图层。"));
+                    return;
+                }
+                const QString path = QFileDialog::getSaveFileName(
+                    this, QStringLiteral("导出 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
+                if (path.isEmpty())
+                    return;
+                RemoteSensingIndexAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("index")] = QStringLiteral("NDVI");
+                ctx.parameters[QStringLiteral("csvPath")] = path;
+                executeRasterAlgorithm(algo, ctx);
+            });
 
     // ---- "摄影测量/三维" 菜单 ----
     auto *photogrammetryMenu =
@@ -1059,13 +1306,7 @@ void MainWindow::runHistogram() {
 
     HistogramAlgorithm algorithm;
     const auto result = algorithm.execute(*raster, ctx);
-    if (!result.message.isEmpty())
-        appendLog(result.message);
-
-    appendLog(QStringLiteral("直方图统计完成（模拟）：%1，波段%2，%3分箱。")
-                  .arg(raster->name())
-                  .arg(targetBand + 1)
-                  .arg(bins));
+    applyProcessingResult(result, raster, QStringLiteral("_直方图"));
 }
 
 // 执行直方图均衡化算法
@@ -1078,9 +1319,8 @@ void MainWindow::runHistogramEqualization() {
 
     HistogramEqualizationAlgorithm algorithm;
     ProcessingContext ctx;
-    const auto result = algorithm.execute(*raster, ctx);
-    if (!result.message.isEmpty())
-        appendLog(result.message);
+    ctx.bandIndex = selectedBandIndex();
+    executeRasterAlgorithm(algorithm, ctx);
 }
 
 // 执行 ORB/SIFT 特征提取
@@ -1112,24 +1352,7 @@ void MainWindow::runFeatureExtraction() {
     ctx.bandIndex = selectedBandIndex();
     ctx.parameters[QStringLiteral("method")] = method;
     ctx.parameters[QStringLiteral("maxFeatures")] = maxFeatures;
-    const auto result = algorithm.execute(*raster, ctx);
-
-    if (result.image.isNull()) {
-        appendLog(result.message.isEmpty() ? QStringLiteral("特征提取失败：未生成结果图像。")
-                                           : result.message);
-        return;
-    }
-
-    const QString resultName = raster->name() + QStringLiteral("_特征_") + method;
-    auto resultLayer = std::make_shared<RasterLayer>(resultName, QStringLiteral(""),
-                                                     QVector<RasterBand>{}, result.image);
-    resultLayer->setCurrentDisplayImage(result.image);
-    resultLayer->setRenderDescription(QStringLiteral("%1 特征提取结果").arg(method));
-    layers_.add(resultLayer);
-    refreshLayerTree();
-    displayRaster(resultLayer, -1);
-    tabs_->setCurrentIndex(0);
-    appendLog(result.message);
+    executeRasterAlgorithm(algorithm, ctx);
 }
 
 // 执行 DEM 重建流程
@@ -1242,33 +1465,22 @@ void MainWindow::runOrthorectification() {
 
     OrthorectificationAlgorithm algorithm;
     const auto result = algorithm.execute(*raster, ctx);
-
-    // 模拟生成正射影像
-    QImage orthoImage = raster->currentDisplayImage();
-    if (orthoImage.isNull() && raster->bandCount() > 0) {
-        if (raster->bandCount() >= 3) {
-            orthoImage = io::renderRgbComposite(*raster, 0, 1, 2);
-        } else {
-            orthoImage = io::renderSingleBandGray(*raster, 0);
-        }
-    }
-
-    if (orthoImage.isNull()) {
-        appendLog(QStringLiteral("正射校正失败：无法获取影像数据。"));
+    if (result.image.isNull()) {
+        appendLog(result.message.isEmpty() ? QStringLiteral("正射校正失败。") : result.message);
         return;
     }
 
-    // 创建结果图层
     const QString resultName = raster->name() + QStringLiteral("_正射");
-    auto resultLayer = std::make_shared<RasterLayer>(resultName, QStringLiteral(""),
-                                                     QVector<RasterBand>{}, orthoImage);
-    resultLayer->setRenderDescription(QStringLiteral("正射校正（模拟）"));
+    auto resultLayer = std::make_shared<RasterLayer>(resultName, QString(), QVector<RasterBand>{},
+                                                     result.image);
+    resultLayer->setRenderDescription(QStringLiteral("GDAL/OpenCV 正射校正"));
+    if (result.rasterResult)
+        resultLayer = result.rasterResult;
     layers_.add(resultLayer);
     refreshLayerTree();
     displayRaster(resultLayer, -1);
     tabs_->setCurrentIndex(0);
-    appendLog(QStringLiteral("正射校正完成（模拟）：%1，基于 DEM：%2。")
-                  .arg(raster->name(), dem->name()));
+    appendLog(result.message);
 }
 
 // ============ 三维点云/Mesh============
@@ -1495,20 +1707,8 @@ void MainWindow::onSelectionChanged() {
                 } else if (layer->type() == DataType::Dem) {
                     const auto dem = std::dynamic_pointer_cast<DemLayer>(layer);
                     if (dem) {
-                        QVector<QVector3D> demPoints;
-                        const auto &elevs = dem->elevations();
-                        const int w = dem->width();
-                        const int h = dem->height();
-                        demPoints.reserve(elevs.size());
-                        for (int y = 0; y < h; ++y) {
-                            for (int x = 0; x < w; ++x) {
-                                float z = elevs[y * w + x];
-                                demPoints.append(QVector3D(
-                                    static_cast<float>(x),
-                                    static_cast<float>(y), z));
-                            }
-                        }
-                        scene3DWidget_->setPoints(demPoints);
+                        scene3DWidget_->setDem(*dem);
+                        scene3DWidget_->fitToBounds();
                         tabs_->setCurrentWidget(scene3DWidget_);
                     }
                 }
@@ -1560,22 +1760,8 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
             if (visible) {
                 const auto dem = std::dynamic_pointer_cast<DemLayer>(layer);
                 if (dem) {
-                    // 将 DEM 高程转为点云显示
-                    QVector<QVector3D> demPoints;
-                    const auto &elevs = dem->elevations();
-                    const int w = dem->width();
-                    const int h = dem->height();
-                    demPoints.reserve(elevs.size());
-                    for (int y = 0; y < h; ++y) {
-                        for (int x = 0; x < w; ++x) {
-                            float z = elevs[y * w + x];
-                            demPoints.append(QVector3D(
-                                static_cast<float>(x),
-                                static_cast<float>(y),
-                                z));
-                        }
-                    }
-                    scene3DWidget_->setPoints(demPoints);
+                    scene3DWidget_->setDem(*dem);
+                    scene3DWidget_->fitToBounds();
                     tabs_->setCurrentWidget(scene3DWidget_);
                 }
             } else {
@@ -1934,6 +2120,57 @@ void MainWindow::updateActionStates() {
 void MainWindow::appendLog(const QString &text) {
     logEdit_->append(QStringLiteral("[%1] %2").arg(
         QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), text));
+}
+
+void MainWindow::executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx) {
+    const auto raster = selectedRaster();
+    if (!raster) {
+        appendLog(QStringLiteral("请先选择一个遥感影像图层。"));
+        return;
+    }
+    if (ctx.bandIndex < 0)
+        ctx.bandIndex = selectedBandIndex();
+    const ProcessingResult result = algorithm.execute(*raster, ctx);
+    applyProcessingResult(result, raster);
+}
+
+void MainWindow::applyProcessingResult(const ProcessingResult &result,
+                                       const std::shared_ptr<RasterLayer> &source,
+                                       const QString &suffix) {
+    if (!result.message.isEmpty())
+        appendLog(result.message);
+
+    if (result.demResult) {
+        layers_.add(result.demResult);
+        refreshLayerTree();
+    }
+
+    std::shared_ptr<RasterLayer> layer = result.rasterResult;
+    if (!layer && !result.image.isNull()) {
+        layer = std::make_shared<RasterLayer>(source->name() + suffix, QString(),
+                                              QVector<RasterBand>{}, result.image);
+        layer->setRenderDescription(result.message);
+    }
+
+    if (layer) {
+        layers_.add(layer);
+        refreshLayerTree();
+        displayRaster(layer, -1);
+        tabs_->setCurrentIndex(0);
+    } else if (!result.image.isNull()) {
+        imageScene_->clear();
+        imageScene_->addPixmap(QPixmap::fromImage(result.image));
+        imageScene_->setSceneRect(result.image.rect());
+        imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
+        tabs_->setCurrentIndex(0);
+    }
+
+    if (!result.pointCloudResult.isEmpty()) {
+        scene3DWidget_->setPoints(result.pointCloudResult);
+        tabs_->setCurrentWidget(scene3DWidget_);
+    }
+
+    updateActionStates();
 }
 
 } // namespace rs
