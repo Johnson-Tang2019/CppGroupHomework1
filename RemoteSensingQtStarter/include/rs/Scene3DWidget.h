@@ -21,6 +21,7 @@ class Scene3DWidget : public QOpenGLWidget {
     explicit Scene3DWidget(QWidget *parent = nullptr);
     void setMesh(const QVector<QVector3D>& vertices, const QVector<rs::Face>& faces);
     void setPoints(const QVector<QVector3D> &points);
+    void setDem(const rs::DemLayer &dem, int maxGrid = 128);
     void clearData();
     void fitToBounds();
 

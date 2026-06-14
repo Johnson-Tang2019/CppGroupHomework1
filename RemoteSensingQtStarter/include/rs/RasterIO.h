@@ -54,6 +54,10 @@ QImage renderSingleBandGray(const RasterLayer &raster, int zeroBasedBandIndex);
 // 返回：RGB 彩色 QImage
 QImage renderRgbComposite(const RasterLayer &raster, int redBand, int greenBand, int blueBand);
 
+// 使用 GDAL 读取 DEM 文件（GeoTIFF、ASCII Grid 等）
+std::shared_ptr<DemLayer> loadDemDataset(const QString &path,
+                                         const QString &displayName = {});
+
 // 将 DEM 高程数据导出为 GeoTIFF 文件
 // dem     - 待导出的数字高程模型图层
 // path    - 输出文件路径（通常后缀为 .tif）

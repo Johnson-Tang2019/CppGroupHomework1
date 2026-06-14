@@ -284,6 +284,51 @@ QImage renderRgbComposite(const RasterLayer& raster, int redBand, int greenBand,
 }
 
 // ============================================================================
+// loadDemDataset
+// ============================================================================
+std::shared_ptr<DemLayer> loadDemDataset(const QString& path, const QString& displayName) {
+#ifndef RS_WITH_GDAL
+    throw std::runtime_error("当前构建未启用 GDAL，无法读取 DEM: " + path.toStdString());
+#else
+    ensureGdalRegistered();
+
+    GDALDataset* dataset = static_cast<GDALDataset*>(
+        GDALOpenEx(path.toUtf8().constData(), GA_ReadOnly, nullptr, nullptr, nullptr));
+    if (!dataset)
+        throw std::runtime_error("无法打开 DEM 文件: " + path.toStdString());
+
+    const int width = dataset->GetRasterXSize();
+    const int height = dataset->GetRasterYSize();
+    const int bandCount = dataset->GetRasterCount();
+    if (width <= 0 || height <= 0 || bandCount < 1) {
+        GDALClose(dataset);
+        throw std::runtime_error("DEM 尺寸或波段数无效: " + path.toStdString());
+    }
+
+    std::array<double, 6> geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
+    if (dataset->GetGeoTransform(geoTransform.data()) != CE_None)
+        geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
+
+    const int pixelCount = width * height;
+    QVector<float> elevations(pixelCount);
+    GDALRasterBand* gdalBand = dataset->GetRasterBand(1);
+    const CPLErr err = gdalBand->RasterIO(GF_Read, 0, 0, width, height, elevations.data(), width,
+                                          height, GDT_Float32, 0, 0, nullptr);
+    GDALClose(dataset);
+
+    if (err != CE_None)
+        throw std::runtime_error("读取 DEM 像素数据失败: " + path.toStdString());
+
+    const QFileInfo info(path);
+    const QString name = displayName.isEmpty() ? info.fileName() : displayName;
+    auto dem = std::make_shared<DemLayer>(name, path, width, height, elevations);
+    dem->setGeoTransform(geoTransform);
+    dem->setSourceRasterPath(path);
+    return dem;
+#endif
+}
+
+// ============================================================================
 // exportDemAsGeoTiff
 // ============================================================================
 void exportDemAsGeoTiff(const DemLayer& dem, const QString& path,

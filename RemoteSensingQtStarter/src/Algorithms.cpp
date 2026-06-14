@@ -7,16 +7,29 @@
 #include <QPixmap>
 #include <QImage>
 #include <QCoreApplication>
-#include <opencv2/opencv.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/calib3d.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <numeric>
 #include <iostream>
 
+#ifdef RS_WITH_OPENCV
+#include <opencv2/opencv.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
+#endif
+
 namespace rs {
+
+#ifndef RS_WITH_OPENCV
+static ProcessingResult openCvUnavailableResult(const QString &featureName) {
+    return {{},
+            QStringLiteral("当前构建未启用 OpenCV（%1）。请使用 build_msys2_ucrt.ps1 构建完整版本。")
+                .arg(featureName)};
+}
+#endif
+
+#ifdef RS_WITH_OPENCV
 
 // ── 辅助函数：限制立体匹配输入尺寸，避免 SGBM 在主线程上过久阻塞 UI ──
 static void limitStereoImageSize(cv::Mat& left, cv::Mat& right, int maxDim = 1024) {
@@ -62,32 +75,6 @@ static QImage matToQImage(const cv::Mat& mat) {
     return QImage();
 }
 
-// ── 辅助函数：使用 Qt 原生窗口替换 OpenCV 的 imshow ──
-static void showAndWait(const std::string& winName, const cv::Mat& img) {
-    QImage qImg = matToQImage(img);
-
-    if (qImg.isNull()) return;
-    QDialog dialog;
-    dialog.setWindowTitle(QString::fromStdString(winName));
-    // 增加窗口最大化按钮，方便查看大图
-    dialog.setWindowFlags(dialog.windowFlags() | Qt::WindowMaximizeButtonHint);
-    // 用 QLabel 来承载图像
-    QLabel* label = new QLabel(&dialog);
-    label->setPixmap(QPixmap::fromImage(qImg));
-    label->setAlignment(Qt::AlignCenter);
-
-    // 设置布局，去除边缘留白
-    QVBoxLayout* layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(label);
-
-    dialog.setLayout(layout);
-    
-    // 使用 exec() 弹出模态对话框。
-    // 这会阻塞当前算法流程（等待用户看完图像），但绝不会阻塞主程序的重绘，
-    // 用户点击 "X" 或按 ESC 键关闭后，代码安全返回，不会发送任何退出程序的信号！
-    dialog.exec();
-}
 // 1. 灰度直方图算法（基于真实波段像素数据）
 
 QString HistogramAlgorithm::name() const { return QStringLiteral("灰度直方图"); }
@@ -153,10 +140,6 @@ ProcessingResult HistogramAlgorithm::execute(const RasterLayer& input, const Pro
                        + " | Valid pixels: " + std::to_string(validCount);
     cv::putText(histImage, info, cv::Point(10, 25),
                 cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
-        cv::putText(histImage, "Close window to continue", cv::Point(10, hist_h - 8),
-                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(200, 200, 200), 1);
-
-        showAndWait("Histogram - " + bandInfo.name.toStdString(), histImage);
 
     // 返回直方图图像
     cv::Mat histRGB;
@@ -214,9 +197,8 @@ ProcessingResult HistogramEqualizationAlgorithm::execute(const RasterLayer& inpu
         cv::Mat result;
         cv::cvtColor(lab, result, cv::COLOR_Lab2BGR);
 
-        cv::putText(result, "CLAHE Enhanced (RGB) - Press ANY KEY",
+        cv::putText(result, "CLAHE Enhanced (RGB)",
                     cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
-        showAndWait("CLAHE Enhanced", result);
 
         // 将结果转回 QImage
         cv::cvtColor(result, result, cv::COLOR_BGR2RGB);
@@ -240,9 +222,8 @@ ProcessingResult HistogramEqualizationAlgorithm::execute(const RasterLayer& inpu
         // 并排显示原图和处理结果
         cv::Mat display;
         cv::hconcat(gray8u, result, display);
-        cv::putText(display, "Original | CLAHE - Press ANY KEY",
+        cv::putText(display, "Original | CLAHE",
                     cv::Point(10, 25), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1);
-        showAndWait("CLAHE Band " + std::to_string(bandIdx + 1), display);
 
         QImage resultImg(result.data, result.cols, result.rows, result.step, QImage::Format_Grayscale8);
         return {resultImg.copy(), QStringLiteral("CLAHE 均衡化完成")};
@@ -292,24 +273,35 @@ ProcessingResult FeatureExtractionAlgorithm::execute(const RasterLayer& input, c
         grayImage = stretchTo8U(floatMat, bandInfo.minValue, bandInfo.maxValue);
     }
 
-    // SIFT 特征提取
-    cv::Ptr<cv::SIFT> sift = cv::SIFT::create(1000);
+    // SIFT / ORB / AKAZE 特征提取
+    const QString method = context.parameters.value(QStringLiteral("method"), QStringLiteral("SIFT")).toString();
+    const int maxFeatures = context.parameters.value(QStringLiteral("maxFeatures"), 1000).toInt();
+
+    cv::Ptr<cv::Feature2D> detector;
+    if (method == QStringLiteral("ORB")) {
+        detector = cv::ORB::create(maxFeatures);
+    } else if (method == QStringLiteral("AKAZE")) {
+        detector = cv::AKAZE::create();
+    } else {
+        detector = cv::SIFT::create(maxFeatures);
+    }
+
     std::vector<cv::KeyPoint> keypoints;
     cv::Mat descriptors;
-    sift->detectAndCompute(grayImage, cv::Mat(), keypoints, descriptors);
+    detector->detectAndCompute(grayImage, cv::Mat(), keypoints, descriptors);
 
-    // 绘制结果
     cv::Mat outputImage;
-    cv::drawKeypoints(grayImage, keypoints, outputImage,
-                      cv::Scalar::all(-1), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+    cv::drawKeypoints(grayImage, keypoints, outputImage, cv::Scalar::all(-1),
+                      cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
 
-    std::string info = "SIFT Features: " + std::to_string(keypoints.size()) + " keypoints | Press ANY KEY";
-    cv::putText(outputImage, info, cv::Point(10, 30),
-                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
+    std::string info = method.toStdString() + " Features: " + std::to_string(keypoints.size()) +
+                       " keypoints";
+    cv::putText(outputImage, info, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                cv::Scalar(0, 0, 255), 2);
 
-    showAndWait("SIFT Features", outputImage);
-
-    return {{}, QStringLiteral("提取到 %1 个 SIFT 特征点").arg(keypoints.size())};
+    QImage resultImg = matToQImage(outputImage);
+    return {resultImg,
+            QStringLiteral("%1 特征提取完成：共 %2 个特征点").arg(method).arg(keypoints.size())};
 }
 
 
@@ -585,15 +577,6 @@ ProcessingResult OrthorectificationAlgorithm::execute(const RasterLayer& input, 
     cv::Mat orthoImage;
     cv::remap(srcImage, orthoImage, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
 
-    // 显示校正前后对比
-    cv::Mat display;
-    cv::hconcat(srcImage, orthoImage, display);
-    std::string info = "Original | Orthorectified - Press ANY KEY";
-    cv::putText(display, info, cv::Point(10, 30),
-                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
-
-    showAndWait("Orthorectification", display);
-
     // 转回 QImage
     cv::Mat resultRGB;
     cv::cvtColor(orthoImage, resultRGB, cv::COLOR_BGR2RGB);
@@ -602,6 +585,45 @@ ProcessingResult OrthorectificationAlgorithm::execute(const RasterLayer& input, 
 
     return {resultImg.copy(), QStringLiteral("正射校正完成（基于 DEM：%1）").arg(dem->name())};
 }
+
+#else
+
+QString HistogramAlgorithm::name() const { return QStringLiteral("灰度直方图"); }
+QString HistogramAlgorithm::category() const { return QStringLiteral("影像统计"); }
+std::vector<AlgorithmParameter> HistogramAlgorithm::parameterSchema() const { return {}; }
+ProcessingResult HistogramAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
+    return openCvUnavailableResult(QStringLiteral("灰度直方图"));
+}
+
+QString HistogramEqualizationAlgorithm::name() const { return QStringLiteral("直方图均衡化"); }
+QString HistogramEqualizationAlgorithm::category() const { return QStringLiteral("影像增强"); }
+std::vector<AlgorithmParameter> HistogramEqualizationAlgorithm::parameterSchema() const { return {}; }
+ProcessingResult HistogramEqualizationAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
+    return openCvUnavailableResult(QStringLiteral("直方图均衡化"));
+}
+
+QString FeatureExtractionAlgorithm::name() const { return QStringLiteral("ORB/SIFT 特征提取"); }
+QString FeatureExtractionAlgorithm::category() const { return QStringLiteral("摄影测量"); }
+std::vector<AlgorithmParameter> FeatureExtractionAlgorithm::parameterSchema() const { return {}; }
+ProcessingResult FeatureExtractionAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
+    return openCvUnavailableResult(QStringLiteral("ORB/SIFT 特征提取"));
+}
+
+QString DemReconstructionAlgorithm::name() const { return QStringLiteral("DEM 重建"); }
+QString DemReconstructionAlgorithm::category() const { return QStringLiteral("摄影测量"); }
+std::vector<AlgorithmParameter> DemReconstructionAlgorithm::parameterSchema() const { return {}; }
+ProcessingResult DemReconstructionAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
+    return openCvUnavailableResult(QStringLiteral("DEM 重建"));
+}
+
+QString OrthorectificationAlgorithm::name() const { return QStringLiteral("正射影像校正"); }
+QString OrthorectificationAlgorithm::category() const { return QStringLiteral("摄影测量"); }
+std::vector<AlgorithmParameter> OrthorectificationAlgorithm::parameterSchema() const { return {}; }
+ProcessingResult OrthorectificationAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
+    return openCvUnavailableResult(QStringLiteral("正射影像校正"));
+}
+
+#endif
 
 } // namespace rs
 
@@ -629,7 +651,7 @@ ProcessingResult PointCloudVoxelDownsampleAlgorithm::execute(
     double voxelSize = context.parameters.value("voxelSize", 0.1).toDouble();
 
     if (points.isEmpty() || voxelSize <= 0) {
-        return {{}, QStringLiteral("体素降采样：点云为空或体素大小无效"), nullptr, points};
+        return {{}, QStringLiteral("体素降采样：点云为空或体素大小无效"), nullptr, nullptr, points};
     }
 
     // 用 std::map 对体素网格内的点取均值
@@ -656,7 +678,7 @@ ProcessingResult PointCloudVoxelDownsampleAlgorithm::execute(
     }
 
     return {{}, QStringLiteral("体素降采样完成：%1 → %2 个点").arg(points.size()).arg(result.size()),
-            nullptr, result};
+            nullptr, nullptr, result};
 }
 
 
@@ -687,7 +709,7 @@ ProcessingResult PointCloudStatisticalFilterAlgorithm::execute(
     double stddevThreshold = context.parameters.value("stddevThreshold", 2.0).toDouble();
 
     if (points.isEmpty() || meanK < 3) {
-        return {{}, QStringLiteral("统计滤波：点云为空或邻居数太小"), nullptr, points};
+        return {{}, QStringLiteral("统计滤波：点云为空或邻居数太小"), nullptr, nullptr, points};
     }
     const int n = static_cast<int>(points.size());
 
@@ -717,7 +739,7 @@ ProcessingResult PointCloudStatisticalFilterAlgorithm::execute(
     }
 
     return {{}, QStringLiteral("统计滤波完成：%1 → %2 个点").arg(points.size()).arg(result.size()),
-            nullptr, result};
+            nullptr, nullptr, result};
 }
 
 

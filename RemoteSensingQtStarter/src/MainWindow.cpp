@@ -4,6 +4,8 @@
 #include "rs/RasterIO.h"
 #include "rs/RasterRenderDialog.h"
 #include "rs/Scene3DWidget.h"
+#include "rs/ExtendedAlgorithms.h"
+#include "rs/RemoteSensingIndices.h"
 
 #include <QApplication>
 #include <QFutureWatcher>
@@ -18,7 +20,8 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QUrl>
-#include <QtConcurrent>
+#include <QTreeWidgetItemIterator>
+#include <QtConcurrent/QtConcurrent>
 #include <functional>
 
 namespace rs {
@@ -398,6 +401,153 @@ QTreeWidgetItem *ensureTopFolder(QTreeWidget *tree, const QString &name) {
     return folder;
 }
 
+qint32 readInt32LeBytes(const char *data) {
+    const auto *b = reinterpret_cast<const unsigned char *>(data);
+    const quint32 value = (static_cast<quint32>(b[0])) | (static_cast<quint32>(b[1]) << 8) |
+                          (static_cast<quint32>(b[2]) << 16) | (static_cast<quint32>(b[3]) << 24);
+    return static_cast<qint32>(value);
+}
+
+struct LoadedMeshData {
+    QVector<QVector3D> vertices;
+    QVector<Face> faces;
+};
+
+LoadedMeshData loadMeshFromPly(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        throw std::runtime_error("无法打开 PLY 文件");
+    }
+    const QByteArray allData = file.readAll();
+    file.close();
+
+    const int headerEndPos = allData.indexOf("end_header");
+    if (headerEndPos < 0) {
+        throw std::runtime_error("PLY 缺少 end_header");
+    }
+    const int nlPos = allData.indexOf('\n', headerEndPos);
+    const int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
+
+    bool isAscii = false;
+    int vertexCount = 0;
+    int faceCount = 0;
+    int vertexPropCount = 0;
+    bool inVertex = false;
+
+    QTextStream headerStream(allData.left(headerBytes));
+    while (!headerStream.atEnd()) {
+        const QString line = headerStream.readLine().trimmed();
+        if (line.startsWith(QLatin1String("element vertex"))) {
+            vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+            inVertex = true;
+            continue;
+        }
+        if (line.startsWith(QLatin1String("element face"))) {
+            faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+            inVertex = false;
+            continue;
+        }
+        if (inVertex && line.startsWith(QLatin1String("property "))) {
+            ++vertexPropCount;
+        }
+        if (line.contains(QLatin1String("format ascii"))) {
+            isAscii = true;
+        }
+    }
+
+    if (vertexCount <= 0) {
+        throw std::runtime_error("PLY 顶点数量无效");
+    }
+
+    LoadedMeshData mesh;
+    if (isAscii) {
+        QTextStream in(allData);
+        while (!in.atEnd()) {
+            if (in.readLine().trimmed() == QLatin1String("end_header")) {
+                break;
+            }
+        }
+
+        mesh.vertices.reserve(vertexCount);
+        for (int i = 0; i < vertexCount && !in.atEnd(); ++i) {
+            const QString line = in.readLine().trimmed();
+            if (line.isEmpty()) {
+                --i;
+                continue;
+            }
+            const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            if (parts.size() < 3) {
+                continue;
+            }
+            mesh.vertices.append(
+                QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+        }
+
+        mesh.faces.reserve(faceCount);
+        for (int i = 0; i < faceCount && !in.atEnd(); ++i) {
+            const QString line = in.readLine().trimmed();
+            if (line.isEmpty()) {
+                --i;
+                continue;
+            }
+            const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            if (parts.size() < 4) {
+                continue;
+            }
+            const int n = parts[0].toInt();
+            if (n < 3 || parts.size() < n + 1) {
+                continue;
+            }
+            const int i0 = parts[1].toInt();
+            for (int t = 1; t < n - 1; ++t) {
+                Face face;
+                face.a = i0;
+                face.b = parts[1 + t].toInt();
+                face.c = parts[2 + t].toInt();
+                mesh.faces.append(face);
+            }
+        }
+    } else {
+        if (vertexPropCount < 3) {
+            throw std::runtime_error("PLY 顶点属性数不足");
+        }
+        const int vertexSize = vertexPropCount * static_cast<int>(sizeof(float));
+        int offset = headerBytes;
+
+        mesh.vertices.reserve(vertexCount);
+        for (int i = 0; i < vertexCount; ++i) {
+            if (offset + vertexSize > allData.size()) {
+                break;
+            }
+            const float *f = reinterpret_cast<const float *>(allData.constData() + offset);
+            mesh.vertices.append(QVector3D(f[0], f[1], f[2]));
+            offset += vertexSize;
+        }
+
+        mesh.faces.reserve(faceCount);
+        for (int i = 0; i < faceCount; ++i) {
+            if (offset >= allData.size()) {
+                break;
+            }
+            const quint8 n = static_cast<quint8>(allData[offset++]);
+            if (n < 3 || offset + n * 4 > allData.size()) {
+                break;
+            }
+            const int i0 = readInt32LeBytes(allData.constData() + offset);
+            for (int t = 1; t < n - 1; ++t) {
+                Face face;
+                face.a = i0;
+                face.b = readInt32LeBytes(allData.constData() + offset + t * 4);
+                face.c = readInt32LeBytes(allData.constData() + offset + (t + 1) * 4);
+                mesh.faces.append(face);
+            }
+            offset += n * 4;
+        }
+    }
+
+    return mesh;
+}
+
 } // namespace
 
 // 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
@@ -446,11 +596,258 @@ void MainWindow::createMenus() {
     equalizeAction_ =
         enhanceMenu->addAction(QStringLiteral("直方图均衡化...")); // 添加"直方图均衡化"并保存指针
     connect(equalizeAction_, &QAction::triggered, this, &MainWindow::runHistogramEqualization);
+    connect(enhanceMenu->addAction(QStringLiteral("线性/百分比拉伸...")), &QAction::triggered, this,
+            [this]() {
+                QStringList modes = {QStringLiteral("percent"), QStringLiteral("linear")};
+                bool ok = false;
+                const QString mode = QInputDialog::getItem(
+                    this, QStringLiteral("拉伸模式"), QStringLiteral("选择拉伸方式："),
+                    {QStringLiteral("百分比拉伸"), QStringLiteral("线性拉伸")}, 0, false, &ok);
+                if (!ok)
+                    return;
+                StretchEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("mode")] =
+                    mode.contains(QStringLiteral("线性")) ? QStringLiteral("linear")
+                                                          : QStringLiteral("percent");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("CLAHE 增强...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const double clip =
+                    QInputDialog::getDouble(this, QStringLiteral("CLAHE"), QStringLiteral("clipLimit:"),
+                                            2.0, 0.1, 40.0, 1, &ok);
+                if (!ok)
+                    return;
+                const int tile = QInputDialog::getInt(this, QStringLiteral("CLAHE"),
+                                                      QStringLiteral("tileSize:"), 8, 2, 64, 1, &ok);
+                if (!ok)
+                    return;
+                ClaheEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("clipLimit")] = clip;
+                ctx.parameters[QStringLiteral("tileSize")] = tile;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("高斯滤波...")), &QAction::triggered, this,
+            [this]() {
+                DenoiseFilterAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("gaussian");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("中值滤波...")), &QAction::triggered, this,
+            [this]() {
+                DenoiseFilterAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("median");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("双边滤波...")), &QAction::triggered, this,
+            [this]() {
+                DenoiseFilterAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("bilateral");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("Unsharp 锐化...")), &QAction::triggered, this,
+            [this]() {
+                SharpenEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("method")] = QStringLiteral("unsharp");
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(enhanceMenu->addAction(QStringLiteral("拉普拉斯锐化...")), &QAction::triggered, this,
+            [this]() {
+                SharpenEnhancementAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("method")] = QStringLiteral("laplacian");
+                executeRasterAlgorithm(algo, ctx);
+            });
 
-    auto *featureMenu = rasterMenu->addMenu(QStringLiteral("特征")); // 创建子菜单"特征"
+    auto *featureMenu = rasterMenu->addMenu(QStringLiteral("特征与检测")); // 特征/边缘/检测
     featureAction_ = featureMenu->addAction(
-        QStringLiteral("ORB/SIFT 特征提取...")); // 添加"ORB/SIFT 特征提取"并保存指针
+        QStringLiteral("ORB/SIFT/AKAZE 特征提取...")); // 添加特征提取并保存指针
     connect(featureAction_, &QAction::triggered, this, &MainWindow::runFeatureExtraction);
+    connect(featureMenu->addAction(QStringLiteral("Canny 边缘检测...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int t1 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("低阈值:"),
+                                                    50, 1, 500, 1, &ok);
+                if (!ok)
+                    return;
+                const int t2 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("高阈值:"),
+                                                      150, 1, 500, 1, &ok);
+                if (!ok)
+                    return;
+                CannyEdgeAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.bandIndex = selectedBandIndex();
+                ctx.parameters[QStringLiteral("threshold1")] = t1;
+                ctx.parameters[QStringLiteral("threshold2")] = t2;
+                executeRasterAlgorithm(algo, ctx);
+            });
+
+    auto *classMenu = rasterMenu->addMenu(QStringLiteral("分类与检测"));
+    connect(classMenu->addAction(QStringLiteral("K-Means 无监督分类...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int k = QInputDialog::getInt(this, QStringLiteral("K-Means"),
+                                                   QStringLiteral("类别数 K："), 3, 2, 10, 1, &ok);
+                if (!ok)
+                    return;
+                KMeansClassificationAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("k")] = k;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(classMenu->addAction(QStringLiteral("SVM 地物分类...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int classes = QInputDialog::getInt(this, QStringLiteral("SVM"),
+                                                       QStringLiteral("类别数："), 3, 2, 10, 1, &ok);
+                if (!ok)
+                    return;
+                const int samples = QInputDialog::getInt(this, QStringLiteral("SVM"),
+                                                         QStringLiteral("训练样本数："), 500, 50, 5000,
+                                                         50, &ok);
+                if (!ok)
+                    return;
+                SvmClassificationAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("classes")] = classes;
+                ctx.parameters[QStringLiteral("trainSamples")] = samples;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(classMenu->addAction(QStringLiteral("轮廓目标检测...")), &QAction::triggered, this, [this]() {
+        ContourDetectionAlgorithm algo;
+        executeRasterAlgorithm(algo);
+    });
+    connect(classMenu->addAction(QStringLiteral("连通域目标检测...")), &QAction::triggered, this,
+            [this]() {
+                bool ok = false;
+                const int minArea = QInputDialog::getInt(this, QStringLiteral("连通域"),
+                                                         QStringLiteral("最小面积："), 100, 1, 100000,
+                                                         10, &ok);
+                if (!ok)
+                    return;
+                ConnectedComponentsAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("minArea")] = minArea;
+                executeRasterAlgorithm(algo, ctx);
+            });
+    connect(classMenu->addAction(QStringLiteral("混淆矩阵精度评价...")), &QAction::triggered, this,
+            [this]() {
+                const auto indices = selectedLayerIndices();
+                std::shared_ptr<RasterLayer> pred, ref;
+                for (int idx : indices) {
+                    try {
+                        auto r = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx));
+                        if (!r)
+                            continue;
+                        if (!pred)
+                            pred = r;
+                        else if (!ref)
+                            ref = r;
+                    } catch (...) {
+                    }
+                }
+                if (!pred || !ref) {
+                    appendLog(QStringLiteral("请选中两个栅格图层（预测结果 + 参考分类）。"));
+                    return;
+                }
+                const QString csvPath = QFileDialog::getSaveFileName(
+                    this, QStringLiteral("导出混淆矩阵 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
+                ConfusionMatrixAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.auxiliaryRaster = ref.get();
+                if (!csvPath.isEmpty())
+                    ctx.parameters[QStringLiteral("csvPath")] = csvPath;
+                const auto result = algo.execute(*pred, ctx);
+                applyProcessingResult(result, pred, QStringLiteral("混淆矩阵精度评价"),
+                                      QStringLiteral("_精度"));
+            });
+
+    auto *indexMenu = menuBar()->addMenu(QStringLiteral("遥感指数"));
+    connect(indexMenu->addAction(QStringLiteral("计算 NDVI/NDWI/NDBI...")), &QAction::triggered, this,
+            [this]() {
+                QStringList indices = {QStringLiteral("NDVI"), QStringLiteral("NDWI"),
+                                       QStringLiteral("NDBI")};
+                bool ok = false;
+                const QString index = QInputDialog::getItem(
+                    this, QStringLiteral("遥感指数"), QStringLiteral("选择指数："), indices, 0, false,
+                    &ok);
+                if (!ok)
+                    return;
+                const bool threshold = QMessageBox::question(
+                                           this, QStringLiteral("阈值分割"),
+                                           QStringLiteral("是否应用阈值分割掩膜？")) == QMessageBox::Yes;
+                RemoteSensingIndexAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("index")] = index;
+                ctx.parameters[QStringLiteral("applyThreshold")] = threshold;
+                ctx.parameters[QStringLiteral("threshold")] = 0.2;
+                const auto raster = selectedRaster();
+                if (!raster) {
+                    appendLog(QStringLiteral("请先选择遥感影像图层。"));
+                    return;
+                }
+                const auto result = algo.execute(*raster, ctx);
+                applyProcessingResult(result, raster, index, QStringLiteral("_") + index);
+            });
+    connect(indexMenu->addAction(QStringLiteral("多时相指数对比...")), &QAction::triggered, this,
+            [this]() {
+                const auto indices = selectedLayerIndices();
+                std::shared_ptr<RasterLayer> t1, t2;
+                for (int idx : indices) {
+                    try {
+                        auto r = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx));
+                        if (!r)
+                            continue;
+                        if (!t1)
+                            t1 = r;
+                        else if (!t2)
+                            t2 = r;
+                    } catch (...) {
+                    }
+                }
+                if (!t1 || !t2) {
+                    appendLog(QStringLiteral("请选中两个时相的栅格图层。"));
+                    return;
+                }
+                IndexTemporalCompareAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.auxiliaryRaster = t2.get();
+                ctx.parameters[QStringLiteral("index")] = QStringLiteral("NDVI");
+                const auto result = algo.execute(*t1, ctx);
+                applyProcessingResult(result, t1, QStringLiteral("多时相指数对比"),
+                                      QStringLiteral("_时相对比"));
+            });
+    connect(indexMenu->addAction(QStringLiteral("导出指数统计 CSV...")), &QAction::triggered, this,
+            [this]() {
+                const auto raster = selectedRaster();
+                if (!raster) {
+                    appendLog(QStringLiteral("请先选择图层。"));
+                    return;
+                }
+                const QString path = QFileDialog::getSaveFileName(
+                    this, QStringLiteral("导出 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
+                if (path.isEmpty())
+                    return;
+                RemoteSensingIndexAlgorithm algo;
+                ProcessingContext ctx;
+                ctx.parameters[QStringLiteral("index")] = QStringLiteral("NDVI");
+                ctx.parameters[QStringLiteral("csvPath")] = path;
+                executeRasterAlgorithm(algo, ctx);
+            });
 
     // ---- "摄影测量/三维" 菜单 ----
     auto *photogrammetryMenu =
@@ -1051,64 +1448,24 @@ void MainWindow::openMesh() {
                     vertices.append(
                         QVector3D(parts[1].toFloat(), parts[2].toFloat(), parts[3].toFloat()));
                 } else if (parts[0] == QStringLiteral("f") && parts.size() >= 4) {
-                    Face face;
-                    // OBJ 索引从 1 开始，需要减 1
-                    face.a = parts[1].section(QLatin1Char('/'), 0, 0).toInt() - 1;
-                    face.b = parts[2].section(QLatin1Char('/'), 0, 0).toInt() - 1;
-                    face.c = parts[3].section(QLatin1Char('/'), 0, 0).toInt() - 1;
-                    faces.append(face);
+                    const auto parseIndex = [](const QString &token) {
+                        return token.section(QLatin1Char('/'), 0, 0).toInt() - 1;
+                    };
+                    const int i0 = parseIndex(parts[1]);
+                    for (int t = 2; t < parts.size() - 1; ++t) {
+                        Face face;
+                        face.a = i0;
+                        face.b = parseIndex(parts[t]);
+                        face.c = parseIndex(parts[t + 1]);
+                        faces.append(face);
+                    }
                 }
             }
             file.close();
         } else if (ext == QStringLiteral("ply")) {
-            // PLY 格式（同点云读取方式，但同时读取面片信息）
-            QFile file(path);
-            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                throw std::runtime_error("无法打开 PLY 文件");
-            }
-            QTextStream in(&file);
-            int vertexCount = 0, faceCount = 0;
-            bool headerEnd = false;
-            int readVerts = 0, readFaces = 0;
-            bool readingVerts = true;
-
-            while (!in.atEnd()) {
-                const QString line = in.readLine().trimmed();
-                if (!headerEnd) {
-                    if (line.startsWith(QStringLiteral("element vertex"))) {
-                        vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                    } else if (line.startsWith(QStringLiteral("element face"))) {
-                        faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                    } else if (line == QStringLiteral("end_header")) {
-                        headerEnd = true;
-                        vertices.reserve(vertexCount);
-                        faces.reserve(faceCount);
-                    }
-                    continue;
-                }
-
-                if (readingVerts && readVerts < vertexCount) {
-                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                    if (parts.size() >= 3) {
-                        vertices.append(
-                            QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
-                    }
-                    ++readVerts;
-                    if (readVerts >= vertexCount)
-                        readingVerts = false;
-                } else if (readFaces < faceCount) {
-                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                    if (parts.size() >= 4) {
-                        Face face;
-                        face.a = parts[1].toInt();
-                        face.b = parts[2].toInt();
-                        face.c = parts[3].toInt();
-                        faces.append(face);
-                    }
-                    ++readFaces;
-                }
-            }
-            file.close();
+            const LoadedMeshData plyMesh = loadMeshFromPly(path);
+            vertices = plyMesh.vertices;
+            faces = plyMesh.faces;
         } else {
             throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 OBJ/PLY");
         }
@@ -1120,12 +1477,19 @@ void MainWindow::openMesh() {
         auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
         layers_.add(layer);
         scene3DWidget_->setMesh(vertices, faces);
+        scene3DWidget_->fitToBounds();
         tabs_->setCurrentWidget(scene3DWidget_);
         scene3DWidget_->update();
-        appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
-                      .arg(info.fileName())
-                      .arg(vertices.size())
-                      .arg(faces.size()));
+        if (faces.isEmpty()) {
+            appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，未读取到三角面，已在三维场景显示顶点）")
+                          .arg(info.fileName())
+                          .arg(vertices.size()));
+        } else {
+            appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
+                          .arg(info.fileName())
+                          .arg(vertices.size())
+                          .arg(faces.size()));
+        }
     } catch (const std::exception &e) {
         appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")
                       .arg(info.fileName(), QString::fromUtf8(e.what())));
@@ -1144,51 +1508,20 @@ void MainWindow::openDem() {
 
     const QFileInfo info(path);
     try {
-        // 使用 GDAL 读取 DEM 文件
-        GDALAllRegister();
-        GDALDataset *dataset = static_cast<GDALDataset *>(
-            GDALOpenEx(path.toUtf8().constData(), GA_ReadOnly, nullptr, nullptr, nullptr));
-        if (!dataset) {
-            throw std::runtime_error("无法打开 DEM 文件");
-        }
-
-        const int width = dataset->GetRasterXSize();
-        const int height = dataset->GetRasterYSize();
-        const int bandCount = dataset->GetRasterCount();
-
-        if (width <= 0 || height <= 0 || bandCount < 1) {
-            GDALClose(dataset);
-            throw std::runtime_error("DEM 尺寸或波段数无效");
-        }
-
-        // 读取地理变换
-        std::array<double, 6> geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
-        if (dataset->GetGeoTransform(geoTransform.data()) != CE_None) {
-            geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
-        }
-
-        // 读取高程数据（取第一个波段）
-        const int pixelCount = width * height;
-        QVector<float> elevations(pixelCount);
-        GDALRasterBand *gdalBand = dataset->GetRasterBand(1);
-        CPLErr err = gdalBand->RasterIO(GF_Read, 0, 0, width, height, elevations.data(), width,
-                                        height, GDT_Float32, 0, 0, nullptr);
-        GDALClose(dataset);
-
-        if (err != CE_None) {
-            throw std::runtime_error("读取 DEM 像素数据失败");
-        }
-
-        // 创建 DEM 图层
-        auto dem = std::make_shared<DemLayer>(info.fileName(), path, width, height, elevations);
-        dem->setGeoTransform(geoTransform);
-        dem->setSourceRasterPath(path);
+        const auto dem = io::loadDemDataset(path, info.fileName());
         layers_.add(dem);
-        appendLog(
-            QStringLiteral("已加载 DEM：%1（%2x%3）").arg(info.fileName()).arg(width).arg(height));
+        appendLog(QStringLiteral("已加载 DEM：%1（%2x%3）")
+                      .arg(info.fileName())
+                      .arg(dem->width())
+                      .arg(dem->height()));
     } catch (const std::exception &e) {
-        appendLog(QStringLiteral("DEM 加载失败 [%1]：%2")
-                      .arg(info.fileName(), QString::fromUtf8(e.what())));
+        const QString reason = QString::fromUtf8(e.what());
+        appendLog(QStringLiteral("DEM 加载失败 [%1]：%2").arg(info.fileName(), reason));
+        if (reason.contains(QStringLiteral("未启用 GDAL"))) {
+            QMessageBox::warning(this, QStringLiteral("GDAL 未启用"),
+                                 QStringLiteral("当前构建未启用 GDAL，无法读取 DEM 文件。\n"
+                                                "请使用 MSYS2 脚本 build_msys2_ucrt.ps1 构建，或在 CMake 中启用 GDAL。"));
+        }
     }
     refreshLayerTree();
     updateActionStates();
@@ -1317,13 +1650,7 @@ void MainWindow::runHistogram() {
 
     HistogramAlgorithm algorithm;
     const auto result = algorithm.execute(*raster, ctx);
-    if (!result.message.isEmpty())
-        appendLog(result.message);
-
-    appendLog(QStringLiteral("直方图统计完成（模拟）：%1，波段%2，%3分箱。")
-                  .arg(raster->name())
-                  .arg(targetBand + 1)
-                  .arg(bins));
+    applyProcessingResult(result, raster, QStringLiteral("灰度直方图"), QStringLiteral("_直方图"));
 }
 
 // 执行直方图均衡化算法
@@ -1336,9 +1663,8 @@ void MainWindow::runHistogramEqualization() {
 
     HistogramEqualizationAlgorithm algorithm;
     ProcessingContext ctx;
-    const auto result = algorithm.execute(*raster, ctx);
-    if (!result.message.isEmpty())
-        appendLog(result.message);
+    ctx.bandIndex = selectedBandIndex();
+    executeRasterAlgorithm(algorithm, ctx);
 }
 
 // 执行 ORB/SIFT 特征提取
@@ -1365,53 +1691,12 @@ void MainWindow::runFeatureExtraction() {
     if (!ok)
         return;
 
-    // 模拟执行特征提取
     FeatureExtractionAlgorithm algorithm;
     ProcessingContext ctx;
     ctx.bandIndex = selectedBandIndex();
     ctx.parameters[QStringLiteral("method")] = method;
     ctx.parameters[QStringLiteral("maxFeatures")] = maxFeatures;
-    const auto result = algorithm.execute(*raster, ctx);
-
-    // 模拟生成特征点标注图
-    QImage featureImage;
-    if (selectedBandIndex() >= 0 && selectedBandIndex() < raster->bandCount()) {
-        featureImage = io::renderSingleBandGray(*raster, selectedBandIndex());
-    } else {
-        featureImage = raster->currentDisplayImage();
-    }
-
-    if (featureImage.isNull()) {
-        appendLog(QStringLiteral("特征提取失败：无法获取影像数据。"));
-        return;
-    }
-
-    // 在图像上绘制模拟特征点（绿色圆圈）
-    featureImage = featureImage.convertedTo(QImage::Format_RGB32);
-    QPainter painter(&featureImage);
-    painter.setPen(QPen(Qt::green, 2));
-    // 生成一些随机分布的特征点
-    const int numPoints = std::min(maxFeatures, 500);
-    for (int i = 0; i < numPoints; ++i) {
-        const int px = (i * 7919 + 137) % featureImage.width();
-        const int py = (i * 6271 + 271) % featureImage.height();
-        painter.drawEllipse(QPoint(px, py), 4, 4);
-    }
-    painter.end();
-
-    // 显示并添加结果图层
-    const QString resultName = raster->name() + QStringLiteral("_特征_") + method;
-    auto resultLayer = std::make_shared<RasterLayer>(resultName, QStringLiteral(""),
-                                                     QVector<RasterBand>{}, featureImage);
-    resultLayer->setRenderDescription(
-        QStringLiteral("%1 特征提取（%2点）").arg(method).arg(numPoints));
-    layers_.add(resultLayer);
-    refreshLayerTree();
-    displayRaster(resultLayer, -1);
-    tabs_->setCurrentIndex(0);
-    appendLog(QStringLiteral("特征提取完成（模拟）：%1，%2方法，%3个特征点。")
-                  .arg(raster->name(), method)
-                  .arg(numPoints));
+    executeRasterAlgorithm(algorithm, ctx);
 }
 
 // 执行 DEM 重建流程
@@ -1458,7 +1743,7 @@ void MainWindow::runDemReconstruction() {
 
     auto *watcher = new QFutureWatcher<ProcessingResult>(this);
     connect(watcher, &QFutureWatcher<ProcessingResult>::finished, this,
-            [this, watcher, progress]() {
+            [this, watcher, progress, leftCopy]() {
                 progress->close();
                 progress->deleteLater();
 
@@ -1467,22 +1752,20 @@ void MainWindow::runDemReconstruction() {
 
                 appendLog(result.message);
                 if (result.demResult) {
+                    result.demResult->setTreeGroup(QStringLiteral("DEM 重建"));
                     layers_.add(result.demResult);
-                    refreshLayerTree();
                 }
                 if (!result.image.isNull()) {
-                    QDialog preview(this);
-                    preview.setWindowTitle(QStringLiteral("DEM 重建结果"));
-                    preview.setWindowFlags(preview.windowFlags() | Qt::WindowMaximizeButtonHint);
-                    auto *label = new QLabel(&preview);
-                    label->setPixmap(QPixmap::fromImage(result.image));
-                    label->setAlignment(Qt::AlignCenter);
-                    auto *layout = new QVBoxLayout(&preview);
-                    layout->setContentsMargins(0, 0, 0, 0);
-                    layout->addWidget(label);
-                    preview.resize(qMin(result.image.width() + 40, 1280),
-                                   qMin(result.image.height() + 60, 800));
-                    preview.exec();
+                    auto preview = std::make_shared<RasterLayer>(
+                        leftCopy->name() + QStringLiteral("_DEM预览"), QString(),
+                        QVector<RasterBand>{}, result.image);
+                    preview->setTreeGroup(QStringLiteral("DEM 重建"));
+                    preview->setRenderDescription(QStringLiteral("立体匹配预览"));
+                    layers_.add(preview);
+                }
+                refreshLayerTree();
+                if (result.demResult || !result.image.isNull()) {
+                    revealLayerInTree(layers_.size() - 1);
                 }
                 updateActionStates();
             });
@@ -1524,33 +1807,20 @@ void MainWindow::runOrthorectification() {
 
     OrthorectificationAlgorithm algorithm;
     const auto result = algorithm.execute(*raster, ctx);
-
-    // 模拟生成正射影像
-    QImage orthoImage = raster->currentDisplayImage();
-    if (orthoImage.isNull() && raster->bandCount() > 0) {
-        if (raster->bandCount() >= 3) {
-            orthoImage = io::renderRgbComposite(*raster, 0, 1, 2);
-        } else {
-            orthoImage = io::renderSingleBandGray(*raster, 0);
-        }
-    }
-
-    if (orthoImage.isNull()) {
-        appendLog(QStringLiteral("正射校正失败：无法获取影像数据。"));
+    if (result.image.isNull()) {
+        appendLog(result.message.isEmpty() ? QStringLiteral("正射校正失败。") : result.message);
         return;
     }
 
-    // 创建结果图层
     const QString resultName = raster->name() + QStringLiteral("_正射");
-    auto resultLayer = std::make_shared<RasterLayer>(resultName, QStringLiteral(""),
-                                                     QVector<RasterBand>{}, orthoImage);
-    resultLayer->setRenderDescription(QStringLiteral("正射校正（模拟）"));
+    auto resultLayer = std::make_shared<RasterLayer>(resultName, QString(), QVector<RasterBand>{},
+                                                     result.image);
+    resultLayer->setRenderDescription(QStringLiteral("正射校正结果"));
+    resultLayer->setTreeGroup(QStringLiteral("正射影像校正"));
     layers_.add(resultLayer);
     refreshLayerTree();
-    displayRaster(resultLayer, -1);
-    tabs_->setCurrentIndex(0);
-    appendLog(QStringLiteral("正射校正完成（模拟）：%1，基于 DEM：%2。")
-                  .arg(raster->name(), dem->name()));
+    revealLayerInTree(layers_.size() - 1);
+    appendLog(result.message);
 }
 
 // ============ 三维点云/Mesh============
@@ -1771,25 +2041,14 @@ void MainWindow::onSelectionChanged() {
                     const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
                     if (mesh && !mesh->vertices().isEmpty()) {
                         scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                        scene3DWidget_->fitToBounds();
                         tabs_->setCurrentWidget(scene3DWidget_);
                     }
                 } else if (layer->type() == DataType::Dem) {
                     const auto dem = std::dynamic_pointer_cast<DemLayer>(layer);
                     if (dem) {
-                        QVector<QVector3D> demPoints;
-                        const auto &elevs = dem->elevations();
-                        const int w = dem->width();
-                        const int h = dem->height();
-                        demPoints.reserve(elevs.size());
-                        for (int y = 0; y < h; ++y) {
-                            for (int x = 0; x < w; ++x) {
-                                float z = elevs[y * w + x];
-                                demPoints.append(QVector3D(
-                                    static_cast<float>(x),
-                                    static_cast<float>(y), z));
-                            }
-                        }
-                        scene3DWidget_->setPoints(demPoints);
+                        scene3DWidget_->setDem(*dem);
+                        scene3DWidget_->fitToBounds();
                         tabs_->setCurrentWidget(scene3DWidget_);
                     }
                 }
@@ -1831,6 +2090,7 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
                 const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
                 if (mesh) {
                     scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                    scene3DWidget_->fitToBounds();
                     tabs_->setCurrentWidget(scene3DWidget_);
                 }
             } else {
@@ -1840,22 +2100,8 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
             if (visible) {
                 const auto dem = std::dynamic_pointer_cast<DemLayer>(layer);
                 if (dem) {
-                    // 将 DEM 高程转为点云显示
-                    QVector<QVector3D> demPoints;
-                    const auto &elevs = dem->elevations();
-                    const int w = dem->width();
-                    const int h = dem->height();
-                    demPoints.reserve(elevs.size());
-                    for (int y = 0; y < h; ++y) {
-                        for (int x = 0; x < w; ++x) {
-                            float z = elevs[y * w + x];
-                            demPoints.append(QVector3D(
-                                static_cast<float>(x),
-                                static_cast<float>(y),
-                                z));
-                        }
-                    }
-                    scene3DWidget_->setPoints(demPoints);
+                    scene3DWidget_->setDem(*dem);
+                    scene3DWidget_->fitToBounds();
                     tabs_->setCurrentWidget(scene3DWidget_);
                 }
             } else {
@@ -1925,6 +2171,15 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         appendLog(QStringLiteral("已删除图层。"));
         updateActionStates();
     });
+
+    // ── 导出 ──
+    if (layer->type() == DataType::Raster || layer->type() == DataType::Dem) {
+        menu.addSeparator();
+        QAction *exportAction = menu.addAction(QStringLiteral("导出..."));
+        connect(exportAction, &QAction::triggered, this, [this, layerIndex]() {
+            exportLayerImage(layerIndex);
+        });
+    }
 
     // ── 缩放至范围 ──
     QAction *zoomAction = menu.addAction(QStringLiteral("缩放至范围"));
@@ -2009,30 +2264,30 @@ void MainWindow::refreshLayerTree() {
     auto *pointFolder = ensureChildFolder(sourceRoot, QStringLiteral("点云"));
     auto *meshFolder = ensureChildFolder(sourceRoot, QStringLiteral("Mesh"));
     auto *demFolder = ensureChildFolder(sourceRoot, QStringLiteral("DEM"));
-    auto *histogramFolder = ensureChildFolder(resultRoot, QStringLiteral("直方图"));
-    auto *equalizeFolder = ensureChildFolder(resultRoot, QStringLiteral("直方图均衡化"));
-    Q_UNUSED(histogramFolder)
-    Q_UNUSED(equalizeFolder)
 
     for (int i = 0; i < layers_.size(); ++i) {
         const auto layer = layers_.at(i);
         QTreeWidgetItem *parent = nullptr;
-        switch (layer->type()) {
-        case DataType::Raster:
-            parent = rasterFolder;
-            break;
-        case DataType::PointCloud:
-            parent = pointFolder;
-            break;
-        case DataType::Mesh:
-            parent = meshFolder;
-            break;
-        case DataType::Dem:
-            parent = demFolder;
-            break;
-        case DataType::Result:
-            parent = resultRoot;
-            break;
+        if (!layer->treeGroup().isEmpty()) {
+            parent = ensureChildFolder(resultRoot, layer->treeGroup());
+        } else {
+            switch (layer->type()) {
+            case DataType::Raster:
+                parent = rasterFolder;
+                break;
+            case DataType::PointCloud:
+                parent = pointFolder;
+                break;
+            case DataType::Mesh:
+                parent = meshFolder;
+                break;
+            case DataType::Dem:
+                parent = demFolder;
+                break;
+            case DataType::Result:
+                parent = resultRoot;
+                break;
+            }
         }
 
         auto *item = new QTreeWidgetItem(parent);
@@ -2044,12 +2299,7 @@ void MainWindow::refreshLayerTree() {
         item->setCheckState(0, layer->visible() ? Qt::Checked : Qt::Unchecked);
 
         if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
-            if (raster->bandCount() == 0) {
-                auto *child = new QTreeWidgetItem(item);
-                child->setText(0, QStringLiteral("TODO: GDAL 读取后显示 Band 1..N"));
-                child->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Band));
-                child->setFlags((child->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
-            } else {
+            if (raster->bandCount() > 0) {
                 for (int band = 0; band < raster->bandCount(); ++band) {
                     const auto &bandInfo = raster->band(band);
                     auto *child = new QTreeWidgetItem(item);
@@ -2214,6 +2464,120 @@ void MainWindow::updateActionStates() {
 void MainWindow::appendLog(const QString &text) {
     logEdit_->append(QStringLiteral("[%1] %2").arg(
         QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), text));
+}
+
+void MainWindow::executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx) {
+    const auto raster = selectedRaster();
+    if (!raster) {
+        appendLog(QStringLiteral("请先选择一个遥感影像图层。"));
+        return;
+    }
+    if (ctx.bandIndex < 0)
+        ctx.bandIndex = selectedBandIndex();
+    const ProcessingResult result = algorithm.execute(*raster, ctx);
+    applyProcessingResult(result, raster, algorithm.name());
+}
+
+void MainWindow::revealLayerInTree(int layerIndex) {
+    QTreeWidgetItemIterator it(layerTree_);
+    while (*it) {
+        QTreeWidgetItem *item = *it;
+        if (static_cast<NodeKind>(item->data(0, kNodeKindRole).toInt()) == NodeKind::Layer &&
+            item->data(0, kLayerIndexRole).toInt() == layerIndex) {
+            for (QTreeWidgetItem *parent = item->parent(); parent; parent = parent->parent()) {
+                parent->setExpanded(true);
+            }
+            return;
+        }
+        ++it;
+    }
+}
+
+void MainWindow::exportLayerImage(int layerIndex) {
+    std::shared_ptr<DataObject> layer;
+    try {
+        layer = layers_.at(layerIndex);
+    } catch (const std::exception &) {
+        return;
+    }
+
+    if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
+        QImage image = raster->currentDisplayImage();
+        if (image.isNull()) {
+            if (raster->bandCount() >= 3) {
+                image = io::renderRgbComposite(*raster, 0, 1, 2);
+            } else if (raster->bandCount() >= 1) {
+                image = io::renderSingleBandGray(*raster, 0);
+            }
+        }
+        if (image.isNull()) {
+            appendLog(QStringLiteral("导出失败 [%1]：没有可导出的影像。").arg(raster->name()));
+            return;
+        }
+
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("导出影像"), raster->name(),
+            QStringLiteral("PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;TIFF (*.tif *.tiff)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        if (!image.save(path)) {
+            appendLog(QStringLiteral("导出失败：无法写入 %1").arg(path));
+            return;
+        }
+        appendLog(QStringLiteral("已导出影像：%1 → %2").arg(raster->name(), path));
+        return;
+    }
+
+    if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("导出 DEM"), dem->name() + QStringLiteral(".tif"),
+            QStringLiteral("GeoTIFF (*.tif *.tiff)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        try {
+            io::exportDemAsGeoTiff(*dem, path);
+            appendLog(QStringLiteral("已导出 DEM：%1 → %2").arg(dem->name(), path));
+        } catch (const std::exception &e) {
+            appendLog(QStringLiteral("DEM 导出失败：%1").arg(QString::fromUtf8(e.what())));
+        }
+    }
+}
+
+void MainWindow::applyProcessingResult(const ProcessingResult &result,
+                                       const std::shared_ptr<RasterLayer> &source,
+                                       const QString &treeGroup, const QString &suffix) {
+    if (!result.message.isEmpty())
+        appendLog(result.message);
+
+    int addedIndex = -1;
+
+    if (result.demResult) {
+        result.demResult->setTreeGroup(treeGroup);
+        addedIndex = layers_.add(result.demResult);
+    }
+
+    std::shared_ptr<RasterLayer> layer = result.rasterResult;
+    if (!layer && !result.image.isNull()) {
+        layer = std::make_shared<RasterLayer>(source->name() + suffix, QString(),
+                                              QVector<RasterBand>{}, result.image);
+        layer->setRenderDescription(result.message);
+    }
+
+    if (layer) {
+        layer->setTreeGroup(treeGroup);
+        addedIndex = layers_.add(layer);
+    }
+
+    if (addedIndex >= 0 || layer || result.demResult) {
+        refreshLayerTree();
+        if (addedIndex >= 0) {
+            revealLayerInTree(addedIndex);
+        }
+    }
+
+    updateActionStates();
 }
 
 } // namespace rs
