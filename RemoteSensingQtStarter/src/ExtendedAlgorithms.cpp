@@ -91,6 +91,14 @@ QImage matToQImage(const cv::Mat &mat) {
 }
 
 cv::Mat rasterToGray8U(const RasterLayer &input, int bandIdx) {
+    if (input.bandCount() == 0 && !input.currentDisplayImage().isNull()) {
+        const QImage gray = input.currentDisplayImage().convertToFormat(QImage::Format_Grayscale8);
+        if (gray.isNull())
+            return {};
+        cv::Mat mat(gray.height(), gray.width(), CV_8UC1, const_cast<uchar *>(gray.constBits()),
+                    static_cast<size_t>(gray.bytesPerLine()));
+        return mat.clone();
+    }
     if (input.bandCount() >= 3 && bandIdx < 0) {
         cv::Mat b = bandToGray8U(input.band(0));
         cv::Mat g = bandToGray8U(input.band(1));

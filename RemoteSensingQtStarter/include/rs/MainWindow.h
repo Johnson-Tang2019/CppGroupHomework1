@@ -57,7 +57,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     // ============ 数据加载（菜单项对应的槽函数） ============
         void openRasterDatasets(); // 打开文件对话框加载遥感影像（GDAL，支持多选）
     void openPointCloud();     // 加载点云数据（PLY/LAS/XYZ）
-    void openMesh();           // 加载三维网格模型（OBJ/PLY）
+    void openPlyExtractMesh(); // 从 PLY 直接提取或重建 Mesh
     void openDem();            // 加载数字高程模型（GeoTIFF/ASCII Grid）
 
     // ============ 数据管理 ============
@@ -74,11 +74,12 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void runDemReconstruction();  // 执行 DEM 重建（立体像对）
     void runOrthorectification(); // 执行正射影像校正
 
-    // ============ 三维点云/Mesh ============
-    void exportPly();               // 导出选中的点云/Mesh 为 PLY
+    // ============ 三维点云 ============
+    void exportPly();               // 导出选中的点云/Mesh 重建结果为 PLY
     void runPointCloudDownsample(); // 点云降采样
     void runPointCloudFilter();     // 点云统计滤波
     void runPointCloudToDem();      // 点云转 DEM
+    void runPointCloudMeshReconstruction(); // 点云 Mesh 重建 M=(V,E,F)
 
     // ============ 界面交互 ============
     void onSelectionChanged();                                  // 图层树选中项改变时的响应
@@ -108,6 +109,10 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
                                const std::shared_ptr<RasterLayer> &source,
                                const QString &treeGroup,
                                const QString &suffix = QStringLiteral("_结果"));
+    void applyPointCloudResult(const std::shared_ptr<PointCloudLayer> &layer,
+                               const QString &treeGroup, const QString &message = {});
+    void applyMeshResult(const std::shared_ptr<MeshLayer> &layer, const QString &treeGroup,
+                         const QString &message = {});
     void revealLayerInTree(int layerIndex);
     void exportLayerImage(int layerIndex);
 
@@ -143,6 +148,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *downsampleAction_{};   // "体素降采样"菜单项
     QAction *filterAction_{};       // "统计滤波"菜单项
     QAction *pcToDemAction_{};      // "点云转 DEM"菜单项
+    QAction *pcMeshReconAction_{};  // "点云 Mesh 重建"菜单项
 
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）

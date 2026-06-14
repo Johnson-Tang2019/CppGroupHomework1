@@ -4,6 +4,7 @@
 
 #include <QImage>        // Qt 图像类，用于存储算法输出的结果图像
 #include <QString>       // Qt 字符串，用于参数名称和描述文本
+#include <QStringList>   // 需人工处理的平面标签列表
 #include <QVariantMap>   // Qt 泛型映射表，存储参数名到参数值的键值对
 #include <QVector3D>     // Qt 三维向量，用于点云数据传递
 #include <memory>        // std::shared_ptr，用于 DemLayer 等共享指针
@@ -31,6 +32,8 @@ struct ProcessingContext {
     const class RasterLayer* auxiliaryRaster {nullptr}; // 第二个栅格（如立体像对的右影像）
     const class DemLayer*     auxiliaryDem    {nullptr}; // DEM 输入（正射校正 / DEM 重建等）
     const QVector<QVector3D>* pointCloudData  {nullptr}; // 点云数据（点云算法需要）
+    const QVector<QVector3D>* meshVertices    {nullptr}; // Mesh 顶点（Mesh 算法需要）
+    const QVector<Face>*      meshFaces       {nullptr}; // Mesh 三角面（Mesh 算法需要）
 };
 
 // 算法处理的结果
@@ -43,6 +46,10 @@ struct ProcessingResult {
     std::shared_ptr<class DemLayer> demResult;       // DEM 输出（DEM 重建 / 点云转 DEM）
     std::shared_ptr<class RasterLayer> rasterResult; // 栅格输出（分类图 / 指数图 / 正射结果等）
     QVector<QVector3D>              pointCloudResult; // 点云输出（体素降采样 / 统计滤波）
+    QVector<QVector3D>              meshVertexResult; // Mesh 顶点 V
+    QVector<Edge>                   meshEdgeResult;   // Mesh 边 E
+    QVector<Face>                   meshFaceResult;   // Mesh 面 F
+    QStringList                     pendingManualPlanes; // 需人工还原多边形的平面
 };
 
 // 处理算法的抽象基类

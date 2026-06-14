@@ -54,6 +54,9 @@ QImage renderSingleBandGray(const RasterLayer &raster, int zeroBasedBandIndex);
 // 返回：RGB 彩色 QImage
 QImage renderRgbComposite(const RasterLayer &raster, int redBand, int greenBand, int blueBand);
 
+// 从 QImage 生成波段样本，使处理结果图层可参与后续算法
+QVector<RasterBand> bandsFromDisplayImage(const QImage &image);
+
 // 使用 GDAL 读取 DEM 文件（GeoTIFF、ASCII Grid 等）
 std::shared_ptr<DemLayer> loadDemDataset(const QString &path,
                                          const QString &displayName = {});

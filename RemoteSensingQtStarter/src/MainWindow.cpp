@@ -6,6 +6,7 @@
     #include "rs/Scene3DWidget.h"
     #include "rs/ExtendedAlgorithms.h"
     #include "rs/RemoteSensingIndices.h"
+    #include "rs/pcmesh/PcMeshReconstruction.h"
 
     #include <QApplication>
     #include <QBuffer>
@@ -98,6 +99,10 @@
     protected:
         void wheelEvent(QWheelEvent *event) override {
             if (!event) {
+                return;
+            }
+            if (!(event->modifiers() & Qt::ControlModifier)) {
+                event->ignore();
                 return;
             }
 
@@ -566,146 +571,6 @@
         return static_cast<qint32>(value);
     }
 
-    struct LoadedMeshData {
-        QVector<QVector3D> vertices;
-        QVector<Face> faces;
-    };
-
-    LoadedMeshData loadMeshFromPly(const QString &path) {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            throw std::runtime_error("无法打开 PLY 文件");
-        }
-        const QByteArray allData = file.readAll();
-        file.close();
-
-        const int headerEndPos = allData.indexOf("end_header");
-        if (headerEndPos < 0) {
-            throw std::runtime_error("PLY 缺少 end_header");
-        }
-        const int nlPos = allData.indexOf('\n', headerEndPos);
-        const int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
-
-        bool isAscii = false;
-        int vertexCount = 0;
-        int faceCount = 0;
-        int vertexPropCount = 0;
-        bool inVertex = false;
-
-        QTextStream headerStream(allData.left(headerBytes));
-        while (!headerStream.atEnd()) {
-            const QString line = headerStream.readLine().trimmed();
-            if (line.startsWith(QLatin1String("element vertex"))) {
-                vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                inVertex = true;
-                continue;
-            }
-            if (line.startsWith(QLatin1String("element face"))) {
-                faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
-                inVertex = false;
-                continue;
-            }
-            if (inVertex && line.startsWith(QLatin1String("property "))) {
-                ++vertexPropCount;
-            }
-            if (line.contains(QLatin1String("format ascii"))) {
-                isAscii = true;
-            }
-        }
-
-        if (vertexCount <= 0) {
-            throw std::runtime_error("PLY 顶点数量无效");
-        }
-
-        LoadedMeshData mesh;
-        if (isAscii) {
-            QTextStream in(allData);
-            while (!in.atEnd()) {
-                if (in.readLine().trimmed() == QLatin1String("end_header")) {
-                    break;
-                }
-            }
-
-            mesh.vertices.reserve(vertexCount);
-            for (int i = 0; i < vertexCount && !in.atEnd(); ++i) {
-                const QString line = in.readLine().trimmed();
-                if (line.isEmpty()) {
-                    --i;
-                    continue;
-                }
-                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                if (parts.size() < 3) {
-                    continue;
-                }
-                mesh.vertices.append(
-                    QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
-            }
-
-            mesh.faces.reserve(faceCount);
-            for (int i = 0; i < faceCount && !in.atEnd(); ++i) {
-                const QString line = in.readLine().trimmed();
-                if (line.isEmpty()) {
-                    --i;
-                    continue;
-                }
-                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                if (parts.size() < 4) {
-                    continue;
-                }
-                const int n = parts[0].toInt();
-                if (n < 3 || parts.size() < n + 1) {
-                    continue;
-                }
-                const int i0 = parts[1].toInt();
-                for (int t = 1; t < n - 1; ++t) {
-                    Face face;
-                    face.a = i0;
-                    face.b = parts[1 + t].toInt();
-                    face.c = parts[2 + t].toInt();
-                    mesh.faces.append(face);
-                }
-            }
-        } else {
-            if (vertexPropCount < 3) {
-                throw std::runtime_error("PLY 顶点属性数不足");
-            }
-            const int vertexSize = vertexPropCount * static_cast<int>(sizeof(float));
-            int offset = headerBytes;
-
-            mesh.vertices.reserve(vertexCount);
-            for (int i = 0; i < vertexCount; ++i) {
-                if (offset + vertexSize > allData.size()) {
-                    break;
-                }
-                const float *f = reinterpret_cast<const float *>(allData.constData() + offset);
-                mesh.vertices.append(QVector3D(f[0], f[1], f[2]));
-                offset += vertexSize;
-            }
-
-            mesh.faces.reserve(faceCount);
-            for (int i = 0; i < faceCount; ++i) {
-                if (offset >= allData.size()) {
-                    break;
-                }
-                const quint8 n = static_cast<quint8>(allData[offset++]);
-                if (n < 3 || offset + n * 4 > allData.size()) {
-                    break;
-                }
-                const int i0 = readInt32LeBytes(allData.constData() + offset);
-                for (int t = 1; t < n - 1; ++t) {
-                    Face face;
-                    face.a = i0;
-                    face.b = readInt32LeBytes(allData.constData() + offset + t * 4);
-                    face.c = readInt32LeBytes(allData.constData() + offset + (t + 1) * 4);
-                    mesh.faces.append(face);
-                }
-                offset += n * 4;
-            }
-        }
-
-        return mesh;
-    }
-
     } // namespace
 
     // 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
@@ -722,12 +587,13 @@
     void MainWindow::createMenus() {
         // ---- "数据" 菜单 ----
         auto *dataMenu = menuBar()->addMenu(QStringLiteral("数据")); // 创建"数据"菜单
+        connect(dataMenu->addAction(QStringLiteral("从 PLY 提取 Mesh...")), &QAction::triggered, this,
+                &MainWindow::openPlyExtractMesh);
+        dataMenu->addSeparator();
         connect(dataMenu->addAction(QStringLiteral("加载遥感影像(GDAL，可多选)")), &QAction::triggered,
                 this, &MainWindow::openRasterDatasets); // 添加"加载遥感影像"并连接点击信号
         connect(dataMenu->addAction(QStringLiteral("加载点云")), &QAction::triggered, this,
                 &MainWindow::openPointCloud); // 添加"加载点云"并连接
-        connect(dataMenu->addAction(QStringLiteral("加载 Mesh")), &QAction::triggered, this,
-                &MainWindow::openMesh); // 添加"加载 Mesh"并连接
         connect(dataMenu->addAction(QStringLiteral("加载 DEM")), &QAction::triggered, this,
                 &MainWindow::openDem); // 添加"加载 DEM"并连接
         dataMenu->addSeparator();      // 添加分隔线，将加载与删除操作分开
@@ -1028,6 +894,9 @@
         pcToDemAction_ =
             pcMenu->addAction(QStringLiteral("点云转 DEM...")); // 添加"点云转 DEM"并保存指针
         connect(pcToDemAction_, &QAction::triggered, this, &MainWindow::runPointCloudToDem);
+        pcMeshReconAction_ = pcMenu->addAction(QStringLiteral("点云 Mesh 重建..."));
+        connect(pcMeshReconAction_, &QAction::triggered, this,
+                &MainWindow::runPointCloudMeshReconstruction);
         exportPlyAction_ =
             pcMenu->addAction(QStringLiteral("导出 PLY...")); // 添加"导出 PLY"并保存指针
         connect(exportPlyAction_, &QAction::triggered, this, &MainWindow::exportPly);
@@ -1060,9 +929,10 @@
         tabs_ = new QTabWidget(right);          // 创建标签页控件
         imageScene_ = new QGraphicsScene(this); // 创建图形场景（管理所有图形项）
 
-        imageView_ = new ZoomableGraphicsView(imageScene_, tabs_); // 创建图形视图（显示场景内容）
-        imageView_->setDragMode(QGraphicsView::ScrollHandDrag); // 设置拖拽模式：手型抓手平移
-        imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse); // 缩放时以鼠标位置为中心
+        imageView_ = new ZoomableGraphicsView(imageScene_, tabs_);
+        imageView_->setDragMode(QGraphicsView::ScrollHandDrag);
+        imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+        imageView_->setResizeAnchor(QGraphicsView::AnchorUnderMouse);
         imageView_->setMouseTracking(true);
         if (imageView_->viewport()) {
             imageView_->viewport()->setMouseTracking(true);
@@ -1105,7 +975,7 @@
                     typeName = QStringLiteral("Point cloud");
                     break;
                 case DataType::Mesh:
-                    typeName = QStringLiteral("Mesh");
+                    typeName = QStringLiteral("Point cloud mesh (V,E,F)");
                     break;
                 case DataType::Dem:
                     typeName = QStringLiteral("DEM");
@@ -1605,96 +1475,8 @@
             layers_.add(layer);
             appendLog(
                 QStringLiteral("已加载点云：%1（%2 个点）").arg(info.fileName()).arg(points.size()));
-
-            // 在三维窗口中显示点云
-            scene3DWidget_->setPoints(points);
-            tabs_->setCurrentWidget(scene3DWidget_);
         } catch (const std::exception &e) {
             appendLog(QStringLiteral("点云加载失败 [%1]：%2")
-                        .arg(info.fileName(), QString::fromUtf8(e.what())));
-        }
-        refreshLayerTree();
-        updateActionStates();
-    }
-
-    // 加载三维网格模型
-    void MainWindow::openMesh() {
-        const QString path =
-            QFileDialog::getOpenFileName(this, QStringLiteral("加载 Mesh"), QString(),
-                                        QStringLiteral("Mesh (*.obj *.ply);;All Files (*.*)"));
-        if (path.isEmpty())
-            return;
-
-        const QFileInfo info(path);
-        const QString ext = info.suffix().toLower();
-
-        try {
-            QVector<QVector3D> vertices;
-            QVector<Face> faces;
-
-            if (ext == QStringLiteral("obj")) {
-                // OBJ 格式：v x y z（顶点），f v1 v2 v3（三角面）
-                QFile file(path);
-                if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                    throw std::runtime_error("无法打开 OBJ 文件");
-                }
-                QTextStream in(&file);
-                while (!in.atEnd()) {
-                    const QString line = in.readLine().trimmed();
-                    if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
-                        continue;
-                    const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                    if (parts.isEmpty())
-                        continue;
-
-                    if (parts[0] == QStringLiteral("v") && parts.size() >= 4) {
-                        vertices.append(
-                            QVector3D(parts[1].toFloat(), parts[2].toFloat(), parts[3].toFloat()));
-                    } else if (parts[0] == QStringLiteral("f") && parts.size() >= 4) {
-                        const auto parseIndex = [](const QString &token) {
-                            return token.section(QLatin1Char('/'), 0, 0).toInt() - 1;
-                        };
-                        const int i0 = parseIndex(parts[1]);
-                        for (int t = 2; t < parts.size() - 1; ++t) {
-                            Face face;
-                            face.a = i0;
-                            face.b = parseIndex(parts[t]);
-                            face.c = parseIndex(parts[t + 1]);
-                            faces.append(face);
-                        }
-                    }
-                }
-                file.close();
-            } else if (ext == QStringLiteral("ply")) {
-                const LoadedMeshData plyMesh = loadMeshFromPly(path);
-                vertices = plyMesh.vertices;
-                faces = plyMesh.faces;
-            } else {
-                throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 OBJ/PLY");
-            }
-
-            if (vertices.isEmpty()) {
-                throw std::runtime_error("未能读取到任何顶点数据");
-            }
-
-            auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
-            layers_.add(layer);
-            scene3DWidget_->setMesh(vertices, faces);
-            scene3DWidget_->fitToBounds();
-            tabs_->setCurrentWidget(scene3DWidget_);
-            scene3DWidget_->update();
-            if (faces.isEmpty()) {
-                appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，未读取到三角面，已在三维场景显示顶点）")
-                            .arg(info.fileName())
-                            .arg(vertices.size()));
-            } else {
-                appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
-                            .arg(info.fileName())
-                            .arg(vertices.size())
-                            .arg(faces.size()));
-            }
-        } catch (const std::exception &e) {
-            appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")
                         .arg(info.fileName(), QString::fromUtf8(e.what())));
         }
         refreshLayerTree();
@@ -1961,7 +1743,7 @@
                     if (!result.image.isNull()) {
                         auto preview = std::make_shared<RasterLayer>(
                             leftCopy->name() + QStringLiteral("_DEM预览"), QString(),
-                            QVector<RasterBand>{}, result.image);
+                            io::bandsFromDisplayImage(result.image), result.image);
                         preview->setTreeGroup(QStringLiteral("DEM 重建"));
                         preview->setRenderDescription(QStringLiteral("立体匹配预览"));
                         layers_.add(preview);
@@ -2016,8 +1798,8 @@
         }
 
         const QString resultName = raster->name() + QStringLiteral("_正射");
-        auto resultLayer = std::make_shared<RasterLayer>(resultName, QString(), QVector<RasterBand>{},
-                                                        result.image);
+        auto resultLayer = std::make_shared<RasterLayer>(
+            resultName, QString(), io::bandsFromDisplayImage(result.image), result.image);
         resultLayer->setRenderDescription(QStringLiteral("正射校正结果"));
         resultLayer->setTreeGroup(QStringLiteral("正射影像校正"));
         layers_.add(resultLayer);
@@ -2032,7 +1814,7 @@
     void MainWindow::exportPly() {
         const auto indices = selectedLayerIndices();
         if (indices.empty()) {
-            appendLog(QStringLiteral("导出 PLY 提示：请先选中一个点云或 Mesh 图层。"));
+            appendLog(QStringLiteral("导出 PLY 提示：请先选中一个点云或 Mesh 重建结果图层。"));
             return;
         }
 
@@ -2132,11 +1914,7 @@ void MainWindow::runPointCloudDownsample() {
 
     auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_降采样"),
                                                       QString(), result.pointCloudResult);
-    layers_.add(newLayer);
-    scene3DWidget_->setPoints(result.pointCloudResult);
-    tabs_->setCurrentWidget(scene3DWidget_);
-    refreshLayerTree();
-    appendLog(result.message);
+    applyPointCloudResult(newLayer, QStringLiteral("体素降采样"), result.message);
 }
 
 // ── 点云统计滤波 ──
@@ -2176,11 +1954,7 @@ void MainWindow::runPointCloudFilter() {
 
     auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_滤波"),
                                                       QString(), result.pointCloudResult);
-    layers_.add(newLayer);
-    scene3DWidget_->setPoints(result.pointCloudResult);
-    tabs_->setCurrentWidget(scene3DWidget_);
-    refreshLayerTree();
-    appendLog(result.message);
+    applyPointCloudResult(newLayer, QStringLiteral("统计滤波"), result.message);
 }
 
 // ── 点云转 DEM ──
@@ -2215,12 +1989,125 @@ void MainWindow::runPointCloudToDem() {
     const auto result = algo.execute(dummyInput, ctx);
 
     if (result.demResult) {
-        layers_.add(std::static_pointer_cast<DataObject>(result.demResult));
+        result.demResult->setTreeGroup(QStringLiteral("点云转 DEM"));
+        const int idx = layers_.add(result.demResult);
         refreshLayerTree();
+        revealLayerInTree(idx);
         appendLog(result.message);
     } else {
         appendLog(result.message);
     }
+}
+
+void MainWindow::runPointCloudMeshReconstruction() {
+    const auto indices = selectedLayerIndices();
+    std::shared_ptr<PointCloudLayer> pcLayer;
+    for (int idx : indices) {
+        try {
+            auto layer = layers_.at(idx);
+            pcLayer = std::dynamic_pointer_cast<PointCloudLayer>(layer);
+            if (pcLayer)
+                break;
+        } catch (...) {
+        }
+    }
+    if (!pcLayer) {
+        appendLog(QStringLiteral("请先选中一个点云图层。"));
+        return;
+    }
+
+    const QVector<QVector3D> pointsCopy = pcLayer->points();
+    const QString layerName = pcLayer->name();
+
+    auto *progress = new QProgressDialog(QStringLiteral("正在重建 Mesh，请稍候…"), QString(), 0, 0,
+                                         this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setCancelButton(nullptr);
+    progress->setMinimumDuration(0);
+    progress->setWindowTitle(QStringLiteral("点云 Mesh 重建"));
+    progress->show();
+    QApplication::processEvents();
+
+    auto *watcher = new QFutureWatcher<pcmesh::MeshBuildResult>(this);
+    connect(watcher, &QFutureWatcher<pcmesh::MeshBuildResult>::finished, this,
+            [this, watcher, progress, layerName]() {
+                progress->close();
+                progress->deleteLater();
+
+                const pcmesh::MeshBuildResult built = watcher->result();
+                watcher->deleteLater();
+
+                appendLog(built.message);
+                if (!built.ok || built.vertices.isEmpty() || built.faces.isEmpty()) {
+                    QMessageBox::warning(this, QStringLiteral("Mesh 重建失败"), built.message);
+                    return;
+                }
+
+                auto newLayer = std::make_shared<MeshLayer>(
+                    layerName + QStringLiteral("_Mesh"), QString(), built.vertices, built.faces,
+                    built.edges);
+                applyMeshResult(newLayer, QStringLiteral("点云 Mesh 重建"));
+            });
+
+    watcher->setFuture(QtConcurrent::run([pointsCopy]() {
+        PointCloudMeshReconstructionAlgorithm algo;
+        ProcessingContext ctx;
+        ctx.pointCloudData = &pointsCopy;
+        const ProcessingResult result = algo.execute(RasterLayer(QStringLiteral("pc"), QString()), ctx);
+        pcmesh::MeshBuildResult built;
+        built.ok = !result.meshVertexResult.isEmpty() && !result.meshFaceResult.isEmpty();
+        built.message = result.message;
+        built.vertices = result.meshVertexResult;
+        built.edges = result.meshEdgeResult;
+        built.faces = result.meshFaceResult;
+        return built;
+    }));
+}
+
+void MainWindow::openPlyExtractMesh() {
+    const QString path =
+        QFileDialog::getOpenFileName(this, QStringLiteral("从 PLY 提取 Mesh"), QString(),
+                                     QStringLiteral("PLY (*.ply);;All Files (*.*)"));
+    if (path.isEmpty())
+        return;
+
+    appendLog(QStringLiteral("正在处理 PLY：%1").arg(path));
+
+    auto *progress = new QProgressDialog(QStringLiteral("正在从 PLY 生成 Mesh…"), QString(), 0, 0,
+                                         this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setCancelButton(nullptr);
+    progress->setMinimumDuration(0);
+    progress->setWindowTitle(QStringLiteral("PLY Mesh"));
+    progress->show();
+    QApplication::processEvents();
+
+    auto *watcher = new QFutureWatcher<pcmesh::MeshBuildResult>(this);
+    connect(watcher, &QFutureWatcher<pcmesh::MeshBuildResult>::finished, this,
+            [this, watcher, progress, path]() {
+                progress->close();
+                progress->deleteLater();
+
+                const pcmesh::MeshBuildResult built = watcher->result();
+                watcher->deleteLater();
+
+                appendLog(built.message);
+                if (!built.ok || built.vertices.isEmpty() || built.faces.isEmpty()) {
+                    QMessageBox::warning(this, QStringLiteral("Mesh 重建失败"), built.message);
+                    return;
+                }
+
+                const QString baseName = QFileInfo(path).completeBaseName();
+                const QString treeGroup = built.loadedFromPlyFaces
+                                              ? QStringLiteral("PLY Mesh 提取")
+                                              : QStringLiteral("PLY 点云 Mesh 重建");
+                auto newLayer = std::make_shared<MeshLayer>(
+                    baseName + QStringLiteral("_Mesh"), path, built.vertices, built.faces,
+                    built.edges);
+                applyMeshResult(newLayer, treeGroup);
+            });
+
+    watcher->setFuture(QtConcurrent::run([path]() { return pcmesh::extractMeshFromPlyFile(path); }));
 }
 
 // 当图层树选中项改变时，刷新影像显示和菜单状态
@@ -2438,8 +2325,10 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         } else if (const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
             info += QStringLiteral("点数: %1\n").arg(pc->points().size());
         } else if (const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
-            info += QStringLiteral("顶点数: %1\n").arg(mesh->vertices().size());
-            info += QStringLiteral("三角面: %1\n").arg(mesh->faces().size());
+            info += QStringLiteral("类型: 点云重建 Mesh M=(V,E,F)\n");
+            info += QStringLiteral("顶点 V: %1\n").arg(mesh->vertices().size());
+            info += QStringLiteral("边 E: %1\n").arg(mesh->edges().size());
+            info += QStringLiteral("面 F: %1\n").arg(mesh->faces().size());
         } else if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
             info += QStringLiteral("尺寸: %1 x %2\n").arg(dem->width()).arg(dem->height());
         }
@@ -2465,7 +2354,6 @@ void MainWindow::refreshLayerTree() {
     auto *resultRoot = ensureTopFolder(layerTree_, QStringLiteral("处理结果"));
     auto *rasterFolder = ensureChildFolder(sourceRoot, QStringLiteral("遥感影像"));
     auto *pointFolder = ensureChildFolder(sourceRoot, QStringLiteral("点云"));
-    auto *meshFolder = ensureChildFolder(sourceRoot, QStringLiteral("Mesh"));
     auto *demFolder = ensureChildFolder(sourceRoot, QStringLiteral("DEM"));
 
     for (int i = 0; i < layers_.size(); ++i) {
@@ -2482,7 +2370,7 @@ void MainWindow::refreshLayerTree() {
                 parent = pointFolder;
                 break;
             case DataType::Mesh:
-                parent = meshFolder;
+                parent = ensureChildFolder(resultRoot, QStringLiteral("点云 Mesh 重建"));
                 break;
             case DataType::Dem:
                 parent = demFolder;
@@ -2602,13 +2490,20 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             const int displayH = activeDisplaySizeForCoords_.isEmpty()
                                      ? static_cast<int>(rect.height())
                                      : activeDisplaySizeForCoords_.height();
-            if (displayW <= 0 || displayH <= 0 || raster->bandCount() <= 0) {
+            if (displayW <= 0 || displayH <= 0) {
                 coordLabel_->setText(QString());
                 return QMainWindow::eventFilter(watched, event);
             }
 
-            const int rasterW = raster->band(0).width;
-            const int rasterH = raster->band(0).height;
+            int rasterW = displayW;
+            int rasterH = displayH;
+            if (raster->bandCount() > 0) {
+                rasterW = raster->band(0).width;
+                rasterH = raster->band(0).height;
+            } else if (!raster->currentDisplayImage().isNull()) {
+                rasterW = raster->currentDisplayImage().width();
+                rasterH = raster->currentDisplayImage().height();
+            }
             if (rasterW <= 0 || rasterH <= 0) {
                 coordLabel_->setText(QString());
                 return QMainWindow::eventFilter(watched, event);
@@ -2690,6 +2585,7 @@ void MainWindow::updateActionStates() {
     int selectedRasters = 0;
     int selectedDems = 0;
     int selectedPointClouds = 0;
+    int selectedMeshes = 0;
     for (const int index : selectedLayerIndices()) {
         try {
             const auto layer = layers_.at(index);
@@ -2699,6 +2595,8 @@ void MainWindow::updateActionStates() {
                 ++selectedDems;
             } else if (layer->type() == DataType::PointCloud) {
                 ++selectedPointClouds;
+            } else if (layer->type() == DataType::Mesh) {
+                ++selectedMeshes;
             }
         } catch (const std::exception &) {
         }
@@ -2706,6 +2604,7 @@ void MainWindow::updateActionStates() {
 
     const bool hasOneRaster = selectedRasters == 1;
     const bool hasPointCloud = selectedPointClouds >= 1;
+    const bool hasMesh = selectedMeshes >= 1;
     if (deleteLayerAction_) {
         deleteLayerAction_->setEnabled(!selectedLayerIndices().empty());
     }
@@ -2739,8 +2638,11 @@ void MainWindow::updateActionStates() {
     if (pcToDemAction_) {
         pcToDemAction_->setEnabled(hasPointCloud);
     }
+    if (pcMeshReconAction_) {
+        pcMeshReconAction_->setEnabled(hasPointCloud);
+    }
     if (exportPlyAction_) {
-        exportPlyAction_->setEnabled(hasPointCloud);
+        exportPlyAction_->setEnabled(hasPointCloud || hasMesh);
     }
 }
 
@@ -2845,7 +2747,7 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
     std::shared_ptr<RasterLayer> layer = result.rasterResult;
     if (!layer && !result.image.isNull()) {
         layer = std::make_shared<RasterLayer>(source->name() + suffix, QString(),
-                                              QVector<RasterBand>{}, result.image);
+                                              io::bandsFromDisplayImage(result.image), result.image);
         layer->setRenderDescription(result.message);
     }
 
@@ -2861,6 +2763,43 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
         }
     }
 
+    updateActionStates();
+}
+
+void MainWindow::applyPointCloudResult(const std::shared_ptr<PointCloudLayer> &layer,
+                                       const QString &treeGroup, const QString &message) {
+    if (!message.isEmpty())
+        appendLog(message);
+    if (!layer)
+        return;
+    layer->setTreeGroup(treeGroup);
+    const int idx = layers_.add(layer);
+    refreshLayerTree();
+    revealLayerInTree(idx);
+    updateActionStates();
+}
+
+void MainWindow::applyMeshResult(const std::shared_ptr<MeshLayer> &layer, const QString &treeGroup,
+                                 const QString &message) {
+    if (!message.isEmpty())
+        appendLog(message);
+    if (!layer)
+        return;
+    layer->setTreeGroup(treeGroup);
+    const int idx = layers_.add(layer);
+    refreshLayerTree();
+    revealLayerInTree(idx);
+    QTreeWidgetItemIterator it(layerTree_);
+    while (*it) {
+        QTreeWidgetItem *item = *it;
+        if (static_cast<NodeKind>(item->data(0, kNodeKindRole).toInt()) == NodeKind::Layer &&
+            item->data(0, kLayerIndexRole).toInt() == idx) {
+            layerTree_->setCurrentItem(item);
+            layerTree_->scrollToItem(item);
+            break;
+        }
+        ++it;
+    }
     updateActionStates();
 }
 

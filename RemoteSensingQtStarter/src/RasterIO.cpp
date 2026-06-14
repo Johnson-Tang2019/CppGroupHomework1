@@ -390,4 +390,86 @@ void exportDemAsGeoTiff(const DemLayer& dem, const QString& path,
 #endif
 }
 
+QVector<RasterBand> bandsFromDisplayImage(const QImage &image) {
+    if (image.isNull())
+        return {};
+
+    const QImage rgb = image.convertToFormat(QImage::Format_RGB888);
+    const int w = rgb.width();
+    const int h = rgb.height();
+    if (w <= 0 || h <= 0)
+        return {};
+
+    bool isGray = image.format() == QImage::Format_Grayscale8;
+    if (!isGray) {
+        isGray = true;
+        const int step = std::max(1, (w * h) / 4096);
+        for (int i = 0; i < w * h; i += step) {
+            const QRgb c = rgb.pixel(i % w, i / w);
+            if (qRed(c) != qGreen(c) || qRed(c) != qBlue(c)) {
+                isGray = false;
+                break;
+            }
+        }
+    }
+
+    if (isGray) {
+        const QImage gray = image.format() == QImage::Format_Grayscale8
+                                ? image
+                                : image.convertToFormat(QImage::Format_Grayscale8);
+        RasterBand band;
+        band.name = QStringLiteral("Gray");
+        band.width = w;
+        band.height = h;
+        band.samples.resize(w * h);
+        float minV = std::numeric_limits<float>::max();
+        float maxV = std::numeric_limits<float>::lowest();
+        for (int y = 0; y < h; ++y) {
+            const uchar *line = gray.constScanLine(y);
+            for (int x = 0; x < w; ++x) {
+                const float v = static_cast<float>(line[x]);
+                band.samples[y * w + x] = v;
+                minV = std::min(minV, v);
+                maxV = std::max(maxV, v);
+            }
+        }
+        if (minV > maxV) {
+            minV = 0.0f;
+            maxV = 255.0f;
+        }
+        band.minValue = minV;
+        band.maxValue = maxV;
+        return {band};
+    }
+
+    auto fillBand = [&](const QString &name, int channelOffset) {
+        RasterBand band;
+        band.name = name;
+        band.width = w;
+        band.height = h;
+        band.samples.resize(w * h);
+        float minV = std::numeric_limits<float>::max();
+        float maxV = std::numeric_limits<float>::lowest();
+        for (int y = 0; y < h; ++y) {
+            const uchar *line = rgb.constScanLine(y);
+            for (int x = 0; x < w; ++x) {
+                const float v = static_cast<float>(line[x * 3 + channelOffset]);
+                band.samples[y * w + x] = v;
+                minV = std::min(minV, v);
+                maxV = std::max(maxV, v);
+            }
+        }
+        if (minV > maxV) {
+            minV = 0.0f;
+            maxV = 255.0f;
+        }
+        band.minValue = minV;
+        band.maxValue = maxV;
+        return band;
+    };
+
+    return {fillBand(QStringLiteral("Red"), 0), fillBand(QStringLiteral("Green"), 1),
+            fillBand(QStringLiteral("Blue"), 2)};
+}
+
 } // namespace rs::io
