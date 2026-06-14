@@ -8,6 +8,7 @@
 #include "rs/RemoteSensingIndices.h"
 
 #include <QApplication>
+#include <QBuffer>
 #include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -39,26 +40,41 @@ enum class NodeKind {
     Band    // 波段子节点，仅信息展示
 };
 
-class DeepSeekChatPanel final : public QWidget {
+class DomesticVisionChatPanel final : public QWidget {
   public:
-    explicit DeepSeekChatPanel(std::function<QString()> contextProvider,
-                               QWidget *parent = nullptr)
-        : QWidget(parent), contextProvider_(std::move(contextProvider)) {
+    explicit DomesticVisionChatPanel(std::function<QString()> contextProvider,
+                                     std::function<QImage()> imageProvider,
+                                     QWidget *parent = nullptr)
+        : QWidget(parent),
+          contextProvider_(std::move(contextProvider)),
+          imageProvider_(std::move(imageProvider)) {
         auto *layout = new QVBoxLayout(this);
         layout->setContentsMargins(6, 6, 6, 6);
 
         auto *keyRow = new QHBoxLayout;
-        keyRow->addWidget(new QLabel(QStringLiteral("API Key:"), this));
+        keyRow->addWidget(new QLabel(QStringLiteral("国产视觉 Key:"), this));
         apiKeyEdit_ = new QLineEdit(this);
         apiKeyEdit_->setEchoMode(QLineEdit::Password);
-        apiKeyEdit_->setPlaceholderText(QStringLiteral("sk-... or DEEPSEEK_API_KEY"));
-        apiKeyEdit_->setText(QString::fromUtf8(qgetenv("DEEPSEEK_API_KEY")));
+        apiKeyEdit_->setPlaceholderText(QStringLiteral("ARK_API_KEY / MOONSHOT_API_KEY"));
+        QByteArray domesticKey = qgetenv("ARK_API_KEY");
+        if (domesticKey.isEmpty()) {
+            domesticKey = qgetenv("MOONSHOT_API_KEY");
+        }
+        apiKeyEdit_->setText(QString::fromUtf8(domesticKey));
         keyRow->addWidget(apiKeyEdit_, 1);
         layout->addLayout(keyRow);
 
+        auto *visionKeyRow = new QHBoxLayout;
+        visionKeyRow->addWidget(new QLabel(QStringLiteral("接口 URL:"), this));
+        openAiKeyEdit_ = new QLineEdit(this);
+        openAiKeyEdit_->setPlaceholderText(QStringLiteral("OpenAI-compatible chat/completions URL"));
+        openAiKeyEdit_->setText(QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions"));
+        visionKeyRow->addWidget(openAiKeyEdit_, 1);
+        layout->addLayout(visionKeyRow);
+
         auto *modelRow = new QHBoxLayout;
-        modelRow->addWidget(new QLabel(QStringLiteral("Model:"), this));
-        modelEdit_ = new QLineEdit(QStringLiteral("deepseek-chat"), this);
+        modelRow->addWidget(new QLabel(QStringLiteral("模型/Endpoint:"), this));
+        modelEdit_ = new QLineEdit(QStringLiteral("ep-xxxxxxxxxxxxxxxx"), this);
         modelRow->addWidget(modelEdit_, 1);
         contextButton_ = new QPushButton(QStringLiteral("Insert File Info"), this);
         modelRow->addWidget(contextButton_);
@@ -67,7 +83,7 @@ class DeepSeekChatPanel final : public QWidget {
         chatEdit_ = new QTextEdit(this);
         chatEdit_->setReadOnly(true);
         chatEdit_->setMinimumHeight(150);
-        chatEdit_->setPlaceholderText(QStringLiteral("Ask DeepSeek about the imported files, land-cover clues, C++, Qt, or processing workflow."));
+        chatEdit_->setPlaceholderText(QStringLiteral("Ask the domestic vision model to identify land-cover objects from the selected image."));
         layout->addWidget(chatEdit_, 8);
 
         inputEdit_ = new QTextEdit(this);
@@ -111,6 +127,30 @@ class DeepSeekChatPanel final : public QWidget {
         return context.isEmpty() ? QStringLiteral("No imported layer is available.") : context;
     }
 
+    QImage currentVisionImage() const {
+        if (!imageProvider_) {
+            return {};
+        }
+        QImage image = imageProvider_();
+        if (image.isNull()) {
+            return {};
+        }
+        const int maxSide = 768;
+        if (image.width() > maxSide || image.height() > maxSide) {
+            image = image.scaled(maxSide, maxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+        return image.convertToFormat(QImage::Format_RGB888);
+    }
+
+    QString imageToJpegDataUrl(const QImage &image) const {
+        QByteArray bytes;
+        QBuffer buffer(&bytes);
+        buffer.open(QIODevice::WriteOnly);
+        image.save(&buffer, "JPEG", 75);
+        return QStringLiteral("data:image/jpeg;base64,%1")
+            .arg(QString::fromLatin1(bytes.toBase64()));
+    }
+
     void appendMessage(const QString &speaker, const QString &text) {
         chatEdit_->append(QStringLiteral("<b>%1:</b>").arg(speaker.toHtmlEscaped()));
         chatEdit_->append(text.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>")));
@@ -118,15 +158,31 @@ class DeepSeekChatPanel final : public QWidget {
     }
 
     void sendPrompt() {
+        sendVisionPrompt();
+    }
+
+    void sendVisionPrompt() {
         const QString apiKey = apiKeyEdit_->text().trimmed();
+        const QString apiUrl = openAiKeyEdit_->text().trimmed().isEmpty()
+                                   ? QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions")
+                                   : openAiKeyEdit_->text().trimmed();
         const QString prompt = inputEdit_->toPlainText().trimmed();
-        const QString model = modelEdit_->text().trimmed().isEmpty()
-                                  ? QStringLiteral("deepseek-chat")
-                                  : modelEdit_->text().trimmed();
+        const QString model = modelEdit_->text().trimmed();
+        const QImage image = currentVisionImage();
 
         if (apiKey.isEmpty()) {
-            QMessageBox::warning(this, QStringLiteral("DeepSeek API Key"),
-                                 QStringLiteral("Please enter your DeepSeek API key or set DEEPSEEK_API_KEY."));
+            QMessageBox::warning(this, QStringLiteral("国产视觉 API Key"),
+                                 QStringLiteral("Please enter your model API key, or set ARK_API_KEY / MOONSHOT_API_KEY."));
+            return;
+        }
+        if (model.isEmpty() || model == QStringLiteral("ep-xxxxxxxxxxxxxxxx")) {
+            QMessageBox::warning(this, QStringLiteral("模型/Endpoint"),
+                                 QStringLiteral("Please enter your model name or endpoint ID, for example a Volcengine Ark endpoint like ep-xxxx."));
+            return;
+        }
+        if (image.isNull()) {
+            QMessageBox::warning(this, QStringLiteral("Vision input"),
+                                 QStringLiteral("Please select a raster layer with a display image first."));
             return;
         }
         if (prompt.isEmpty()) {
@@ -134,43 +190,52 @@ class DeepSeekChatPanel final : public QWidget {
         }
 
         inputEdit_->clear();
-        appendMessage(QStringLiteral("You"), prompt);
+        appendMessage(QStringLiteral("You"), prompt + QStringLiteral("\n[Current selected image attached]"));
         sendButton_->setEnabled(false);
-        sendButton_->setText(QStringLiteral("Sending..."));
+        sendButton_->setText(QStringLiteral("Sending to vision model..."));
 
         const QString layerContext = currentLayerContext();
-        const QString promptWithContext =
-            QStringLiteral("当前程序中已导入的数据如下。请只基于这些信息和用户问题回答；如果仅凭元数据无法可靠识别具体地物，请明确说明不确定性，并给出可验证的判断依据。\n\n%1\n\n用户问题：%2")
+        const QString visionPrompt =
+            QStringLiteral("你是遥感影像视觉解译助手。请直接观察附图，并结合下列导入图层元数据回答用户问题。"
+                           "重点识别可能的地物类别，例如建筑、道路、水体、植被、裸地、阴影、停车场等。"
+                           "如果无法确认具体建筑名称，请说明原因，但仍要给出基于图像可见特征的地物判断。\n\n"
+                           "导入图层元数据：\n%1\n\n用户问题：%2")
                 .arg(layerContext, prompt);
 
-        QJsonArray requestMessages = history_;
-        requestMessages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
-                                           {QStringLiteral("content"), promptWithContext}});
+        QJsonArray content;
+        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                                   {QStringLiteral("text"), visionPrompt}});
+        content.append(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("image_url")},
+            {QStringLiteral("image_url"),
+             QJsonObject{{QStringLiteral("url"), imageToJpegDataUrl(image)}}}});
 
         QJsonObject body;
         body.insert(QStringLiteral("model"), model);
-        body.insert(QStringLiteral("messages"), requestMessages);
-        body.insert(QStringLiteral("temperature"), 0.7);
+        body.insert(QStringLiteral("messages"),
+                    QJsonArray{QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                           {QStringLiteral("content"), content}}});
+        body.insert(QStringLiteral("temperature"), 0.2);
         body.insert(QStringLiteral("stream"), false);
 
-        QNetworkRequest request(QUrl(QStringLiteral("https://api.deepseek.com/chat/completions")));
+        QNetworkRequest request{QUrl(apiUrl)};
         request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
         request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
 
         auto *reply = network_.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
         connect(reply, &QNetworkReply::finished, this, [this, reply, prompt]() {
-            handleReply(reply, prompt);
+            handleVisionReply(reply, prompt);
             reply->deleteLater();
         });
     }
 
-    void handleReply(QNetworkReply *reply, const QString &prompt) {
+    void handleVisionReply(QNetworkReply *reply, const QString &prompt) {
         sendButton_->setEnabled(true);
         sendButton_->setText(QStringLiteral("Send"));
 
         const QByteArray responseBody = reply->readAll();
         if (reply->error() != QNetworkReply::NoError) {
-            appendMessage(QStringLiteral("Error"),
+            appendMessage(QStringLiteral("Vision Error"),
                           reply->errorString() + QStringLiteral("\n") +
                               QString::fromUtf8(responseBody));
             return;
@@ -179,7 +244,7 @@ class DeepSeekChatPanel final : public QWidget {
         QJsonParseError parseError{};
         const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
         if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-            appendMessage(QStringLiteral("Error"),
+            appendMessage(QStringLiteral("Vision Error"),
                           QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
             return;
         }
@@ -187,7 +252,7 @@ class DeepSeekChatPanel final : public QWidget {
         const QJsonObject root = doc.object();
         if (root.contains(QStringLiteral("error"))) {
             const QJsonObject error = root.value(QStringLiteral("error")).toObject();
-            appendMessage(QStringLiteral("Error"),
+            appendMessage(QStringLiteral("Vision Error"),
                           error.value(QStringLiteral("message"))
                               .toString(QString::fromUtf8(responseBody)));
             return;
@@ -195,7 +260,7 @@ class DeepSeekChatPanel final : public QWidget {
 
         const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
         if (choices.isEmpty()) {
-            appendMessage(QStringLiteral("Error"), QStringLiteral("DeepSeek returned no choices."));
+            appendMessage(QStringLiteral("Vision Error"), QStringLiteral("The vision model returned no choices."));
             return;
         }
 
@@ -203,7 +268,7 @@ class DeepSeekChatPanel final : public QWidget {
             choices.first().toObject().value(QStringLiteral("message")).toObject();
         const QString answer = message.value(QStringLiteral("content")).toString().trimmed();
         if (answer.isEmpty()) {
-            appendMessage(QStringLiteral("Error"), QStringLiteral("DeepSeek returned an empty answer."));
+            appendMessage(QStringLiteral("Vision Error"), QStringLiteral("The vision model returned an empty answer."));
             return;
         }
 
@@ -211,10 +276,11 @@ class DeepSeekChatPanel final : public QWidget {
                                     {QStringLiteral("content"), prompt}});
         history_.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("assistant")},
                                     {QStringLiteral("content"), answer}});
-        appendMessage(QStringLiteral("DeepSeek"), answer);
+        appendMessage(QStringLiteral("国产视觉模型"), answer);
     }
 
     QLineEdit *apiKeyEdit_{};
+    QLineEdit *openAiKeyEdit_{};
     QLineEdit *modelEdit_{};
     QTextEdit *chatEdit_{};
     QTextEdit *inputEdit_{};
@@ -224,6 +290,7 @@ class DeepSeekChatPanel final : public QWidget {
     QNetworkAccessManager network_;
     QJsonArray history_;
     std::function<QString()> contextProvider_;
+    std::function<QImage()> imageProvider_;
 };
 
 quint8 readUInt8At(QFile &file, qint64 offset) {
@@ -919,7 +986,7 @@ void MainWindow::createUi() {
     logEdit_->setReadOnly(true);
     bottomTabs->addTab(logEdit_, QStringLiteral("Log"));
 
-    auto *aiPanel = new DeepSeekChatPanel([this]() {
+    auto *aiPanel = new DomesticVisionChatPanel([this]() {
         QStringList lines;
         lines << QStringLiteral("Imported layer count: %1").arg(layers_.size());
         const auto selected = selectedLayerIndices();
@@ -1050,6 +1117,25 @@ void MainWindow::createUi() {
             }
         }
         return lines.join(QStringLiteral("\n"));
+    }, [this]() {
+        const auto raster = selectedRaster();
+        if (raster) {
+            const int bandIndex = selectedBandIndex();
+            if (bandIndex >= 0 && bandIndex < raster->bandCount()) {
+                return io::renderSingleBandGray(*raster, bandIndex);
+            }
+            if (!raster->currentDisplayImage().isNull()) {
+                return raster->currentDisplayImage();
+            }
+        }
+
+        for (int i = 0; i < layers_.size(); ++i) {
+            const auto rasterLayer = std::dynamic_pointer_cast<RasterLayer>(layers_.at(i));
+            if (rasterLayer && !rasterLayer->currentDisplayImage().isNull()) {
+                return rasterLayer->currentDisplayImage();
+            }
+        }
+        return QImage{};
     }, bottomTabs);
     bottomTabs->addTab(aiPanel, QStringLiteral("AI Assistant"));
 
