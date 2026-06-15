@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QIcon>
 #include <QScreen>
 
 #ifdef RS_WITH_GDAL
@@ -51,6 +52,7 @@ void fitMainWindowToScreen(QWidget *widget) {
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setStyle(QStringLiteral("Fusion"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/splash_hero.png")));
     QString pinkTheme = R"(
         /* ── 全局默认 ── */
         QWidget { background-color: #fff0f5; color: #4a2030; }
@@ -169,6 +171,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     rs::MainWindow window;
+    window.setWindowIcon(app.windowIcon());
     fitMainWindowToScreen(&window);
     window.setVisible(false);
 

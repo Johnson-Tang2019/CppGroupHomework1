@@ -6,6 +6,7 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 static QVector3D faceNormal(const QVector3D &a, const QVector3D &b, const QVector3D &c) {
     QVector3D ab = b - a;
@@ -67,6 +68,102 @@ Scene3DWidget::~Scene3DWidget() {
     doneCurrent();
 }
 
+struct ClusterAccum {
+    QVector3D sum;
+    int count = 0;
+    int newIndex = -1;
+};
+
+static quint64 clusterKey(int x, int y, int z) {
+    return (static_cast<quint64>(static_cast<quint32>(x)) << 42) ^
+           (static_cast<quint64>(static_cast<quint32>(y)) << 21) ^
+           static_cast<quint64>(static_cast<quint32>(z));
+}
+
+static bool simplifyMeshByVertexClustering(const QVector<QVector3D> &vertices,
+                                           const QVector<rs::Face> &faces,
+                                           int targetVertexCount,
+                                           QVector<QVector3D> &outVertices,
+                                           QVector<rs::Face> &outFaces) {
+    if (vertices.isEmpty() || faces.isEmpty() || vertices.size() <= targetVertexCount) {
+        return false;
+    }
+
+    QVector3D minV = vertices.front();
+    QVector3D maxV = vertices.front();
+    for (const auto &v : vertices) {
+        minV.setX(std::min(minV.x(), v.x()));
+        minV.setY(std::min(minV.y(), v.y()));
+        minV.setZ(std::min(minV.z(), v.z()));
+        maxV.setX(std::max(maxV.x(), v.x()));
+        maxV.setY(std::max(maxV.y(), v.y()));
+        maxV.setZ(std::max(maxV.z(), v.z()));
+    }
+
+    const QVector3D extent = maxV - minV;
+    const float maxExtent = std::max({extent.x(), extent.y(), extent.z(), 1e-6f});
+    const float ratio = static_cast<float>(targetVertexCount) / static_cast<float>(vertices.size());
+    const int grid = std::max(8, static_cast<int>(std::cbrt(std::max(0.001f, ratio)) * 128.0f));
+    const float cell = maxExtent / static_cast<float>(grid);
+    if (cell <= 1e-9f) {
+        return false;
+    }
+
+    std::unordered_map<quint64, ClusterAccum> clusters;
+    clusters.reserve(static_cast<size_t>(targetVertexCount * 2));
+    QVector<int> remap(vertices.size(), -1);
+
+    for (int i = 0; i < vertices.size(); ++i) {
+        const QVector3D p = vertices[i] - minV;
+        const int ix = static_cast<int>(std::floor(p.x() / cell));
+        const int iy = static_cast<int>(std::floor(p.y() / cell));
+        const int iz = static_cast<int>(std::floor(p.z() / cell));
+        const quint64 key = clusterKey(ix, iy, iz);
+        auto &cluster = clusters[key];
+        cluster.sum += vertices[i];
+        ++cluster.count;
+    }
+
+    outVertices.clear();
+    outVertices.reserve(static_cast<int>(clusters.size()));
+    for (auto &entry : clusters) {
+        auto &cluster = entry.second;
+        cluster.newIndex = outVertices.size();
+        outVertices.append(cluster.sum / static_cast<float>(std::max(1, cluster.count)));
+    }
+
+    for (int i = 0; i < vertices.size(); ++i) {
+        const QVector3D p = vertices[i] - minV;
+        const int ix = static_cast<int>(std::floor(p.x() / cell));
+        const int iy = static_cast<int>(std::floor(p.y() / cell));
+        const int iz = static_cast<int>(std::floor(p.z() / cell));
+        const auto it = clusters.find(clusterKey(ix, iy, iz));
+        if (it != clusters.end()) {
+            remap[i] = it->second.newIndex;
+        }
+    }
+
+    outFaces.clear();
+    const int remapSize = static_cast<int>(remap.size());
+    outFaces.reserve(std::min(static_cast<int>(faces.size()), targetVertexCount * 3));
+    for (const auto &face : faces) {
+        if (face.a < 0 || face.a >= remapSize ||
+            face.b < 0 || face.b >= remapSize ||
+            face.c < 0 || face.c >= remapSize) {
+            continue;
+        }
+        const int a = remap[face.a];
+        const int b = remap[face.b];
+        const int c = remap[face.c];
+        if (a < 0 || b < 0 || c < 0 || a == b || b == c || a == c) {
+            continue;
+        }
+        outFaces.append({a, b, c});
+    }
+
+    return !outVertices.isEmpty() && !outFaces.isEmpty();
+}
+
 void Scene3DWidget::markDlistDirty() {
     m_dlistValid = false;
 }
@@ -77,6 +174,10 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
         meshVertices_.clear();
         meshTexCoords_.clear();
         meshFaces_.clear();
+        sourceMeshVertices_.clear();
+        sourceMeshFaces_.clear();
+        adaptiveMeshPreview_ = false;
+        activePreviewTargetVertices_ = 0;
         demTexture_ = QImage();
         m_textureDirty = true;
     }
@@ -87,12 +188,84 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
 void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces) {
     meshVertices_ = vertices;
     meshFaces_ = faces;
+    sourceMeshVertices_.clear();
+    sourceMeshFaces_.clear();
+    adaptiveMeshPreview_ = false;
+    activePreviewTargetVertices_ = 0;
     meshTexCoords_.clear();
     demTexture_ = QImage();
     m_textureDirty = true;
     if (!vertices.isEmpty()) {
         m_points.clear();
     }
+    markDlistDirty();
+    update();
+}
+
+void Scene3DWidget::setMeshPreview(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces,
+                                   int maxFaces) {
+    if (faces.isEmpty() || faces.size() <= maxFaces) {
+        setMesh(vertices, faces);
+        return;
+    }
+
+    sourceMeshVertices_ = vertices;
+    sourceMeshFaces_ = faces;
+    adaptiveMeshPreview_ = true;
+    previewBaseTargetVertices_ = std::max(50000, maxFaces / 2);
+    activePreviewTargetVertices_ = 0;
+    m_points.clear();
+    meshTexCoords_.clear();
+    demTexture_ = QImage();
+    m_textureDirty = true;
+    rebuildMeshPreviewForZoom();
+}
+
+int Scene3DWidget::desiredMeshPreviewVertexCount() const {
+    if (!adaptiveMeshPreview_ || sourceMeshVertices_.isEmpty()) {
+        return 0;
+    }
+
+    const float zoomIn = 1.0f / std::clamp(m_zoom, 0.1f, 10.0f);
+    float detail = 0.8f;
+    if (zoomIn >= 6.0f) {
+        detail = 8.0f;
+    } else if (zoomIn >= 4.0f) {
+        detail = 5.0f;
+    } else if (zoomIn >= 2.5f) {
+        detail = 3.0f;
+    } else if (zoomIn >= 1.5f) {
+        detail = 1.8f;
+    } else if (zoomIn >= 1.0f) {
+        detail = 1.2f;
+    }
+
+    const int sourceCount = static_cast<int>(sourceMeshVertices_.size());
+    const int target = static_cast<int>(previewBaseTargetVertices_ * detail);
+    return std::clamp(target, 30000, std::max(30000, sourceCount));
+}
+
+void Scene3DWidget::rebuildMeshPreviewForZoom() {
+    if (!adaptiveMeshPreview_ || sourceMeshVertices_.isEmpty() || sourceMeshFaces_.isEmpty()) {
+        return;
+    }
+
+    const int targetVertexCount = desiredMeshPreviewVertexCount();
+    if (targetVertexCount == activePreviewTargetVertices_ && !meshVertices_.isEmpty()) {
+        return;
+    }
+
+    QVector<QVector3D> simplifiedVertices;
+    QVector<rs::Face> simplifiedFaces;
+    if (simplifyMeshByVertexClustering(sourceMeshVertices_, sourceMeshFaces_, targetVertexCount,
+                                       simplifiedVertices, simplifiedFaces)) {
+        meshVertices_ = std::move(simplifiedVertices);
+        meshFaces_ = std::move(simplifiedFaces);
+    } else {
+        meshVertices_ = sourceMeshVertices_;
+        meshFaces_ = sourceMeshFaces_;
+    }
+    activePreviewTargetVertices_ = targetVertexCount;
     markDlistDirty();
     update();
 }
@@ -106,6 +279,10 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, const QImage &texture, int m
     meshVertices_.clear();
     meshTexCoords_.clear();
     meshFaces_.clear();
+    sourceMeshVertices_.clear();
+    sourceMeshFaces_.clear();
+    adaptiveMeshPreview_ = false;
+    activePreviewTargetVertices_ = 0;
     demTexture_ = texture.isNull() ? QImage() : texture.convertToFormat(QImage::Format_RGBA8888);
     m_textureDirty = true;
 
@@ -161,10 +338,25 @@ void Scene3DWidget::clearData() {
     meshVertices_.clear();
     meshTexCoords_.clear();
     meshFaces_.clear();
+    sourceMeshVertices_.clear();
+    sourceMeshFaces_.clear();
+    adaptiveMeshPreview_ = false;
+    activePreviewTargetVertices_ = 0;
     demTexture_ = QImage();
     m_textureDirty = true;
+    if (isValid()) {
+        makeCurrent();
+        if (m_meshDList) {
+            glDeleteLists(m_meshDList, 1);
+            m_meshDList = 0;
+        }
+        doneCurrent();
+    }
+    m_cachedCenter = QVector3D(0, 0, 0);
+    m_cachedHalfExtent = 1.0f;
     markDlistDirty();
     update();
+    repaint();
 }
 
 void Scene3DWidget::showEvent(QShowEvent *event) {
@@ -243,7 +435,7 @@ void Scene3DWidget::rebuildDisplayList() {
 
     // 预计算法线（只在重建时做一次，而不是每帧）
     QVector<QVector3D> normals;
-    if (hasMeshFaces) {
+    if (hasMeshFaces && meshFaces_.size() <= 250000) {
         normals.reserve(meshFaces_.size());
         for (const auto &face : meshFaces_) {
             if (face.a < 0 || face.a >= meshVertices_.size() ||
@@ -292,7 +484,7 @@ void Scene3DWidget::rebuildDisplayList() {
             const QVector3D &va = meshVertices_[face.a];
             const QVector3D &vb = meshVertices_[face.b];
             const QVector3D &vc = meshVertices_[face.c];
-            const QVector3D &n = normals[i];
+            const QVector3D n = normals.isEmpty() ? QVector3D(0, 0, 1) : normals[i];
 
             float shade = 0.4f + 0.6f * std::abs(n.z());
             if (hasTexture && m_textureId) {
@@ -312,29 +504,31 @@ void Scene3DWidget::rebuildDisplayList() {
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
 
-    // 第二遍：线框轮廓
-        glDisable(GL_LIGHTING);
-        glDisable(GL_TEXTURE_2D);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glLineWidth(1.0f);
-        glColor3f(hasTexture && m_textureId ? 0.08f : 0.3f,
-                  hasTexture && m_textureId ? 0.08f : 0.3f,
-                  hasTexture && m_textureId ? 0.1f : 0.35f);
-        glBegin(GL_TRIANGLES);
-        for (const auto &face : meshFaces_) {
-            if (face.a < 0 || face.a >= meshVertices_.size() ||
-                face.b < 0 || face.b >= meshVertices_.size() ||
-                face.c < 0 || face.c >= meshVertices_.size())
-                continue;
-            const QVector3D &va = meshVertices_[face.a];
-            const QVector3D &vb = meshVertices_[face.b];
-            const QVector3D &vc = meshVertices_[face.c];
-            glVertex3f((va.x() - cx) * scale, (va.y() - cy) * scale, (va.z() - cz) * scale);
-            glVertex3f((vb.x() - cx) * scale, (vb.y() - cy) * scale, (vb.z() - cz) * scale);
-            glVertex3f((vc.x() - cx) * scale, (vc.y() - cy) * scale, (vc.z() - cz) * scale);
+        if (meshFaces_.size() <= 80000) {
+        // 第二遍：小模型绘制线框轮廓；大模型跳过线框，避免加载和旋转卡顿
+            glDisable(GL_LIGHTING);
+            glDisable(GL_TEXTURE_2D);
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(1.0f);
+            glColor3f(hasTexture && m_textureId ? 0.08f : 0.3f,
+                      hasTexture && m_textureId ? 0.08f : 0.3f,
+                      hasTexture && m_textureId ? 0.1f : 0.35f);
+            glBegin(GL_TRIANGLES);
+            for (const auto &face : meshFaces_) {
+                if (face.a < 0 || face.a >= meshVertices_.size() ||
+                    face.b < 0 || face.b >= meshVertices_.size() ||
+                    face.c < 0 || face.c >= meshVertices_.size())
+                    continue;
+                const QVector3D &va = meshVertices_[face.a];
+                const QVector3D &vb = meshVertices_[face.b];
+                const QVector3D &vc = meshVertices_[face.c];
+                glVertex3f((va.x() - cx) * scale, (va.y() - cy) * scale, (va.z() - cz) * scale);
+                glVertex3f((vb.x() - cx) * scale, (vb.y() - cy) * scale, (vb.z() - cz) * scale);
+                glVertex3f((vc.x() - cx) * scale, (vc.y() - cy) * scale, (vc.z() - cz) * scale);
+            }
+            glEnd();
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
-        glEnd();
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     } else if (hasMeshVerticesOnly) {
         glDisable(GL_LIGHTING);
         glPointSize(3.0f);

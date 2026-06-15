@@ -1631,7 +1631,7 @@
 
                 auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
                 layers_.add(layer);
-                scene3DWidget_->setMesh(vertices, faces);
+                scene3DWidget_->setMeshPreview(vertices, faces);
                 scene3DWidget_->fitToBounds();
                 tabs_->setCurrentWidget(scene3DWidget_);
                 scene3DWidget_->update();
@@ -1644,6 +1644,9 @@
                                 .arg(info.fileName())
                                 .arg(vertices.size())
                                 .arg(faces.size()));
+                    if (faces.size() > 200000) {
+                        appendLog(QStringLiteral("三维场景已使用顶点聚类降细节预览，完整 Mesh 数据仍保留在图层中。"));
+                    }
                 }
             } catch (const std::exception &e) {
                 appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")
@@ -1761,12 +1764,13 @@
             return;
         }
 
-        // 检查是否有被删除的点云，如有则清空三维场景
-        bool hasPointCloud = false;
+        // 检查是否有被删除的三维图层，如有则清空三维场景
+        bool has3DLayer = false;
         for (const int idx : indices) {
             try {
-                if (layers_.at(idx)->type() == DataType::PointCloud) {
-                    hasPointCloud = true;
+                const auto type = layers_.at(idx)->type();
+                if (type == DataType::PointCloud || type == DataType::Mesh || type == DataType::Dem) {
+                    has3DLayer = true;
                     break;
                 }
             } catch (...) {
@@ -1775,8 +1779,8 @@
 
         layers_.removeMany(indices);
         imageScene_->clear();
-        if (hasPointCloud) {
-            scene3DWidget_->setPoints({});
+        if (has3DLayer) {
+            scene3DWidget_->clearData();
         }
         refreshLayerTree();
         appendLog(QStringLiteral("已删除 %1 个选中图层。").arg(indices.size()));
@@ -1787,6 +1791,7 @@
     void MainWindow::clearProject() {
         layers_.clear();      // 清空所有图层
         imageScene_->clear(); // 清空图像场景
+        scene3DWidget_->clearData();
         refreshLayerTree();   // 刷新图层树
         appendLog(QStringLiteral("工程已初始化。"));
         updateActionStates(); // 更新菜单所有操作按钮的状态
@@ -2319,7 +2324,7 @@ void MainWindow::onSelectionChanged() {
                 } else if (layer->type() == DataType::Mesh) {
                     const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
                     if (mesh && !mesh->vertices().isEmpty()) {
-                        scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                        scene3DWidget_->setMeshPreview(mesh->vertices(), mesh->faces());
                         scene3DWidget_->fitToBounds();
                         tabs_->setCurrentWidget(scene3DWidget_);
                     }
@@ -2368,7 +2373,7 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
             if (visible) {
                 const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer);
                 if (mesh) {
-                    scene3DWidget_->setMesh(mesh->vertices(), mesh->faces());
+                    scene3DWidget_->setMeshPreview(mesh->vertices(), mesh->faces());
                     scene3DWidget_->fitToBounds();
                     tabs_->setCurrentWidget(scene3DWidget_);
                 }
@@ -2439,13 +2444,16 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     QAction *deleteAction = menu.addAction(QStringLiteral("删除图层"));
     connect(deleteAction, &QAction::triggered, this, [this, layerIndex]() {
         try {
-            if (layers_.at(layerIndex)->type() == DataType::PointCloud) {
-                scene3DWidget_->setPoints({});
+            const auto type = layers_.at(layerIndex)->type();
+            if (type == DataType::PointCloud || type == DataType::Mesh || type == DataType::Dem) {
+                scene3DWidget_->clearData();
+            }
+            if (type == DataType::Raster) {
+                imageScene_->clear();
             }
         } catch (...) {
         }
         layers_.removeMany({layerIndex});
-        imageScene_->clear();
         refreshLayerTree();
         appendLog(QStringLiteral("已删除图层。"));
         updateActionStates();
@@ -2590,6 +2598,15 @@ void MainWindow::refreshLayerTree() {
                     child->setData(0, kBandIndexRole, band);
                     child->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Band));
                 }
+            }
+        }
+    }
+
+    for (auto *root : {sourceRoot, resultRoot}) {
+        for (int i = root->childCount() - 1; i >= 0; --i) {
+            auto *child = root->child(i);
+            if (child && child->childCount() == 0) {
+                delete root->takeChild(i);
             }
         }
     }
