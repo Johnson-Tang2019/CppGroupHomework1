@@ -38,6 +38,7 @@ endif()
 add_executable(RemoteSensingQtStarter WIN32
     src/main.cpp
     src/MainWindow.cpp
+    src/SplashScreen.cpp
     src/Algorithms.cpp
     src/ExtendedAlgorithms.cpp
     src/RemoteSensingIndices.cpp
@@ -49,6 +50,7 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/Geometry.h
     include/rs/LayerManager.h
     resources/app.rc
+    resources/resources.qrc
     include/rs/ProcessingAlgorithm.h
     include/rs/Algorithms.h
     include/rs/ExtendedAlgorithms.h
@@ -56,6 +58,7 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/RasterIO.h
     include/rs/RasterRenderDialog.h
     include/rs/MainWindow.h
+    include/rs/SplashScreen.h
     include/rs/Scene3DWidget.h    #增加
     include/rs/pcmesh/PcMeshReconstruction.h
 )

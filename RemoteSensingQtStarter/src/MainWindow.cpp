@@ -575,12 +575,12 @@
 
     // 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
     MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
-        setWindowTitle(QStringLiteral("Remote Sensing Qt Starter")); // 设置窗口标题
-        createMenus();                                               // 构建菜单栏
-        createUi();                                                  // 构建界面控件
+        setWindowTitle(QStringLiteral("Remote Sensing Qt Starter"));
+        createMenus();
+        createUi();
         appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL "
-                                "多波段、参数化算法、DEM/正射流程的工程骨架。")); // 记录启动日志
-        updateActionStates(); // 初始化菜单项的启用状态（刚启动时所有菜单应该禁用）
+                                "多波段、参数化算法、DEM/正射流程的工程骨架。"));
+        updateActionStates();
     }
 
     // 构建菜单栏：数据、影像处理、摄影测量/三维
@@ -1116,7 +1116,7 @@
         right->setStretchFactor(1, 2); // 第1个（日志面板）：拉伸因子 = 2
         right->setSizes({620, 300});
 
-        setCentralWidget(root); // 将分割器设为窗口的中心控件（填满整个窗口）
+        setCentralWidget(root);
 
         coordLabel_ = new QLabel(QStringLiteral(""), this);
         coordLabel_->setMinimumWidth(260);
@@ -1241,6 +1241,16 @@
             }
             QSplitter {
                 padding: 4px;
+            }
+            QStatusBar {
+                background-color: #fff5f8;
+                color: #5a4a4a;
+                border-top: 1px solid #f4b8c8;
+                font-weight: normal;
+            }
+            QStatusBar QLabel {
+                color: #5a4a4a;
+                background: transparent;
             }
         )"));
     }
