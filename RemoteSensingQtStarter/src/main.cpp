@@ -1,5 +1,6 @@
 #include "rs/MainWindow.h"
 #include "rs/SplashScreen.h"
+#include "rs/Translation.h"
 
 #include <QApplication>
 #include <QDebug>
@@ -169,6 +170,8 @@ int main(int argc, char *argv[]) {
         qDebug() << "GDAL initialization failed.";
     }
 #endif
+
+    rs::Translation::instance().loadSavedLanguage();
 
     rs::MainWindow window;
     window.setWindowIcon(app.windowIcon());
