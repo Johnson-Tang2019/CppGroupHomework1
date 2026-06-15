@@ -6,7 +6,7 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
-#include <unordered_map>
+#include <cstdint>
 
 static QVector3D faceNormal(const QVector3D &a, const QVector3D &b, const QVector3D &c) {
     QVector3D ab = b - a;
@@ -60,6 +60,7 @@ Scene3DWidget::~Scene3DWidget() {
         glDeleteLists(m_meshDList, 1);
         m_meshDList = 0;
     }
+    releaseMeshBuffers();
     if (m_textureId) {
         glDeleteTextures(1, &m_textureId);
         m_textureId = 0;
@@ -68,104 +69,9 @@ Scene3DWidget::~Scene3DWidget() {
     doneCurrent();
 }
 
-struct ClusterAccum {
-    QVector3D sum;
-    int count = 0;
-    int newIndex = -1;
-};
-
-static quint64 clusterKey(int x, int y, int z) {
-    return (static_cast<quint64>(static_cast<quint32>(x)) << 42) ^
-           (static_cast<quint64>(static_cast<quint32>(y)) << 21) ^
-           static_cast<quint64>(static_cast<quint32>(z));
-}
-
-static bool simplifyMeshByVertexClustering(const QVector<QVector3D> &vertices,
-                                           const QVector<rs::Face> &faces,
-                                           int targetVertexCount,
-                                           QVector<QVector3D> &outVertices,
-                                           QVector<rs::Face> &outFaces) {
-    if (vertices.isEmpty() || faces.isEmpty() || vertices.size() <= targetVertexCount) {
-        return false;
-    }
-
-    QVector3D minV = vertices.front();
-    QVector3D maxV = vertices.front();
-    for (const auto &v : vertices) {
-        minV.setX(std::min(minV.x(), v.x()));
-        minV.setY(std::min(minV.y(), v.y()));
-        minV.setZ(std::min(minV.z(), v.z()));
-        maxV.setX(std::max(maxV.x(), v.x()));
-        maxV.setY(std::max(maxV.y(), v.y()));
-        maxV.setZ(std::max(maxV.z(), v.z()));
-    }
-
-    const QVector3D extent = maxV - minV;
-    const float maxExtent = std::max({extent.x(), extent.y(), extent.z(), 1e-6f});
-    const float ratio = static_cast<float>(targetVertexCount) / static_cast<float>(vertices.size());
-    const int grid = std::max(8, static_cast<int>(std::cbrt(std::max(0.001f, ratio)) * 128.0f));
-    const float cell = maxExtent / static_cast<float>(grid);
-    if (cell <= 1e-9f) {
-        return false;
-    }
-
-    std::unordered_map<quint64, ClusterAccum> clusters;
-    clusters.reserve(static_cast<size_t>(targetVertexCount * 2));
-    QVector<int> remap(vertices.size(), -1);
-
-    for (int i = 0; i < vertices.size(); ++i) {
-        const QVector3D p = vertices[i] - minV;
-        const int ix = static_cast<int>(std::floor(p.x() / cell));
-        const int iy = static_cast<int>(std::floor(p.y() / cell));
-        const int iz = static_cast<int>(std::floor(p.z() / cell));
-        const quint64 key = clusterKey(ix, iy, iz);
-        auto &cluster = clusters[key];
-        cluster.sum += vertices[i];
-        ++cluster.count;
-    }
-
-    outVertices.clear();
-    outVertices.reserve(static_cast<int>(clusters.size()));
-    for (auto &entry : clusters) {
-        auto &cluster = entry.second;
-        cluster.newIndex = outVertices.size();
-        outVertices.append(cluster.sum / static_cast<float>(std::max(1, cluster.count)));
-    }
-
-    for (int i = 0; i < vertices.size(); ++i) {
-        const QVector3D p = vertices[i] - minV;
-        const int ix = static_cast<int>(std::floor(p.x() / cell));
-        const int iy = static_cast<int>(std::floor(p.y() / cell));
-        const int iz = static_cast<int>(std::floor(p.z() / cell));
-        const auto it = clusters.find(clusterKey(ix, iy, iz));
-        if (it != clusters.end()) {
-            remap[i] = it->second.newIndex;
-        }
-    }
-
-    outFaces.clear();
-    const int remapSize = static_cast<int>(remap.size());
-    outFaces.reserve(std::min(static_cast<int>(faces.size()), targetVertexCount * 3));
-    for (const auto &face : faces) {
-        if (face.a < 0 || face.a >= remapSize ||
-            face.b < 0 || face.b >= remapSize ||
-            face.c < 0 || face.c >= remapSize) {
-            continue;
-        }
-        const int a = remap[face.a];
-        const int b = remap[face.b];
-        const int c = remap[face.c];
-        if (a < 0 || b < 0 || c < 0 || a == b || b == c || a == c) {
-            continue;
-        }
-        outFaces.append({a, b, c});
-    }
-
-    return !outVertices.isEmpty() && !outFaces.isEmpty();
-}
-
 void Scene3DWidget::markDlistDirty() {
     m_dlistValid = false;
+    m_meshBuffersValid = false;
 }
 
 void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
@@ -174,10 +80,6 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
         meshVertices_.clear();
         meshTexCoords_.clear();
         meshFaces_.clear();
-        sourceMeshVertices_.clear();
-        sourceMeshFaces_.clear();
-        adaptiveMeshPreview_ = false;
-        activePreviewTargetVertices_ = 0;
         demTexture_ = QImage();
         m_textureDirty = true;
     }
@@ -188,10 +90,6 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
 void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces) {
     meshVertices_ = vertices;
     meshFaces_ = faces;
-    sourceMeshVertices_.clear();
-    sourceMeshFaces_.clear();
-    adaptiveMeshPreview_ = false;
-    activePreviewTargetVertices_ = 0;
     meshTexCoords_.clear();
     demTexture_ = QImage();
     m_textureDirty = true;
@@ -204,70 +102,8 @@ void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs
 
 void Scene3DWidget::setMeshPreview(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces,
                                    int maxFaces) {
-    if (faces.isEmpty() || faces.size() <= maxFaces) {
-        setMesh(vertices, faces);
-        return;
-    }
-
-    sourceMeshVertices_ = vertices;
-    sourceMeshFaces_ = faces;
-    adaptiveMeshPreview_ = true;
-    previewBaseTargetVertices_ = std::max(50000, maxFaces / 2);
-    activePreviewTargetVertices_ = 0;
-    m_points.clear();
-    meshTexCoords_.clear();
-    demTexture_ = QImage();
-    m_textureDirty = true;
-    rebuildMeshPreviewForZoom();
-}
-
-int Scene3DWidget::desiredMeshPreviewVertexCount() const {
-    if (!adaptiveMeshPreview_ || sourceMeshVertices_.isEmpty()) {
-        return 0;
-    }
-
-    const float zoomIn = 1.0f / std::clamp(m_zoom, 0.1f, 10.0f);
-    float detail = 0.8f;
-    if (zoomIn >= 6.0f) {
-        detail = 8.0f;
-    } else if (zoomIn >= 4.0f) {
-        detail = 5.0f;
-    } else if (zoomIn >= 2.5f) {
-        detail = 3.0f;
-    } else if (zoomIn >= 1.5f) {
-        detail = 1.8f;
-    } else if (zoomIn >= 1.0f) {
-        detail = 1.2f;
-    }
-
-    const int sourceCount = static_cast<int>(sourceMeshVertices_.size());
-    const int target = static_cast<int>(previewBaseTargetVertices_ * detail);
-    return std::clamp(target, 30000, std::max(30000, sourceCount));
-}
-
-void Scene3DWidget::rebuildMeshPreviewForZoom() {
-    if (!adaptiveMeshPreview_ || sourceMeshVertices_.isEmpty() || sourceMeshFaces_.isEmpty()) {
-        return;
-    }
-
-    const int targetVertexCount = desiredMeshPreviewVertexCount();
-    if (targetVertexCount == activePreviewTargetVertices_ && !meshVertices_.isEmpty()) {
-        return;
-    }
-
-    QVector<QVector3D> simplifiedVertices;
-    QVector<rs::Face> simplifiedFaces;
-    if (simplifyMeshByVertexClustering(sourceMeshVertices_, sourceMeshFaces_, targetVertexCount,
-                                       simplifiedVertices, simplifiedFaces)) {
-        meshVertices_ = std::move(simplifiedVertices);
-        meshFaces_ = std::move(simplifiedFaces);
-    } else {
-        meshVertices_ = sourceMeshVertices_;
-        meshFaces_ = sourceMeshFaces_;
-    }
-    activePreviewTargetVertices_ = targetVertexCount;
-    markDlistDirty();
-    update();
+    Q_UNUSED(maxFaces);
+    setMesh(vertices, faces);
 }
 
 void Scene3DWidget::setDem(const rs::DemLayer &dem, int maxGrid) {
@@ -279,10 +115,6 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, const QImage &texture, int m
     meshVertices_.clear();
     meshTexCoords_.clear();
     meshFaces_.clear();
-    sourceMeshVertices_.clear();
-    sourceMeshFaces_.clear();
-    adaptiveMeshPreview_ = false;
-    activePreviewTargetVertices_ = 0;
     demTexture_ = texture.isNull() ? QImage() : texture.convertToFormat(QImage::Format_RGBA8888);
     m_textureDirty = true;
 
@@ -338,10 +170,6 @@ void Scene3DWidget::clearData() {
     meshVertices_.clear();
     meshTexCoords_.clear();
     meshFaces_.clear();
-    sourceMeshVertices_.clear();
-    sourceMeshFaces_.clear();
-    adaptiveMeshPreview_ = false;
-    activePreviewTargetVertices_ = 0;
     demTexture_ = QImage();
     m_textureDirty = true;
     if (isValid()) {
@@ -350,6 +178,7 @@ void Scene3DWidget::clearData() {
             glDeleteLists(m_meshDList, 1);
             m_meshDList = 0;
         }
+        releaseMeshBuffers();
         doneCurrent();
     }
     m_cachedCenter = QVector3D(0, 0, 0);
@@ -367,24 +196,37 @@ void Scene3DWidget::showEvent(QShowEvent *event) {
 }
 
 void Scene3DWidget::initializeGL() {
+    initializeOpenGLFunctions();
     glClearColor(1.0f, 0.94f, 0.96f, 1.0f);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
+    glEnable(GL_LIGHT1);
     glEnable(GL_NORMALIZE);
     glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE);
-    GLfloat lightPos[]    = {1.0f, 1.0f, 1.0f, 0.0f};
-    GLfloat lightAmbient[] = {0.3f, 0.3f, 0.3f, 1.0f};
-    GLfloat lightDiffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
-    glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmbient);
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
+    GLfloat ambient[] = {0.28f, 0.28f, 0.30f, 1.0f};
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambient);
     glPointSize(2.0f);
 
     // OpenGL context 可能被重建，让显示列表在下次 paintGL 时重新编译
     m_dlistValid = false;
+    m_meshBuffersValid = false;
     m_textureDirty = true;
+}
+
+void Scene3DWidget::releaseMeshBuffers() {
+    if (m_meshVbo) {
+        glDeleteBuffers(1, &m_meshVbo);
+        m_meshVbo = 0;
+    }
+    if (m_meshIbo) {
+        glDeleteBuffers(1, &m_meshIbo);
+        m_meshIbo = 0;
+    }
+    m_meshBuffersValid = false;
+    m_meshIndexCount = 0;
+    m_meshHasTexCoords = false;
 }
 
 void Scene3DWidget::uploadTextureIfNeeded() {
@@ -413,18 +255,111 @@ void Scene3DWidget::uploadTextureIfNeeded() {
     m_textureDirty = false;
 }
 
+void Scene3DWidget::rebuildMeshBuffers() {
+    releaseMeshBuffers();
+
+    const bool hasMeshFaces = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
+    if (!hasMeshFaces) {
+        return;
+    }
+
+    computeBounds(m_points, meshVertices_, m_cachedCenter, m_cachedHalfExtent);
+    const float scale = (m_cachedHalfExtent > 0) ? (1.0f / m_cachedHalfExtent) : 1.0f;
+    const float cx = m_cachedCenter.x();
+    const float cy = m_cachedCenter.y();
+    const float cz = m_cachedCenter.z();
+
+    QVector<QVector3D> vertexNormals(meshVertices_.size());
+    QVector<std::uint32_t> indices;
+    indices.reserve(static_cast<int>(meshFaces_.size()) * 3);
+
+    for (const auto &face : meshFaces_) {
+        if (face.a < 0 || face.a >= meshVertices_.size() ||
+            face.b < 0 || face.b >= meshVertices_.size() ||
+            face.c < 0 || face.c >= meshVertices_.size()) {
+            continue;
+        }
+        const QVector3D n = faceNormal(meshVertices_[face.a],
+                                       meshVertices_[face.b],
+                                       meshVertices_[face.c]);
+        vertexNormals[face.a] += n;
+        vertexNormals[face.b] += n;
+        vertexNormals[face.c] += n;
+        indices.append(static_cast<std::uint32_t>(face.a));
+        indices.append(static_cast<std::uint32_t>(face.b));
+        indices.append(static_cast<std::uint32_t>(face.c));
+    }
+
+    for (auto &n : vertexNormals) {
+        const float len = n.length();
+        n = len > 1e-10f ? n / len : QVector3D(0, 0, 1);
+    }
+
+    m_meshHasTexCoords = meshTexCoords_.size() == meshVertices_.size();
+    QVector<float> vertexData;
+    vertexData.reserve(static_cast<int>(meshVertices_.size()) * 8);
+    for (int i = 0; i < meshVertices_.size(); ++i) {
+        const QVector3D &v = meshVertices_[i];
+        const QVector3D &n = vertexNormals[i];
+        vertexData.append((v.x() - cx) * scale);
+        vertexData.append((v.y() - cy) * scale);
+        vertexData.append((v.z() - cz) * scale);
+        vertexData.append(n.x());
+        vertexData.append(n.y());
+        vertexData.append(n.z());
+        if (m_meshHasTexCoords) {
+            vertexData.append(meshTexCoords_[i].x());
+            vertexData.append(meshTexCoords_[i].y());
+        } else {
+            vertexData.append(0.0f);
+            vertexData.append(0.0f);
+        }
+    }
+
+    if (vertexData.isEmpty() || indices.isEmpty()) {
+        return;
+    }
+
+    glGenBuffers(1, &m_meshVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, m_meshVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(vertexData.size() * sizeof(float)),
+                 vertexData.constData(),
+                 GL_STATIC_DRAW);
+
+    glGenBuffers(1, &m_meshIbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_meshIbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(indices.size() * sizeof(std::uint32_t)),
+                 indices.constData(),
+                 GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    m_meshIndexCount = static_cast<int>(indices.size());
+    m_meshBuffersValid = true;
+}
+
 void Scene3DWidget::rebuildDisplayList() {
     // 删除旧的显示列表
     if (m_meshDList) {
         glDeleteLists(m_meshDList, 1);
         m_meshDList = 0;
     }
+    releaseMeshBuffers();
 
     const bool hasMeshFaces = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
     const bool hasMeshVerticesOnly = !meshVertices_.isEmpty() && meshFaces_.isEmpty();
     const bool hasTexture = !demTexture_.isNull() &&
                             meshTexCoords_.size() == meshVertices_.size();
     uploadTextureIfNeeded();
+
+    if (hasMeshFaces) {
+        rebuildMeshBuffers();
+        m_dlistValid = true;
+        return;
+    }
 
     if (!hasMeshFaces && !hasMeshVerticesOnly) {
     // 没有 mesh 数据也要缓存包围盒，这样 paintGL 不会重复 computeBounds
@@ -433,20 +368,37 @@ void Scene3DWidget::rebuildDisplayList() {
         return;
     }
 
-    // 预计算法线（只在重建时做一次，而不是每帧）
-    QVector<QVector3D> normals;
-    if (hasMeshFaces && meshFaces_.size() <= 250000) {
-        normals.reserve(meshFaces_.size());
+    // 预计算平滑顶点法线（只在重建时做一次，而不是每帧）
+    QVector<QVector3D> vertexNormals;
+    QVector<QVector3D> faceNormals;
+    const bool useSmoothNormals = hasMeshFaces && meshFaces_.size() <= 2000000;
+    if (hasMeshFaces) {
+        faceNormals.reserve(meshFaces_.size());
+        if (useSmoothNormals) {
+            vertexNormals.resize(meshVertices_.size());
+        }
         for (const auto &face : meshFaces_) {
             if (face.a < 0 || face.a >= meshVertices_.size() ||
                 face.b < 0 || face.b >= meshVertices_.size() ||
                 face.c < 0 || face.c >= meshVertices_.size()) {
-                normals.append(QVector3D(0, 0, 1));
+                faceNormals.append(QVector3D(0, 0, 1));
                 continue;
             }
-            normals.append(faceNormal(meshVertices_[face.a],
-                                      meshVertices_[face.b],
-                                      meshVertices_[face.c]));
+            const QVector3D n = faceNormal(meshVertices_[face.a],
+                                           meshVertices_[face.b],
+                                           meshVertices_[face.c]);
+            faceNormals.append(n);
+            if (useSmoothNormals) {
+                vertexNormals[face.a] += n;
+                vertexNormals[face.b] += n;
+                vertexNormals[face.c] += n;
+            }
+        }
+        if (useSmoothNormals) {
+            for (auto &n : vertexNormals) {
+                const float len = n.length();
+                n = len > 1e-10f ? n / len : QVector3D(0, 0, 1);
+            }
         }
     }
 
@@ -465,6 +417,12 @@ void Scene3DWidget::rebuildDisplayList() {
     if (hasMeshFaces) {
     // 第一遍：填充三角形 + 光照
         glEnable(GL_LIGHTING);
+        glShadeModel(GL_SMOOTH);
+        glEnable(GL_COLOR_MATERIAL);
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+        GLfloat specular[] = {0.22f, 0.22f, 0.22f, 1.0f};
+        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, specular);
+        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 36.0f);
         if (hasTexture && m_textureId) {
             glEnable(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, m_textureId);
@@ -484,19 +442,23 @@ void Scene3DWidget::rebuildDisplayList() {
             const QVector3D &va = meshVertices_[face.a];
             const QVector3D &vb = meshVertices_[face.b];
             const QVector3D &vc = meshVertices_[face.c];
-            const QVector3D n = normals.isEmpty() ? QVector3D(0, 0, 1) : normals[i];
+            const QVector3D n = faceNormals.isEmpty() ? QVector3D(0, 0, 1) : faceNormals[i];
+            const QVector3D na = useSmoothNormals ? vertexNormals[face.a] : n;
+            const QVector3D nb = useSmoothNormals ? vertexNormals[face.b] : n;
+            const QVector3D nc = useSmoothNormals ? vertexNormals[face.c] : n;
 
-            float shade = 0.4f + 0.6f * std::abs(n.z());
             if (hasTexture && m_textureId) {
-                glColor3f(shade, shade, shade);
+                glColor3f(0.92f, 0.92f, 0.92f);
             } else {
-                glColor3f(1.0f * shade, 0.55f * shade, 0.75f * shade);
+                glColor3f(0.78f, 0.79f, 0.77f);
             }
-            glNormal3f(n.x(), n.y(), n.z());
+            glNormal3f(na.x(), na.y(), na.z());
             if (hasTexture && m_textureId) glTexCoord2f(meshTexCoords_[face.a].x(), meshTexCoords_[face.a].y());
             glVertex3f((va.x() - cx) * scale, (va.y() - cy) * scale, (va.z() - cz) * scale);
+            glNormal3f(nb.x(), nb.y(), nb.z());
             if (hasTexture && m_textureId) glTexCoord2f(meshTexCoords_[face.b].x(), meshTexCoords_[face.b].y());
             glVertex3f((vb.x() - cx) * scale, (vb.y() - cy) * scale, (vb.z() - cz) * scale);
+            glNormal3f(nc.x(), nc.y(), nc.z());
             if (hasTexture && m_textureId) glTexCoord2f(meshTexCoords_[face.c].x(), meshTexCoords_[face.c].y());
             glVertex3f((vc.x() - cx) * scale, (vc.y() - cy) * scale, (vc.z() - cz) * scale);
         }
@@ -552,7 +514,7 @@ void Scene3DWidget::paintGL() {
     }
 
     const bool hasPoints = !m_points.isEmpty();
-    const bool hasMesh = m_meshDList != 0;
+    const bool hasMesh = m_meshBuffersValid && m_meshIndexCount > 0;
 
     glClearColor(1.0f, 0.94f, 0.96f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -580,30 +542,87 @@ void Scene3DWidget::paintGL() {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
+    GLfloat keyPos[] = {-0.45f, 0.75f, 1.0f, 0.0f};
+    GLfloat keyDiffuse[] = {0.95f, 0.95f, 0.92f, 1.0f};
+    GLfloat keyAmbient[] = {0.10f, 0.10f, 0.11f, 1.0f};
+    GLfloat fillPos[] = {0.75f, -0.25f, 0.65f, 0.0f};
+    GLfloat fillDiffuse[] = {0.36f, 0.40f, 0.48f, 1.0f};
+    GLfloat fillAmbient[] = {0.02f, 0.02f, 0.03f, 1.0f};
+    glLightfv(GL_LIGHT0, GL_POSITION, keyPos);
+    glLightfv(GL_LIGHT0, GL_AMBIENT, keyAmbient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, keyDiffuse);
+    glLightfv(GL_LIGHT1, GL_POSITION, fillPos);
+    glLightfv(GL_LIGHT1, GL_AMBIENT, fillAmbient);
+    glLightfv(GL_LIGHT1, GL_DIFFUSE, fillDiffuse);
+
     const float scale = (halfExtent > 0) ? (1.0f / halfExtent) : 1.0f;
 
     glTranslatef(0.0f, 0.0f, -3.0f * m_zoom);
     glRotatef(m_rotX, 1.0f, 0.0f, 0.0f);
     glRotatef(m_rotY, 0.0f, 1.0f, 0.0f);
 
-    // 坐标轴
-    glDisable(GL_LIGHTING);
-    glBegin(GL_LINES);
-    const float axisLen = halfExtent * 1.5f;
-    glColor3f(1.0f, 0.2f, 0.2f);
-    glVertex3f((center.x() - axisLen) * scale, center.y() * scale, center.z() * scale);
-    glVertex3f((center.x() + axisLen) * scale, center.y() * scale, center.z() * scale);
-    glColor3f(0.2f, 1.0f, 0.2f);
-    glVertex3f(center.x() * scale, (center.y() - axisLen) * scale, center.z() * scale);
-    glVertex3f(center.x() * scale, (center.y() + axisLen) * scale, center.z() * scale);
-    glColor3f(0.2f, 0.3f, 1.0f);
-    glVertex3f(center.x() * scale, center.y() * scale, (center.z() - axisLen) * scale);
-    glVertex3f(center.x() * scale, center.y() * scale, (center.z() + axisLen) * scale);
-    glEnd();
+    // Mesh 模式隐藏大坐标轴，避免穿过模型影响观察；点云/空场景仍保留参考轴。
+    if (!hasMesh) {
+        glDisable(GL_LIGHTING);
+        glBegin(GL_LINES);
+        const float axisLen = halfExtent * 1.5f;
+        glColor3f(1.0f, 0.2f, 0.2f);
+        glVertex3f((center.x() - axisLen) * scale, center.y() * scale, center.z() * scale);
+        glVertex3f((center.x() + axisLen) * scale, center.y() * scale, center.z() * scale);
+        glColor3f(0.2f, 1.0f, 0.2f);
+        glVertex3f(center.x() * scale, (center.y() - axisLen) * scale, center.z() * scale);
+        glVertex3f(center.x() * scale, (center.y() + axisLen) * scale, center.z() * scale);
+        glColor3f(0.2f, 0.3f, 1.0f);
+        glVertex3f(center.x() * scale, center.y() * scale, (center.z() - axisLen) * scale);
+        glVertex3f(center.x() * scale, center.y() * scale, (center.z() + axisLen) * scale);
+        glEnd();
+    }
 
-    // 通过一次 glCallList 绘制整个 mesh（GPU 加速）
+    // VBO + index buffer 绘制整个 mesh，交互时不再重新提交三角面
     if (hasMesh) {
-        glCallList(m_meshDList);
+        glEnable(GL_LIGHTING);
+        glShadeModel(GL_SMOOTH);
+        glEnable(GL_COLOR_MATERIAL);
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+        GLfloat specular[] = {0.22f, 0.22f, 0.22f, 1.0f};
+        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, specular);
+        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 36.0f);
+        glColor3f(0.93f, 0.68f, 0.79f);
+
+        const bool textured = m_textureId != 0 && m_meshHasTexCoords;
+        if (textured) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, m_textureId);
+            glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+            glColor3f(1.0f, 0.88f, 0.94f);
+        } else {
+            glDisable(GL_TEXTURE_2D);
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, m_meshVbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_meshIbo);
+
+        constexpr GLsizei stride = static_cast<GLsizei>(8 * sizeof(float));
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glEnableClientState(GL_NORMAL_ARRAY);
+        glVertexPointer(3, GL_FLOAT, stride, reinterpret_cast<const void *>(0));
+        glNormalPointer(GL_FLOAT, stride, reinterpret_cast<const void *>(3 * sizeof(float)));
+        if (textured) {
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(2, GL_FLOAT, stride, reinterpret_cast<const void *>(6 * sizeof(float)));
+        }
+
+        glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, reinterpret_cast<const void *>(0));
+
+        if (textured) {
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glDisable(GL_TEXTURE_2D);
+        }
+        glDisableClientState(GL_NORMAL_ARRAY);
+        glDisableClientState(GL_VERTEX_ARRAY);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     }
 
     // 点云（点云通常较小，直接绘制即可）

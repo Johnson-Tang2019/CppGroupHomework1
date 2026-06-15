@@ -1644,9 +1644,7 @@
                                 .arg(info.fileName())
                                 .arg(vertices.size())
                                 .arg(faces.size()));
-                    if (faces.size() > 200000) {
-                        appendLog(QStringLiteral("三维场景已使用顶点聚类降细节预览，完整 Mesh 数据仍保留在图层中。"));
-                    }
+                    appendLog(QStringLiteral("三维场景已完整显示 Mesh，使用 VBO/索引缓冲与平滑法线改善性能和细节。"));
                 }
             } catch (const std::exception &e) {
                 appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")

@@ -15,14 +15,14 @@
 #include <algorithm>
 #include <cmath>
 
-class Scene3DWidget : public QOpenGLWidget {
+class Scene3DWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
   public:
     explicit Scene3DWidget(QWidget *parent = nullptr);
     ~Scene3DWidget() override;
     void setMesh(const QVector<QVector3D>& vertices, const QVector<rs::Face>& faces);
     void setMeshPreview(const QVector<QVector3D>& vertices, const QVector<rs::Face>& faces,
-                        int maxFaces = 200000);
+                        int maxFaces = 3000000);
     void setPoints(const QVector<QVector3D> &points);
     void setDem(const rs::DemLayer &dem, int maxGrid = 128);
     void setDem(const rs::DemLayer &dem, const QImage &texture, int maxGrid = 128);
@@ -40,16 +40,14 @@ class Scene3DWidget : public QOpenGLWidget {
   private:
     void markDlistDirty();
     void rebuildDisplayList();
+    void rebuildMeshBuffers();
+    void releaseMeshBuffers();
     void uploadTextureIfNeeded();
-    int desiredMeshPreviewVertexCount() const;
-    void rebuildMeshPreviewForZoom();
 
     QVector<QVector3D> m_points;
     QVector<QVector3D> meshVertices_;
     QVector<QPointF> meshTexCoords_;
     QVector<rs::Face> meshFaces_;
-    QVector<QVector3D> sourceMeshVertices_;
-    QVector<rs::Face> sourceMeshFaces_;
     QImage demTexture_;
     float m_rotX = 0, m_rotY = 0, m_zoom = 1.0f;
     QPoint m_lastPos;
@@ -58,12 +56,14 @@ class Scene3DWidget : public QOpenGLWidget {
 
     // GPU 加速：显示列表 + 缓存包围盒
     GLuint m_meshDList = 0;
+    GLuint m_meshVbo = 0;
+    GLuint m_meshIbo = 0;
     GLuint m_textureId = 0;
     bool m_dlistValid = false;
+    bool m_meshBuffersValid = false;
     bool m_textureDirty = false;
-    bool adaptiveMeshPreview_ = false;
-    int previewBaseTargetVertices_ = 100000;
-    int activePreviewTargetVertices_ = 0;
+    int m_meshIndexCount = 0;
+    bool m_meshHasTexCoords = false;
     QVector3D m_cachedCenter;
     float m_cachedHalfExtent = 1.0f;
 };
