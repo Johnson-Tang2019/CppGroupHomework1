@@ -1532,6 +1532,7 @@
     }
 
     // 加载三维网格模型
+    // 在后台线程解析 Mesh 文件（OBJ/PLY），避免阻塞 UI
     void MainWindow::openMesh() {
         const QString path =
             QFileDialog::getOpenFileName(this, QStringLiteral("加载 Mesh"), QString(),
@@ -1542,12 +1543,22 @@
         const QFileInfo info(path);
         const QString ext = info.suffix().toLower();
 
-        try {
+        // 显示进度对话框，让用户知道正在加载
+        auto *dialog = new QProgressDialog(
+            QStringLiteral("正在加载 Mesh：%1 ...").arg(info.fileName()),
+            QString(), 0, 0, this);
+        dialog->setWindowTitle(QStringLiteral("加载中"));
+        dialog->setWindowModality(Qt::WindowModal);
+        dialog->setCancelButton(nullptr);
+        dialog->show();
+
+        // 后台解析文件（不能在后台线程操作 Qt UI）
+        auto *watcher = new QFutureWatcher<LoadedMeshData>(this);
+        watcher->setFuture(QtConcurrent::run([path, ext]() -> LoadedMeshData {
             QVector<QVector3D> vertices;
             QVector<Face> faces;
 
             if (ext == QStringLiteral("obj")) {
-                // OBJ 格式：v x y z（顶点），f v1 v2 v3（三角面）
                 QFile file(path);
                 if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
                     throw std::runtime_error("无法打开 OBJ 文件");
@@ -1591,29 +1602,51 @@
                 throw std::runtime_error("未能读取到任何顶点数据");
             }
 
-            auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
-            layers_.add(layer);
-            scene3DWidget_->setMesh(vertices, faces);
-            scene3DWidget_->fitToBounds();
-            tabs_->setCurrentWidget(scene3DWidget_);
-            scene3DWidget_->update();
-            if (faces.isEmpty()) {
-                appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，未读取到三角面，已在三维场景显示顶点）")
-                            .arg(info.fileName())
-                            .arg(vertices.size()));
-            } else {
-                appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
-                            .arg(info.fileName())
-                            .arg(vertices.size())
-                            .arg(faces.size()));
+            return {vertices, faces};
+        }));
+
+        // 后台解析完成后，切回主线程更新界面
+        connect(watcher, &QFutureWatcher<LoadedMeshData>::finished, this,
+                [this, watcher, info, path, dialog]() {
+            // 关闭进度对话框
+            dialog->accept();
+
+            try {
+                const LoadedMeshData mesh = watcher->result();
+                const auto &vertices = mesh.vertices;
+                const auto &faces = mesh.faces;
+
+                auto layer = std::make_shared<MeshLayer>(info.fileName(), path, vertices, faces);
+                layers_.add(layer);
+                scene3DWidget_->setMesh(vertices, faces);
+                scene3DWidget_->fitToBounds();
+                tabs_->setCurrentWidget(scene3DWidget_);
+                scene3DWidget_->update();
+                if (faces.isEmpty()) {
+                    appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，未读取到三角面，已在三维场景显示顶点）")
+                                .arg(info.fileName())
+                                .arg(vertices.size()));
+                } else {
+                    appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
+                                .arg(info.fileName())
+                                .arg(vertices.size())
+                                .arg(faces.size()));
+                }
+            } catch (const std::exception &e) {
+                appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")
+                            .arg(info.fileName(), QString::fromUtf8(e.what())));
             }
-        } catch (const std::exception &e) {
-            appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")
-                        .arg(info.fileName(), QString::fromUtf8(e.what())));
-        }
-        refreshLayerTree();
-        updateActionStates();
+
+            watcher->deleteLater();
+            dialog->deleteLater();
+            refreshLayerTree();
+            updateActionStates();
+        });
+
+        // 进入模态事件循环，保持 UI 响应，直到后台解析完成
+        dialog->exec();
     }
+
 
     // 加载 DEM：使用 GDAL 读取 DEM GeoTIFF/ASCII Grid 格式
     void MainWindow::openDem() {
