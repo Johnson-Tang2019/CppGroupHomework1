@@ -7,6 +7,8 @@
     #include "rs/Panorama360Widget.h"
     #include "rs/ExtendedAlgorithms.h"
     #include "rs/RemoteSensingIndices.h"
+    #include "rs/SettingsDialog.h"
+    #include "rs/Translation.h"
 
     #include <QApplication>
     #include <QFutureWatcher>
@@ -645,26 +647,29 @@
 
     // 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
     MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
-        setWindowTitle(QStringLiteral("Remote Sensing Qt Starter")); // 设置窗口标题
-        createMenus();                                               // 构建菜单栏
-        createUi();                                                  // 构建界面控件
+        createMenus();
+        createUi();
+        setupSettingsButton();
+        connect(&Translation::instance(), &Translation::languageChanged, this, &MainWindow::retranslateUi);
+        retranslateUi();
         appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL "
-                                "多波段、参数化算法、DEM/正射流程的工程骨架。")); // 记录启动日志
-        updateActionStates(); // 初始化菜单项的启用状态（刚启动时所有菜单应该禁用）
+                                "多波段、参数化算法、DEM/正射流程的工程骨架。"));
+        updateActionStates();
     }
 
     // 构建菜单栏：数据、影像处理、摄影测量/三维
     void MainWindow::createMenus() {
         // ---- "数据" 菜单 ----
-        auto *dataMenu = menuBar()->addMenu(QStringLiteral("数据")); // 创建"数据"菜单
-        connect(dataMenu->addAction(QStringLiteral("加载遥感影像(GDAL，可多选)")), &QAction::triggered,
-                this, &MainWindow::openRasterDatasets); // 添加"加载遥感影像"并连接点击信号
-        connect(dataMenu->addAction(QStringLiteral("加载点云")), &QAction::triggered, this,
-                &MainWindow::openPointCloud); // 添加"加载点云"并连接
-        connect(dataMenu->addAction(QStringLiteral("加载 Mesh")), &QAction::triggered, this,
-                &MainWindow::openMesh); // 添加"加载 Mesh"并连接
-        connect(dataMenu->addAction(QStringLiteral("加载 DEM")), &QAction::triggered, this,
-                &MainWindow::openDem); // 添加"加载 DEM"并连接
+        auto *dataMenu = menuBar()->addMenu(QString());
+        dataMenu_ = dataMenu;
+        loadRasterAction_ = dataMenu->addAction(QString());
+        connect(loadRasterAction_, &QAction::triggered, this, &MainWindow::openRasterDatasets);
+        loadPointCloudAction_ = dataMenu->addAction(QString());
+        connect(loadPointCloudAction_, &QAction::triggered, this, &MainWindow::openPointCloud);
+        loadMeshAction_ = dataMenu->addAction(QString());
+        connect(loadMeshAction_, &QAction::triggered, this, &MainWindow::openMesh);
+        loadDemAction_ = dataMenu->addAction(QString());
+        connect(loadDemAction_, &QAction::triggered, this, &MainWindow::openDem);
         dataMenu->addSeparator();      // 添加分隔线，将加载与删除操作分开
         deleteLayerAction_ = dataMenu->addAction(
             QStringLiteral("删除选中图层")); // 添加"删除选中图层"并保存指针以便控制启用/禁用
@@ -674,7 +679,8 @@
         connect(clearProjectAction_, &QAction::triggered, this, &MainWindow::clearProject);
 
         // ---- "影像处理" 菜单 ----
-        auto *rasterMenu = menuBar()->addMenu(QStringLiteral("影像处理"));  // 创建"影像处理"菜单
+        auto *rasterMenu = menuBar()->addMenu(QString());
+        rasterMenu_ = rasterMenu;
         auto *bandMenu = rasterMenu->addMenu(QStringLiteral("波段与设色")); // 创建子菜单"波段与设色"
         renderAction_ =
             bandMenu->addAction(QStringLiteral("波段组合/设色...")); // 添加"波段组合/设色"并保存指针
@@ -869,7 +875,8 @@
                                         QStringLiteral("_精度"));
                 });
 
-        auto *indexMenu = menuBar()->addMenu(QStringLiteral("遥感指数"));
+        auto *indexMenu = menuBar()->addMenu(QString());
+        indexMenu_ = indexMenu;
         connect(indexMenu->addAction(QStringLiteral("计算 NDVI/NDWI/NDBI...")), &QAction::triggered, this,
                 [this]() {
                     QStringList indices = {QStringLiteral("NDVI"), QStringLiteral("NDWI"),
@@ -943,8 +950,8 @@
                 });
 
         // ---- "摄影测量/三维" 菜单 ----
-        auto *photogrammetryMenu =
-            menuBar()->addMenu(QStringLiteral("摄影测量/三维")); // 创建"摄影测量/三维"菜单
+        auto *photogrammetryMenu = menuBar()->addMenu(QString());
+        photogrammetryMenu_ = photogrammetryMenu;
         demAction_ =
             photogrammetryMenu->addAction(QStringLiteral("DEM 重建...")); // 添加"DEM 重建"并保存指针
         connect(demAction_, &QAction::triggered, this, &MainWindow::runDemReconstruction);
@@ -955,12 +962,14 @@
             QStringLiteral("DEM 三维贴图..."));
         connect(demTextureAction_, &QAction::triggered, this, &MainWindow::runDemTextureMapping);
 
-        auto *streetViewMenu = menuBar()->addMenu(QStringLiteral("街景/全景"));
+        auto *streetViewMenu = menuBar()->addMenu(QString());
+        streetViewMenu_ = streetViewMenu;
         connect(streetViewMenu->addAction(QStringLiteral("加载 360 街景图...")), &QAction::triggered,
                 this, &MainWindow::openPanorama360);
 
         // ---- "点云处理" 菜单 ----
-        auto *pcMenu = menuBar()->addMenu(QStringLiteral("点云处理"));  // 创建"点云处理"菜单
+        auto *pcMenu = menuBar()->addMenu(QString());
+        pcMenu_ = pcMenu;
         downsampleAction_ =
             pcMenu->addAction(QStringLiteral("体素降采样...")); // 添加"体素降采样"并保存指针
         connect(downsampleAction_, &QAction::triggered, this, &MainWindow::runPointCloudDownsample);
@@ -973,7 +982,33 @@
         exportPlyAction_ =
             pcMenu->addAction(QStringLiteral("导出 PLY...")); // 添加"导出 PLY"并保存指针
         connect(exportPlyAction_, &QAction::triggered, this, &MainWindow::exportPly);
+    }
 
+    void MainWindow::setupSettingsButton() {
+        if (settingsButton_) {
+            return;
+        }
+
+        auto *menuWrap = new QWidget(this);
+        menuWrap->setObjectName(QStringLiteral("menuWrap"));
+        auto *row = new QHBoxLayout(menuWrap);
+        row->setContentsMargins(0, 0, 12, 0);
+        row->setSpacing(8);
+
+        auto *bar = menuBar();
+        bar->setParent(menuWrap);
+        bar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        row->addWidget(bar, 1);
+
+        settingsButton_ = new QPushButton(menuWrap);
+        settingsButton_->setObjectName(QStringLiteral("settingsButton"));
+        settingsButton_->setFlat(true);
+        settingsButton_->setCursor(Qt::PointingHandCursor);
+        settingsButton_->setMinimumWidth(72);
+        connect(settingsButton_, &QPushButton::clicked, this, &MainWindow::openSettings);
+        row->addWidget(settingsButton_, 0, Qt::AlignRight | Qt::AlignVCenter);
+
+        setMenuWidget(menuWrap);
     }
 
     // 构建界面布局：左侧图层树 + 右侧影像/三维标签页 + 底部日志面板
@@ -1015,16 +1050,16 @@
         scene3DWidget_ = new Scene3DWidget(tabs_);
         panorama360Widget_ = new Panorama360Widget(tabs_);
 
-        tabs_->addTab(imageView_, QStringLiteral("二维影像"));     // 添加"二维影像"标签页
-        tabs_->addTab(scene3DWidget_, QStringLiteral("三维场景")); // 添加"三维场景"标签页
-        tabs_->addTab(panorama360Widget_, QStringLiteral("360街景"));
+        tabs_->addTab(imageView_, QString());
+        tabs_->addTab(scene3DWidget_, QString());
+        tabs_->addTab(panorama360Widget_, QString());
 
-        auto *bottomTabs = new QTabWidget(right);
-        bottomTabs->setMinimumHeight(180);
+        bottomTabs_ = new QTabWidget(right);
+        bottomTabs_->setMinimumHeight(180);
 
-        logEdit_ = new QTextEdit(bottomTabs);
+        logEdit_ = new QTextEdit(bottomTabs_);
         logEdit_->setReadOnly(true);
-        bottomTabs->addTab(logEdit_, QStringLiteral("Log"));
+        bottomTabs_->addTab(logEdit_, QString());
 
         auto *aiPanel = new DeepSeekChatPanel([this]() {
             QStringList lines;
@@ -1157,12 +1192,14 @@
                 }
             }
             return lines.join(QStringLiteral("\n"));
-        }, bottomTabs);
-        bottomTabs->addTab(aiPanel, QStringLiteral("AI Assistant"));
+        }, bottomTabs_);
+        bottomTabs_->addTab(aiPanel, QString());
 
-        auto *aiMenu = menuBar()->addMenu(QStringLiteral("AI"));
-        connect(aiMenu->addAction(QStringLiteral("Show AI Assistant")), &QAction::triggered, this,
-                [bottomTabs, aiPanel]() { bottomTabs->setCurrentWidget(aiPanel); });
+        aiMenu_ = menuBar()->addMenu(QString());
+        showAiAction_ = aiMenu_->addAction(QString());
+        connect(showAiAction_, &QAction::triggered, this, [this, aiPanel]() {
+            bottomTabs_->setCurrentWidget(aiPanel);
+        });
 
         // 设置分割器拉伸比例（控件随窗口缩放时的比例分配）
         root->setStretchFactor(0, 1);  // 第0个（图层树）：拉伸因子 = 1
@@ -1196,6 +1233,27 @@
             QMenuBar::item:selected {
                 background-color: #fce4ec;
                 border-radius: 4px;
+                color: #8b5a6a;
+            }
+            QWidget#menuWrap {
+                background-color: #ffffff;
+                border-bottom: 2px solid #f4b8c8;
+            }
+            QPushButton#settingsButton {
+                background: transparent;
+                color: #5a4a4a;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-size: 13px;
+                font-weight: normal;
+            }
+            QPushButton#settingsButton:hover {
+                background-color: #fce4ec;
+                color: #8b5a6a;
+            }
+            QPushButton#settingsButton:pressed {
+                background-color: #fce4ec;
                 color: #8b5a6a;
             }
             QMenu {
@@ -2958,6 +3016,80 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
     }
 
     updateActionStates();
+}
+
+void MainWindow::openSettings() {
+    SettingsDialog dialog(this);
+    dialog.exec();
+}
+
+void MainWindow::retranslateUi() {
+    const auto &t = Translation::instance();
+    setWindowTitle(t.tr(QStringLiteral("window_title")));
+
+    if (dataMenu_) {
+        dataMenu_->setTitle(t.tr(QStringLiteral("menu.data")));
+    }
+    if (loadRasterAction_) {
+        loadRasterAction_->setText(t.tr(QStringLiteral("action.load_raster")));
+    }
+    if (loadPointCloudAction_) {
+        loadPointCloudAction_->setText(t.tr(QStringLiteral("action.load_pointcloud")));
+    }
+    if (loadMeshAction_) {
+        loadMeshAction_->setText(t.tr(QStringLiteral("action.load_mesh")));
+    }
+    if (loadDemAction_) {
+        loadDemAction_->setText(t.tr(QStringLiteral("action.load_dem")));
+    }
+    if (deleteLayerAction_) {
+        deleteLayerAction_->setText(t.tr(QStringLiteral("action.delete_layer")));
+    }
+    if (clearProjectAction_) {
+        clearProjectAction_->setText(t.tr(QStringLiteral("action.clear_project")));
+    }
+    if (rasterMenu_) {
+        rasterMenu_->setTitle(t.tr(QStringLiteral("menu.raster")));
+    }
+    if (indexMenu_) {
+        indexMenu_->setTitle(t.tr(QStringLiteral("menu.index")));
+    }
+    if (photogrammetryMenu_) {
+        photogrammetryMenu_->setTitle(t.tr(QStringLiteral("menu.photogrammetry")));
+    }
+    if (streetViewMenu_) {
+        streetViewMenu_->setTitle(t.tr(QStringLiteral("menu.streetview")));
+    }
+    if (pcMenu_) {
+        pcMenu_->setTitle(t.tr(QStringLiteral("menu.pointcloud")));
+    }
+    if (aiMenu_) {
+        aiMenu_->setTitle(t.tr(QStringLiteral("menu.ai")));
+    }
+    if (settingsButton_) {
+        settingsButton_->setText(t.tr(QStringLiteral("settings.button")));
+        settingsButton_->setToolTip(t.tr(QStringLiteral("settings.title")));
+    }
+    if (showAiAction_) {
+        showAiAction_->setText(t.tr(QStringLiteral("action.show_ai")));
+    }
+
+    if (layerTree_) {
+        layerTree_->setHeaderLabel(t.tr(QStringLiteral("layer_tree")));
+    }
+    if (tabs_) {
+        if (tabs_->count() >= 3) {
+            tabs_->setTabText(0, t.tr(QStringLiteral("tab.2d")));
+            tabs_->setTabText(1, t.tr(QStringLiteral("tab.3d")));
+            tabs_->setTabText(2, t.tr(QStringLiteral("tab.panorama")));
+        }
+    }
+    if (bottomTabs_) {
+        if (bottomTabs_->count() >= 2) {
+            bottomTabs_->setTabText(0, t.tr(QStringLiteral("tab.log")));
+            bottomTabs_->setTabText(1, t.tr(QStringLiteral("tab.ai")));
+        }
+    }
 }
 
 } // namespace rs

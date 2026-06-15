@@ -29,6 +29,7 @@
 #include <QSplitter>
 #include <QSize>
 #include <QStringList>
+#include <QPushButton>
 #include <QTabWidget> // Qt 标签页控件，切换二维影像/三维场景
 #include <QTextEdit>  // Qt 文本编辑框，用于日志输出面板
 #include <QTextStream>
@@ -87,6 +88,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void onSelectionChanged();                                  // 图层树选中项改变时的响应
     void onLayerItemChanged(QTreeWidgetItem *item, int column); // 图层项（勾选框）改变时的响应
     void showLayerContextMenu(const QPoint &position);          // 右键上下文菜单
+    void openSettings();                                        // 打开设置
 
   private:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -94,6 +96,8 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     // ============ UI 构建 ============
     void createUi();    // 构建界面布局（分割器、图层树、标签页、日志面板）
     void createMenus(); // 构建菜单栏（数据、影像处理、摄影测量/三维）
+    void setupSettingsButton(); // 菜单栏右上角设置按钮
+    void retranslateUi(); // 刷新界面语言
 
     // ============ 图层管理 ============
     void refreshLayerTree(); // 根据 LayerManager 数据重建图层树（保持展开状态）
@@ -130,8 +134,25 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     Scene3DWidget *scene3DWidget_{}; // 三维点云预览控件（基于 QOpenGLWidget）
     Panorama360Widget *panorama360Widget_{}; // 360 全景/街景查看控件
     QTabWidget *tabs_{};             // 标签页控件（切换"二维影像"和"三维场景"）
+    QTabWidget *bottomTabs_{};       // 底部日志 / AI 标签页
     QTextEdit *logEdit_{};           // 日志输出面板（底部）
     QLabel *coordLabel_{};           // 状态栏：光标经纬度/像素信息
+
+    QMenu *dataMenu_{};
+    QMenu *rasterMenu_{};
+    QMenu *indexMenu_{};
+    QMenu *photogrammetryMenu_{};
+    QMenu *streetViewMenu_{};
+    QMenu *pcMenu_{};
+    QMenu *aiMenu_{};
+
+    QPushButton *settingsButton_{};
+
+    QAction *loadRasterAction_{};
+    QAction *loadPointCloudAction_{};
+    QAction *loadMeshAction_{};
+    QAction *loadDemAction_{};
+    QAction *showAiAction_{};
 
     // ============ 菜单项指针（用于启用/禁用控制） ============
     QAction *deleteLayerAction_{};  // "删除选中图层"菜单项
