@@ -949,6 +949,9 @@
         orthoAction_ = photogrammetryMenu->addAction(
             QStringLiteral("正射影像校正...")); // 添加"正射影像校正"并保存指针
         connect(orthoAction_, &QAction::triggered, this, &MainWindow::runOrthorectification);
+        demTextureAction_ = photogrammetryMenu->addAction(
+            QStringLiteral("DEM 三维贴图..."));
+        connect(demTextureAction_, &QAction::triggered, this, &MainWindow::runDemTextureMapping);
 
         // ---- "点云处理" 菜单 ----
         auto *pcMenu = menuBar()->addMenu(QStringLiteral("点云处理"));  // 创建"点云处理"菜单
@@ -1972,6 +1975,58 @@
         appendLog(result.message);
     }
 
+    void MainWindow::runDemTextureMapping() {
+        std::shared_ptr<RasterLayer> raster;
+        std::shared_ptr<DemLayer> dem;
+
+        for (const int idx : selectedLayerIndices()) {
+            try {
+                const auto layer = layers_.at(idx);
+                if (!raster) {
+                    raster = std::dynamic_pointer_cast<RasterLayer>(layer);
+                }
+                if (!dem) {
+                    dem = std::dynamic_pointer_cast<DemLayer>(layer);
+                }
+            } catch (const std::exception &) {
+            }
+        }
+
+        if (!raster || !dem) {
+            appendLog(QStringLiteral("请同时选中一个遥感影像图层和一个 DEM 图层，再执行 DEM 三维贴图。"));
+            return;
+        }
+
+        QImage texture = raster->currentDisplayImage();
+        QString textureSource = raster->renderDescription();
+        if (texture.isNull()) {
+            if (raster->bandCount() >= 3) {
+                texture = io::renderRgbComposite(*raster, 0, 1, 2);
+                textureSource = QStringLiteral("Auto RGB (Band 1/2/3)");
+            } else if (raster->bandCount() >= 1) {
+                texture = io::renderSingleBandGray(*raster, 0);
+                textureSource = QStringLiteral("Gray (Band 1)");
+            }
+        }
+
+        if (texture.isNull()) {
+            appendLog(QStringLiteral("DEM 三维贴图失败：影像 %1 没有可用的渲染图像。").arg(raster->name()));
+            return;
+        }
+
+        scene3DWidget_->setDem(*dem, texture);
+        scene3DWidget_->fitToBounds();
+        tabs_->setCurrentWidget(scene3DWidget_);
+
+        QString note;
+        if (raster->bandCount() > 0 &&
+            (raster->band(0).width != dem->width() || raster->band(0).height != dem->height())) {
+            note = QStringLiteral("（影像与 DEM 尺寸不同，已按 DEM 网格范围拉伸贴合）");
+        }
+        appendLog(QStringLiteral("已完成 DEM 三维贴图：DEM=%1，纹理=%2，来源=%3 %4")
+                      .arg(dem->name(), raster->name(), textureSource, note));
+    }
+
     // ============ 三维点云/Mesh============
 
     // ── 导出 PLY ──
@@ -2675,6 +2730,9 @@ void MainWindow::updateActionStates() {
     }
     if (orthoAction_) {
         orthoAction_->setEnabled(selectedRasters >= 1 && selectedDems >= 1);
+    }
+    if (demTextureAction_) {
+        demTextureAction_->setEnabled(selectedRasters >= 1 && selectedDems >= 1);
     }
     if (downsampleAction_) {
         downsampleAction_->setEnabled(hasPointCloud);

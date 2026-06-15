@@ -1,5 +1,6 @@
 #include "rs/Scene3DWidget.h"
 #include <GL/gl.h>
+#include <QImage>
 #include <QMouseEvent>
 #include <QShowEvent>
 #include <QWheelEvent>
@@ -58,7 +59,12 @@ Scene3DWidget::~Scene3DWidget() {
         glDeleteLists(m_meshDList, 1);
         m_meshDList = 0;
     }
+    if (m_textureId) {
+        glDeleteTextures(1, &m_textureId);
+        m_textureId = 0;
+    }
     m_dlistValid = false;
+    doneCurrent();
 }
 
 void Scene3DWidget::markDlistDirty() {
@@ -69,7 +75,10 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
     m_points = points;
     if (!points.isEmpty()) {
         meshVertices_.clear();
+        meshTexCoords_.clear();
         meshFaces_.clear();
+        demTexture_ = QImage();
+        m_textureDirty = true;
     }
     markDlistDirty();
     update();
@@ -78,6 +87,9 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
 void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces) {
     meshVertices_ = vertices;
     meshFaces_ = faces;
+    meshTexCoords_.clear();
+    demTexture_ = QImage();
+    m_textureDirty = true;
     if (!vertices.isEmpty()) {
         m_points.clear();
     }
@@ -86,9 +98,16 @@ void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs
 }
 
 void Scene3DWidget::setDem(const rs::DemLayer &dem, int maxGrid) {
+    setDem(dem, QImage(), maxGrid);
+}
+
+void Scene3DWidget::setDem(const rs::DemLayer &dem, const QImage &texture, int maxGrid) {
     m_points.clear();
     meshVertices_.clear();
+    meshTexCoords_.clear();
     meshFaces_.clear();
+    demTexture_ = texture.isNull() ? QImage() : texture.convertToFormat(QImage::Format_RGBA8888);
+    m_textureDirty = true;
 
     const int w = dem.width();
     const int h = dem.height();
@@ -106,6 +125,7 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, int maxGrid) {
     const int cols = (w + stepX - 1) / stepX;
     const int rows = (h + stepY - 1) / stepY;
     meshVertices_.reserve(cols * rows);
+    meshTexCoords_.reserve(cols * rows);
 
     for (int gy = 0, y = 0; gy < rows; ++gy, y += stepY) {
         for (int gx = 0, x = 0; gx < cols; ++gx, x += stepX) {
@@ -115,6 +135,10 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, int maxGrid) {
             const float wx = static_cast<float>(gt[0] + sx * gt[1] + sy * gt[2]);
             const float wy = static_cast<float>(gt[3] + sx * gt[4] + sy * gt[5]);
             meshVertices_.append(QVector3D(wx, wy, (z - zMin) * zScale * 100.0f));
+
+            const float u = cols > 1 ? static_cast<float>(gx) / static_cast<float>(cols - 1) : 0.0f;
+            const float v = rows > 1 ? static_cast<float>(gy) / static_cast<float>(rows - 1) : 0.0f;
+            meshTexCoords_.append(QPointF(u, v));
         }
     }
 
@@ -135,7 +159,10 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, int maxGrid) {
 void Scene3DWidget::clearData() {
     m_points.clear();
     meshVertices_.clear();
+    meshTexCoords_.clear();
     meshFaces_.clear();
+    demTexture_ = QImage();
+    m_textureDirty = true;
     markDlistDirty();
     update();
 }
@@ -165,6 +192,33 @@ void Scene3DWidget::initializeGL() {
 
     // OpenGL context 可能被重建，让显示列表在下次 paintGL 时重新编译
     m_dlistValid = false;
+    m_textureDirty = true;
+}
+
+void Scene3DWidget::uploadTextureIfNeeded() {
+    if (!m_textureDirty) {
+        return;
+    }
+
+    if (m_textureId) {
+        glDeleteTextures(1, &m_textureId);
+        m_textureId = 0;
+    }
+
+    if (!demTexture_.isNull()) {
+        const QImage glImage = demTexture_.convertToFormat(QImage::Format_RGBA8888);
+        glGenTextures(1, &m_textureId);
+        glBindTexture(GL_TEXTURE_2D, m_textureId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, glImage.width(), glImage.height(),
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, glImage.constBits());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    m_textureDirty = false;
 }
 
 void Scene3DWidget::rebuildDisplayList() {
@@ -176,6 +230,9 @@ void Scene3DWidget::rebuildDisplayList() {
 
     const bool hasMeshFaces = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
     const bool hasMeshVerticesOnly = !meshVertices_.isEmpty() && meshFaces_.isEmpty();
+    const bool hasTexture = !demTexture_.isNull() &&
+                            meshTexCoords_.size() == meshVertices_.size();
+    uploadTextureIfNeeded();
 
     if (!hasMeshFaces && !hasMeshVerticesOnly) {
     // 没有 mesh 数据也要缓存包围盒，这样 paintGL 不会重复 computeBounds
@@ -216,6 +273,13 @@ void Scene3DWidget::rebuildDisplayList() {
     if (hasMeshFaces) {
     // 第一遍：填充三角形 + 光照
         glEnable(GL_LIGHTING);
+        if (hasTexture && m_textureId) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, m_textureId);
+            glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+        } else {
+            glDisable(GL_TEXTURE_2D);
+        }
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         glBegin(GL_TRIANGLES);
         for (int i = 0; i < meshFaces_.size(); ++i) {
@@ -231,19 +295,31 @@ void Scene3DWidget::rebuildDisplayList() {
             const QVector3D &n = normals[i];
 
             float shade = 0.4f + 0.6f * std::abs(n.z());
-            glColor3f(1.0f * shade, 0.55f * shade, 0.75f * shade);
+            if (hasTexture && m_textureId) {
+                glColor3f(shade, shade, shade);
+            } else {
+                glColor3f(1.0f * shade, 0.55f * shade, 0.75f * shade);
+            }
             glNormal3f(n.x(), n.y(), n.z());
+            if (hasTexture && m_textureId) glTexCoord2f(meshTexCoords_[face.a].x(), meshTexCoords_[face.a].y());
             glVertex3f((va.x() - cx) * scale, (va.y() - cy) * scale, (va.z() - cz) * scale);
+            if (hasTexture && m_textureId) glTexCoord2f(meshTexCoords_[face.b].x(), meshTexCoords_[face.b].y());
             glVertex3f((vb.x() - cx) * scale, (vb.y() - cy) * scale, (vb.z() - cz) * scale);
+            if (hasTexture && m_textureId) glTexCoord2f(meshTexCoords_[face.c].x(), meshTexCoords_[face.c].y());
             glVertex3f((vc.x() - cx) * scale, (vc.y() - cy) * scale, (vc.z() - cz) * scale);
         }
         glEnd();
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glDisable(GL_TEXTURE_2D);
 
     // 第二遍：线框轮廓
         glDisable(GL_LIGHTING);
+        glDisable(GL_TEXTURE_2D);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         glLineWidth(1.0f);
-        glColor3f(0.3f, 0.3f, 0.35f);
+        glColor3f(hasTexture && m_textureId ? 0.08f : 0.3f,
+                  hasTexture && m_textureId ? 0.08f : 0.3f,
+                  hasTexture && m_textureId ? 0.1f : 0.35f);
         glBegin(GL_TRIANGLES);
         for (const auto &face : meshFaces_) {
             if (face.a < 0 || face.a >= meshVertices_.size() ||

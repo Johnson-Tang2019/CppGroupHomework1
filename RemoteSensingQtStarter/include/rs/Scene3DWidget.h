@@ -7,6 +7,8 @@
 #include <QMouseEvent>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
+#include <QImage>
+#include <QPointF>
 #include <QVector3D>
 #include <QVector>
 #include <QWheelEvent>
@@ -21,6 +23,7 @@ class Scene3DWidget : public QOpenGLWidget {
     void setMesh(const QVector<QVector3D>& vertices, const QVector<rs::Face>& faces);
     void setPoints(const QVector<QVector3D> &points);
     void setDem(const rs::DemLayer &dem, int maxGrid = 128);
+    void setDem(const rs::DemLayer &dem, const QImage &texture, int maxGrid = 128);
     void clearData();
     void fitToBounds();
 
@@ -35,10 +38,13 @@ class Scene3DWidget : public QOpenGLWidget {
   private:
     void markDlistDirty();
     void rebuildDisplayList();
+    void uploadTextureIfNeeded();
 
     QVector<QVector3D> m_points;
     QVector<QVector3D> meshVertices_;
+    QVector<QPointF> meshTexCoords_;
     QVector<rs::Face> meshFaces_;
+    QImage demTexture_;
     float m_rotX = 0, m_rotY = 0, m_zoom = 1.0f;
     QPoint m_lastPos;
     QVector3D m_center;
@@ -46,7 +52,9 @@ class Scene3DWidget : public QOpenGLWidget {
 
     // GPU 加速：显示列表 + 缓存包围盒
     GLuint m_meshDList = 0;
+    GLuint m_textureId = 0;
     bool m_dlistValid = false;
+    bool m_textureDirty = false;
     QVector3D m_cachedCenter;
     float m_cachedHalfExtent = 1.0f;
 };

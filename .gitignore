@@ -80,3 +80,8 @@ node_modules/
 RemoteSensingQtStarter/CMakePresets.json
 
 .claude/
+
+# ========== Codex 本地文件 ==========
+.codex/
+.agents/
+codex-plugin-backup-*/

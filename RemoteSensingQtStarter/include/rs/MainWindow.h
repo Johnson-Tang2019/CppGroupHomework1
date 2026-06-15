@@ -73,6 +73,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     // ============ 摄影测量/三维处理 ============
     void runDemReconstruction();  // 执行 DEM 重建（立体像对）
     void runOrthorectification(); // 执行正射影像校正
+    void runDemTextureMapping();  // 将遥感影像贴到 DEM 三维地形表面
 
     // ============ 三维点云/Mesh ============
     void exportPly();               // 导出选中的点云/Mesh 为 PLY
@@ -138,6 +139,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *featureAction_{};      // "ORB/SIFT 特征提取"菜单项
     QAction *demAction_{};          // "DEM 重建"菜单项
     QAction *orthoAction_{};        // "正射影像校正"菜单项
+    QAction *demTextureAction_{};   // "DEM 三维贴图"菜单项
     QAction *exportPlyAction_{};    // "导出 PLY"菜单项
     QAction *clearPointAction_{};   // "清空三维场景"菜单项
     QAction *downsampleAction_{};   // "体素降采样"菜单项
