@@ -42,6 +42,7 @@
 #include <vector> // std::vector，存储选中的图层索引列表
 
 class Scene3DWidget; // 前向声明 3D 点云预览控件
+class Panorama360Widget; // 前向声明 360 全景/街景查看控件
 
 namespace rs { // 遥感（Remote Sensing）命名空间
 
@@ -59,6 +60,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void openPointCloud();     // 加载点云数据（PLY/LAS/XYZ）
     void openMesh();           // 加载三维网格模型（OBJ/PLY）
     void openDem();            // 加载数字高程模型（GeoTIFF/ASCII Grid）
+    void openPanorama360();    // 加载 360 全景/街景图
 
     // ============ 数据管理 ============
     void deleteSelectedLayers(); // 删除图层树中当前选中的所有图层
@@ -126,6 +128,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QGraphicsView *imageView_{};     // 影像显示控件（二维影像标签页中的图形视图）
     QGraphicsScene *imageScene_{};   // 图形场景（管理所有图形项）
     Scene3DWidget *scene3DWidget_{}; // 三维点云预览控件（基于 QOpenGLWidget）
+    Panorama360Widget *panorama360Widget_{}; // 360 全景/街景查看控件
     QTabWidget *tabs_{};             // 标签页控件（切换"二维影像"和"三维场景"）
     QTextEdit *logEdit_{};           // 日志输出面板（底部）
     QLabel *coordLabel_{};           // 状态栏：光标经纬度/像素信息

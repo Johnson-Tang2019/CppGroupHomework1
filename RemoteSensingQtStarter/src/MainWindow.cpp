@@ -4,6 +4,7 @@
     #include "rs/RasterIO.h"
     #include "rs/RasterRenderDialog.h"
     #include "rs/Scene3DWidget.h"
+    #include "rs/Panorama360Widget.h"
     #include "rs/ExtendedAlgorithms.h"
     #include "rs/RemoteSensingIndices.h"
 
@@ -13,6 +14,7 @@
     #include <QJsonArray>
     #include <QJsonDocument>
     #include <QJsonObject>
+    #include <QImageReader>
     #include <QLineEdit>
     #include <QNetworkAccessManager>
     #include <QNetworkReply>
@@ -953,6 +955,10 @@
             QStringLiteral("DEM 三维贴图..."));
         connect(demTextureAction_, &QAction::triggered, this, &MainWindow::runDemTextureMapping);
 
+        auto *streetViewMenu = menuBar()->addMenu(QStringLiteral("街景/全景"));
+        connect(streetViewMenu->addAction(QStringLiteral("加载 360 街景图...")), &QAction::triggered,
+                this, &MainWindow::openPanorama360);
+
         // ---- "点云处理" 菜单 ----
         auto *pcMenu = menuBar()->addMenu(QStringLiteral("点云处理"));  // 创建"点云处理"菜单
         downsampleAction_ =
@@ -1007,9 +1013,11 @@
 
         // 三维场景页：QOpenGLWidget 点云预览
         scene3DWidget_ = new Scene3DWidget(tabs_);
+        panorama360Widget_ = new Panorama360Widget(tabs_);
 
         tabs_->addTab(imageView_, QStringLiteral("二维影像"));     // 添加"二维影像"标签页
         tabs_->addTab(scene3DWidget_, QStringLiteral("三维场景")); // 添加"三维场景"标签页
+        tabs_->addTab(panorama360Widget_, QStringLiteral("360街景"));
 
         auto *bottomTabs = new QTabWidget(right);
         bottomTabs->setMinimumHeight(180);
@@ -1677,6 +1685,73 @@
         }
         refreshLayerTree();
         updateActionStates();
+    }
+
+    void MainWindow::openPanorama360() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("加载 360 街景图"), QString(),
+            QStringLiteral("Panorama Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff);;All Files (*.*)"));
+        if (path.isEmpty()) {
+            return;
+        }
+
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        reader.setDecideFormatFromContent(true);
+        QImage image = reader.read();
+        QString loadDetail = QStringLiteral("Qt ImageReader");
+
+        if (image.isNull()) {
+            const QString qtError = reader.errorString();
+            appendLog(QStringLiteral("Qt 读取 360 街景图失败：%1；尝试使用 GDAL 兜底。").arg(qtError));
+
+            try {
+                const auto raster = io::loadRasterDataset(path);
+                if (raster && raster->bandCount() >= 3) {
+                    image = io::renderRgbComposite(*raster, 0, 1, 2);
+                    loadDetail = QStringLiteral("GDAL RGB fallback");
+                } else if (raster && raster->bandCount() >= 1) {
+                    image = io::renderSingleBandGray(*raster, 0);
+                    loadDetail = QStringLiteral("GDAL gray fallback");
+                }
+            } catch (const std::exception &e) {
+                appendLog(QStringLiteral("GDAL 兜底读取也失败：%1").arg(QString::fromUtf8(e.what())));
+            }
+
+            if (image.isNull()) {
+                QStringList formatNames;
+                for (const QByteArray &format : QImageReader::supportedImageFormats()) {
+                    formatNames << QString::fromLatin1(format);
+                }
+                const QString formats = formatNames.join(QStringLiteral(", "));
+                QMessageBox::warning(
+                    this, QStringLiteral("加载失败"),
+                    QStringLiteral("无法读取该图片文件。\n\nQt 错误：%1\n\n当前 Qt 可用图片格式：%2\n\n"
+                                   "请确认运行目录下存在 imageformats/qjpeg 或 qjpegd 插件。")
+                        .arg(qtError, formats));
+                return;
+            }
+        }
+
+        const QFileInfo info(path);
+        if (image.height() > 0) {
+            const double ratio = static_cast<double>(image.width()) / static_cast<double>(image.height());
+            if (std::abs(ratio - 2.0) > 0.25) {
+                QMessageBox::information(
+                    this, QStringLiteral("图片比例提示"),
+                    QStringLiteral("常见 360° 等距柱状全景图比例约为 2:1。\n"
+                                   "当前图片比例为 %1:1，仍会按 360° 全景方式显示。")
+                        .arg(ratio, 0, 'f', 2));
+            }
+        }
+
+        panorama360Widget_->setPanorama(image, info.fileName());
+        tabs_->setCurrentWidget(panorama360Widget_);
+        appendLog(QStringLiteral("已加载 360 街景图：%1（%2x%3）")
+                      .arg(info.fileName())
+                      .arg(image.width())
+                      .arg(image.height()));
+        appendLog(QStringLiteral("360 街景图读取方式：%1").arg(loadDetail));
     }
 
     // 删除图层树中选中的图层

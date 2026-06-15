@@ -44,6 +44,7 @@ add_executable(RemoteSensingQtStarter WIN32
     src/RemoteSensingIndices.cpp
     src/RasterIO.cpp
     src/RasterRenderDialog.cpp
+    src/Panorama360Widget.cpp
     src/Scene3DWidget.cpp
     src/pcmesh/PcMeshReconstruction.cpp
     include/rs/DataObject.h
@@ -59,6 +60,7 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/RasterRenderDialog.h
     include/rs/MainWindow.h
     include/rs/SplashScreen.h
+    include/rs/Panorama360Widget.h
     include/rs/Scene3DWidget.h    #增加
     include/rs/pcmesh/PcMeshReconstruction.h
 )
@@ -69,6 +71,38 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/resources/app.ico"
 
 target_include_directories(RemoteSensingQtStarter PRIVATE include)
 target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets ${QT_PACKAGE}::Concurrent ${QT_PACKAGE}::Network opengl32)
+
+# 编译完成后自动部署运行所需 DLL 和 Qt 插件。
+# - TARGET_RUNTIME_DLLS 复制直接链接库的 DLL（Qt/GDAL/OpenCV 等，CMake 3.21+ 支持）
+# - windeployqt 复制 Qt 平台插件、imageformats/qjpeg 等插件，否则 JPG/PNG 可能无法读取
+if(WIN32)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+        add_custom_command(TARGET RemoteSensingQtStarter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_RUNTIME_DLLS:RemoteSensingQtStarter>
+                    $<TARGET_FILE_DIR:RemoteSensingQtStarter>
+            COMMAND_EXPAND_LISTS
+            COMMENT "Copying runtime DLLs for RemoteSensingQtStarter")
+    endif()
+
+    get_target_property(QT_QMAKE_EXECUTABLE ${QT_PACKAGE}::qmake IMPORTED_LOCATION)
+    get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXECUTABLE
+        NAMES windeployqt
+        HINTS "${QT_BIN_DIR}")
+
+    if(WINDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET RemoteSensingQtStarter POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                    $<$<CONFIG:Debug>:--debug>
+                    $<$<NOT:$<CONFIG:Debug>>:--release>
+                    --no-translations
+                    "$<TARGET_FILE:RemoteSensingQtStarter>"
+            COMMENT "Deploying Qt runtime and plugins with windeployqt")
+    else()
+        message(WARNING "windeployqt not found. Qt image/platform plugins will not be copied automatically.")
+    endif()
+endif()
 
 if(RS_HAVE_OPENCV)
     target_compile_definitions(RemoteSensingQtStarter PRIVATE RS_WITH_OPENCV=1)
