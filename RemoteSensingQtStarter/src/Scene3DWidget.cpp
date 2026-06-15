@@ -1,7 +1,8 @@
 #include "rs/Scene3DWidget.h"
-
 #include <GL/gl.h>
+#include <QMouseEvent>
 #include <QShowEvent>
+#include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 
@@ -49,8 +50,6 @@ static void computeBounds(const QVector<QVector3D> &points,
     halfExtent = maxDist > 0 ? maxDist : 1.0f;
 }
 
-} // namespace
-
 Scene3DWidget::Scene3DWidget(QWidget *parent) : QOpenGLWidget(parent) {}
 
 Scene3DWidget::~Scene3DWidget() {
@@ -78,9 +77,8 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
 
 void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces) {
     meshVertices_ = vertices;
-    meshFaces_ = subsampleFaces(faces, kMaxDisplayFaces);
-    drawWireframe_ = meshFaces_.size() <= kWireframeFaceLimit;
-    if (!vertices.isEmpty())
+    meshFaces_ = faces;
+    if (!vertices.isEmpty()) {
         m_points.clear();
     }
     markDlistDirty();
@@ -142,78 +140,11 @@ void Scene3DWidget::clearData() {
     update();
 }
 
-void Scene3DWidget::updateBounds() {
-    computeBounds(m_points, meshVertices_, m_center, m_halfExtent);
-}
-
-void Scene3DWidget::invalidateGpu() {
-    gpuDirty_ = true;
-}
-
-void Scene3DWidget::rebuildGpuBuffers() {
-    const float scale = (m_halfExtent > 0) ? (1.0f / m_halfExtent) : 1.0f;
-
-    if (!m_points.isEmpty()) {
-        if (!pointVbo_.isCreated())
-            pointVbo_.create();
-        pointVbo_.bind();
-        QVector<float> data;
-        data.reserve(m_points.size() * 3);
-        for (const auto &p : m_points) {
-            data.append((p.x() - m_center.x()) * scale);
-            data.append((p.y() - m_center.y()) * scale);
-            data.append((p.z() - m_center.z()) * scale);
-        }
-        pointDrawCount_ = m_points.size();
-        pointVbo_.allocate(data.constData(), data.size() * static_cast<int>(sizeof(float)));
-        pointVbo_.release();
-    } else {
-        pointDrawCount_ = 0;
-    }
-
-    const bool hasMeshFaces = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
-    if (hasMeshFaces) {
-        if (!meshVbo_.isCreated())
-            meshVbo_.create();
-        meshVbo_.bind();
-        QVector<float> data;
-        data.reserve(meshFaces_.size() * 18);
-        for (const auto &face : meshFaces_) {
-            if (face.a < 0 || face.a >= meshVertices_.size() || face.b < 0 ||
-                face.b >= meshVertices_.size() || face.c < 0 || face.c >= meshVertices_.size())
-                continue;
-            const QVector3D &va = meshVertices_[face.a];
-            const QVector3D &vb = meshVertices_[face.b];
-            const QVector3D &vc = meshVertices_[face.c];
-            const QVector3D n = faceNormal(va, vb, vc);
-            const float shade = 0.4f + 0.6f * std::abs(n.z());
-            const float cr = 1.0f * shade;
-            const float cg = 0.55f * shade;
-            const float cb = 0.75f * shade;
-            const QVector3D verts[3] = {va, vb, vc};
-            for (const auto &v : verts) {
-                data.append((v.x() - m_center.x()) * scale);
-                data.append((v.y() - m_center.y()) * scale);
-                data.append((v.z() - m_center.z()) * scale);
-                data.append(cr);
-                data.append(cg);
-                data.append(cb);
-            }
-        }
-        meshTriangleVertexCount_ = data.size() / 6;
-        meshVbo_.allocate(data.constData(), data.size() * static_cast<int>(sizeof(float)));
-        meshVbo_.release();
-    } else {
-        meshTriangleVertexCount_ = 0;
-    }
-
-    gpuDirty_ = false;
-}
-
 void Scene3DWidget::showEvent(QShowEvent *event) {
     QOpenGLWidget::showEvent(event);
     if (!m_points.isEmpty() || (!meshVertices_.isEmpty() && !meshFaces_.isEmpty())) {
         update();
+    }
 }
 
 void Scene3DWidget::initializeGL() {
@@ -232,12 +163,12 @@ void Scene3DWidget::initializeGL() {
     glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
     glPointSize(2.0f);
 
-    // OpenGL context ?????????????? paintGL ?????
+    // OpenGL context 可能被重建，让显示列表在下次 paintGL 时重新编译
     m_dlistValid = false;
 }
 
 void Scene3DWidget::rebuildDisplayList() {
-    // ????????
+    // 删除旧的显示列表
     if (m_meshDList) {
         glDeleteLists(m_meshDList, 1);
         m_meshDList = 0;
@@ -247,13 +178,13 @@ void Scene3DWidget::rebuildDisplayList() {
     const bool hasMeshVerticesOnly = !meshVertices_.isEmpty() && meshFaces_.isEmpty();
 
     if (!hasMeshFaces && !hasMeshVerticesOnly) {
-        // ?? mesh ???????????? paintGL ???? computeBounds
+    // 没有 mesh 数据也要缓存包围盒，这样 paintGL 不会重复 computeBounds
         computeBounds(m_points, meshVertices_, m_cachedCenter, m_cachedHalfExtent);
         m_dlistValid = true;
         return;
     }
 
-    // ?????????????????????
+    // 预计算法线（只在重建时做一次，而不是每帧）
     QVector<QVector3D> normals;
     if (hasMeshFaces) {
         normals.reserve(meshFaces_.size());
@@ -270,7 +201,7 @@ void Scene3DWidget::rebuildDisplayList() {
         }
     }
 
-    // ?????
+    // 缓存包围盒
     computeBounds(m_points, meshVertices_, m_cachedCenter, m_cachedHalfExtent);
 
     const float scale = (m_cachedHalfExtent > 0) ? (1.0f / m_cachedHalfExtent) : 1.0f;
@@ -278,12 +209,12 @@ void Scene3DWidget::rebuildDisplayList() {
     const float cy = m_cachedCenter.y();
     const float cz = m_cachedCenter.z();
 
-    // ?????? ?? ??? mesh ????????? GPU ?
+    // 编译显示列表 —— 把整个 mesh 几何体一次性录制到 GPU 端
     m_meshDList = glGenLists(1);
     glNewList(m_meshDList, GL_COMPILE);
 
     if (hasMeshFaces) {
-        // ????????? + ??
+    // 第一遍：填充三角形 + 光照
         glEnable(GL_LIGHTING);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         glBegin(GL_TRIANGLES);
@@ -308,7 +239,7 @@ void Scene3DWidget::rebuildDisplayList() {
         }
         glEnd();
 
-        // ????????
+    // 第二遍：线框轮廓
         glDisable(GL_LIGHTING);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         glLineWidth(1.0f);
@@ -329,10 +260,10 @@ void Scene3DWidget::rebuildDisplayList() {
         glEnd();
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     } else if (hasMeshVerticesOnly) {
+        glDisable(GL_LIGHTING);
         glPointSize(3.0f);
-        glColor3f(0.85f, 0.35f, 0.55f);
         glBegin(GL_POINTS);
-        const float scale = (m_halfExtent > 0) ? (1.0f / m_halfExtent) : 1.0f;
+        glColor3f(0.85f, 0.35f, 0.55f);
         for (const auto &v : meshVertices_) {
             glVertex3f((v.x() - cx) * scale, (v.y() - cy) * scale, (v.z() - cz) * scale);
         }
@@ -345,7 +276,7 @@ void Scene3DWidget::rebuildDisplayList() {
 }
 
 void Scene3DWidget::paintGL() {
-    // ??????????????? context ????????
+    // 确保显示列表已编译（数据变更或 context 重建后自动重建）
     if (!m_dlistValid) {
         rebuildDisplayList();
     }
@@ -356,11 +287,11 @@ void Scene3DWidget::paintGL() {
     glClearColor(1.0f, 0.94f, 0.96f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // ????????
+    // 使用缓存的包围盒
     const float halfExtent = m_cachedHalfExtent;
     const QVector3D &center = m_cachedCenter;
 
-    // ????
+    // 投影矩阵
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     const float aspect = static_cast<float>(width()) / std::max(height(), 1);
@@ -375,7 +306,7 @@ void Scene3DWidget::paintGL() {
     projMatrix[14] = 2 * zFar * zNear / (zNear - zFar);
     glMultMatrixf(projMatrix);
 
-    // ??????
+    // 模型视图矩阵
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
@@ -385,7 +316,7 @@ void Scene3DWidget::paintGL() {
     glRotatef(m_rotX, 1.0f, 0.0f, 0.0f);
     glRotatef(m_rotY, 0.0f, 1.0f, 0.0f);
 
-    // ???
+    // 坐标轴
     glDisable(GL_LIGHTING);
     glBegin(GL_LINES);
     const float axisLen = halfExtent * 1.5f;
@@ -400,12 +331,12 @@ void Scene3DWidget::paintGL() {
     glVertex3f(center.x() * scale, center.y() * scale, (center.z() + axisLen) * scale);
     glEnd();
 
-    // ???? glCallList ???? mesh?GPU ????
+    // 通过一次 glCallList 绘制整个 mesh（GPU 加速）
     if (hasMesh) {
         glCallList(m_meshDList);
     }
 
-    // ?????????????????? mesh ?????????????????
+    // 点云（点云通常较小，直接绘制即可）
     if (hasPoints) {
         glEnable(GL_LIGHTING);
         glBegin(GL_POINTS);
@@ -432,7 +363,7 @@ void Scene3DWidget::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void Scene3DWidget::fitToBounds() {
-    // ????????????????????
+    // 用缓存的包围盒（如果有效），否则重新计算
     if (!m_dlistValid) {
         computeBounds(m_points, meshVertices_, m_cachedCenter, m_cachedHalfExtent);
     }
@@ -441,7 +372,6 @@ void Scene3DWidget::fitToBounds() {
     m_zoom = 1.0f;
     m_rotX = 0;
     m_rotY = 0;
-    invalidateGpu();
     update();
 }
 

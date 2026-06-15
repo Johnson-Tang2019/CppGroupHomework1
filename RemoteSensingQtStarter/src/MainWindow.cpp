@@ -6,10 +6,8 @@
     #include "rs/Scene3DWidget.h"
     #include "rs/ExtendedAlgorithms.h"
     #include "rs/RemoteSensingIndices.h"
-    #include "rs/pcmesh/PcMeshReconstruction.h"
 
     #include <QApplication>
-    #include <QBuffer>
     #include <QFutureWatcher>
     #include <QHBoxLayout>
     #include <QJsonArray>
@@ -101,10 +99,6 @@
             if (!event) {
                 return;
             }
-            if (!(event->modifiers() & Qt::ControlModifier)) {
-                event->ignore();
-                return;
-            }
 
             const int dy = event->angleDelta().y();
             if (dy == 0) {
@@ -136,41 +130,26 @@
         }
     };
 
-        class DomesticVisionChatPanel final : public QWidget {
-      public:
-        explicit DomesticVisionChatPanel(std::function<QString()> contextProvider,
-                                         std::function<QImage()> imageProvider,
-                                         QWidget *parent = nullptr)
-            : QWidget(parent),
-              contextProvider_(std::move(contextProvider)),
-              imageProvider_(std::move(imageProvider)) {
+    class DeepSeekChatPanel final : public QWidget {
+    public:
+        explicit DeepSeekChatPanel(std::function<QString()> contextProvider,
+                                QWidget *parent = nullptr)
+            : QWidget(parent), contextProvider_(std::move(contextProvider)) {
             auto *layout = new QVBoxLayout(this);
             layout->setContentsMargins(6, 6, 6, 6);
 
             auto *keyRow = new QHBoxLayout;
-            keyRow->addWidget(new QLabel(QStringLiteral("国产视觉 Key:"), this));
+            keyRow->addWidget(new QLabel(QStringLiteral("API Key:"), this));
             apiKeyEdit_ = new QLineEdit(this);
             apiKeyEdit_->setEchoMode(QLineEdit::Password);
-            apiKeyEdit_->setPlaceholderText(QStringLiteral("ARK_API_KEY / MOONSHOT_API_KEY"));
-            QByteArray domesticKey = qgetenv("ARK_API_KEY");
-            if (domesticKey.isEmpty()) {
-                domesticKey = qgetenv("MOONSHOT_API_KEY");
-            }
-            apiKeyEdit_->setText(QString::fromUtf8(domesticKey));
+            apiKeyEdit_->setPlaceholderText(QStringLiteral("sk-... or DEEPSEEK_API_KEY"));
+            apiKeyEdit_->setText(QString::fromUtf8(qgetenv("DEEPSEEK_API_KEY")));
             keyRow->addWidget(apiKeyEdit_, 1);
             layout->addLayout(keyRow);
 
-            auto *visionKeyRow = new QHBoxLayout;
-            visionKeyRow->addWidget(new QLabel(QStringLiteral("接口 URL:"), this));
-            openAiKeyEdit_ = new QLineEdit(this);
-            openAiKeyEdit_->setPlaceholderText(QStringLiteral("OpenAI-compatible chat/completions URL"));
-            openAiKeyEdit_->setText(QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions"));
-            visionKeyRow->addWidget(openAiKeyEdit_, 1);
-            layout->addLayout(visionKeyRow);
-
             auto *modelRow = new QHBoxLayout;
-            modelRow->addWidget(new QLabel(QStringLiteral("模型/Endpoint:"), this));
-            modelEdit_ = new QLineEdit(QStringLiteral("ep-xxxxxxxxxxxxxxxx"), this);
+            modelRow->addWidget(new QLabel(QStringLiteral("Model:"), this));
+            modelEdit_ = new QLineEdit(QStringLiteral("deepseek-chat"), this);
             modelRow->addWidget(modelEdit_, 1);
             contextButton_ = new QPushButton(QStringLiteral("Insert File Info"), this);
             modelRow->addWidget(contextButton_);
@@ -179,7 +158,7 @@
             chatEdit_ = new QTextEdit(this);
             chatEdit_->setReadOnly(true);
             chatEdit_->setMinimumHeight(150);
-            chatEdit_->setPlaceholderText(QStringLiteral("Ask the domestic vision model to identify land-cover objects from the selected image."));
+            chatEdit_->setPlaceholderText(QStringLiteral("Ask DeepSeek about the imported files, land-cover clues, C++, Qt, or processing workflow."));
             layout->addWidget(chatEdit_, 8);
 
             inputEdit_ = new QTextEdit(this);
@@ -207,12 +186,12 @@
             });
         }
 
-      private:
+    private:
         void resetHistory() {
             history_ = QJsonArray{
                 QJsonObject{{QStringLiteral("role"), QStringLiteral("system")},
                             {QStringLiteral("content"),
-                             QStringLiteral("You are a helpful assistant for a Qt/C++ remote sensing application. Answer clearly and practically.")}}};
+                            QStringLiteral("You are a helpful assistant for a Qt/C++ remote sensing application. Answer clearly and practically.")}}};
         }
 
         QString currentLayerContext() const {
@@ -223,30 +202,6 @@
             return context.isEmpty() ? QStringLiteral("No imported layer is available.") : context;
         }
 
-        QImage currentVisionImage() const {
-            if (!imageProvider_) {
-                return {};
-            }
-            QImage image = imageProvider_();
-            if (image.isNull()) {
-                return {};
-            }
-            const int maxSide = 768;
-            if (image.width() > maxSide || image.height() > maxSide) {
-                image = image.scaled(maxSide, maxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            }
-            return image.convertToFormat(QImage::Format_RGB888);
-        }
-
-        QString imageToJpegDataUrl(const QImage &image) const {
-            QByteArray bytes;
-            QBuffer buffer(&bytes);
-            buffer.open(QIODevice::WriteOnly);
-            image.save(&buffer, "JPEG", 75);
-            return QStringLiteral("data:image/jpeg;base64,%1")
-                .arg(QString::fromLatin1(bytes.toBase64()));
-        }
-
         void appendMessage(const QString &speaker, const QString &text) {
             chatEdit_->append(QStringLiteral("<b>%1:</b>").arg(speaker.toHtmlEscaped()));
             chatEdit_->append(text.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>")));
@@ -254,31 +209,15 @@
         }
 
         void sendPrompt() {
-            sendVisionPrompt();
-        }
-
-        void sendVisionPrompt() {
             const QString apiKey = apiKeyEdit_->text().trimmed();
-            const QString apiUrl = openAiKeyEdit_->text().trimmed().isEmpty()
-                                       ? QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions")
-                                       : openAiKeyEdit_->text().trimmed();
             const QString prompt = inputEdit_->toPlainText().trimmed();
-            const QString model = modelEdit_->text().trimmed();
-            const QImage image = currentVisionImage();
+            const QString model = modelEdit_->text().trimmed().isEmpty()
+                                    ? QStringLiteral("deepseek-chat")
+                                    : modelEdit_->text().trimmed();
 
             if (apiKey.isEmpty()) {
-                QMessageBox::warning(this, QStringLiteral("国产视觉 API Key"),
-                                     QStringLiteral("Please enter your model API key, or set ARK_API_KEY / MOONSHOT_API_KEY."));
-                return;
-            }
-            if (model.isEmpty() || model == QStringLiteral("ep-xxxxxxxxxxxxxxxx")) {
-                QMessageBox::warning(this, QStringLiteral("模型/Endpoint"),
-                                     QStringLiteral("Please enter your model name or endpoint ID, for example a Volcengine Ark endpoint like ep-xxxx."));
-                return;
-            }
-            if (image.isNull()) {
-                QMessageBox::warning(this, QStringLiteral("Vision input"),
-                                     QStringLiteral("Please select a raster layer with a display image first."));
+                QMessageBox::warning(this, QStringLiteral("DeepSeek API Key"),
+                                    QStringLiteral("Please enter your DeepSeek API key or set DEEPSEEK_API_KEY."));
                 return;
             }
             if (prompt.isEmpty()) {
@@ -286,77 +225,68 @@
             }
 
             inputEdit_->clear();
-            appendMessage(QStringLiteral("You"), prompt + QStringLiteral("\n[Current selected image attached]"));
+            appendMessage(QStringLiteral("You"), prompt);
             sendButton_->setEnabled(false);
-            sendButton_->setText(QStringLiteral("Sending to vision model..."));
+            sendButton_->setText(QStringLiteral("Sending..."));
 
             const QString layerContext = currentLayerContext();
-            const QString visionPrompt =
-                QStringLiteral("你是遥感影像视觉解译助手。请直接观察附图，并结合下列导入图层元数据回答用户问题。"
-                               "重点识别可能的地物类别，例如建筑、道路、水体、植被、裸地、阴影、停车场等。"
-                               "如果无法确认具体建筑名称，请说明原因，但仍要给出基于图像可见特征的地物判断。\n\n"
-                               "导入图层元数据：\n%1\n\n用户问题：%2")
+            const QString promptWithContext =
+                QStringLiteral("当前程序中已导入的数据如下。请只基于这些信息和用户问题回答；如果仅凭元数据无法可靠识别具体地物，请明确说明不确定性，并给出可验证的判断依据。\n\n%1\n\n用户问题：%2")
                     .arg(layerContext, prompt);
 
-            QJsonArray content;
-            content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
-                                       {QStringLiteral("text"), visionPrompt}});
-            content.append(QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("image_url")},
-                {QStringLiteral("image_url"),
-                 QJsonObject{{QStringLiteral("url"), imageToJpegDataUrl(image)}}}});
+            QJsonArray requestMessages = history_;
+            requestMessages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                            {QStringLiteral("content"), promptWithContext}});
 
             QJsonObject body;
             body.insert(QStringLiteral("model"), model);
-            body.insert(QStringLiteral("messages"),
-                        QJsonArray{QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
-                                               {QStringLiteral("content"), content}}});
-            body.insert(QStringLiteral("temperature"), 0.2);
+            body.insert(QStringLiteral("messages"), requestMessages);
+            body.insert(QStringLiteral("temperature"), 0.7);
             body.insert(QStringLiteral("stream"), false);
 
-            QNetworkRequest request{QUrl(apiUrl)};
+            QNetworkRequest request(QUrl(QStringLiteral("https://api.deepseek.com/chat/completions")));
             request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
             request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
 
             auto *reply = network_.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
             connect(reply, &QNetworkReply::finished, this, [this, reply, prompt]() {
-                handleVisionReply(reply, prompt);
+                handleReply(reply, prompt);
                 reply->deleteLater();
             });
         }
 
-        void handleVisionReply(QNetworkReply *reply, const QString &prompt) {
+        void handleReply(QNetworkReply *reply, const QString &prompt) {
             sendButton_->setEnabled(true);
             sendButton_->setText(QStringLiteral("Send"));
 
             const QByteArray responseBody = reply->readAll();
             if (reply->error() != QNetworkReply::NoError) {
-                appendMessage(QStringLiteral("Vision Error"),
-                              reply->errorString() + QStringLiteral("\n") +
-                                  QString::fromUtf8(responseBody));
+                appendMessage(QStringLiteral("Error"),
+                            reply->errorString() + QStringLiteral("\n") +
+                                QString::fromUtf8(responseBody));
                 return;
             }
 
             QJsonParseError parseError{};
             const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
             if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-                appendMessage(QStringLiteral("Vision Error"),
-                              QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
+                appendMessage(QStringLiteral("Error"),
+                            QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
                 return;
             }
 
             const QJsonObject root = doc.object();
             if (root.contains(QStringLiteral("error"))) {
                 const QJsonObject error = root.value(QStringLiteral("error")).toObject();
-                appendMessage(QStringLiteral("Vision Error"),
-                              error.value(QStringLiteral("message"))
-                                  .toString(QString::fromUtf8(responseBody)));
+                appendMessage(QStringLiteral("Error"),
+                            error.value(QStringLiteral("message"))
+                                .toString(QString::fromUtf8(responseBody)));
                 return;
             }
 
             const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
             if (choices.isEmpty()) {
-                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("The vision model returned no choices."));
+                appendMessage(QStringLiteral("Error"), QStringLiteral("DeepSeek returned no choices."));
                 return;
             }
 
@@ -364,7 +294,7 @@
                 choices.first().toObject().value(QStringLiteral("message")).toObject();
             const QString answer = message.value(QStringLiteral("content")).toString().trimmed();
             if (answer.isEmpty()) {
-                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("The vision model returned an empty answer."));
+                appendMessage(QStringLiteral("Error"), QStringLiteral("DeepSeek returned an empty answer."));
                 return;
             }
 
@@ -372,11 +302,10 @@
                                         {QStringLiteral("content"), prompt}});
             history_.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("assistant")},
                                         {QStringLiteral("content"), answer}});
-            appendMessage(QStringLiteral("国产视觉模型"), answer);
+            appendMessage(QStringLiteral("DeepSeek"), answer);
         }
 
         QLineEdit *apiKeyEdit_{};
-        QLineEdit *openAiKeyEdit_{};
         QLineEdit *modelEdit_{};
         QTextEdit *chatEdit_{};
         QTextEdit *inputEdit_{};
@@ -386,7 +315,6 @@
         QNetworkAccessManager network_;
         QJsonArray history_;
         std::function<QString()> contextProvider_;
-        std::function<QImage()> imageProvider_;
     };
 
     quint8 readUInt8At(QFile &file, qint64 offset) {
@@ -571,29 +499,168 @@
         return static_cast<qint32>(value);
     }
 
+    struct LoadedMeshData {
+        QVector<QVector3D> vertices;
+        QVector<Face> faces;
+    };
+
+    LoadedMeshData loadMeshFromPly(const QString &path) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            throw std::runtime_error("无法打开 PLY 文件");
+        }
+        const QByteArray allData = file.readAll();
+        file.close();
+
+        const int headerEndPos = allData.indexOf("end_header");
+        if (headerEndPos < 0) {
+            throw std::runtime_error("PLY 缺少 end_header");
+        }
+        const int nlPos = allData.indexOf('\n', headerEndPos);
+        const int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
+
+        bool isAscii = false;
+        int vertexCount = 0;
+        int faceCount = 0;
+        int vertexPropCount = 0;
+        bool inVertex = false;
+
+        QTextStream headerStream(allData.left(headerBytes));
+        while (!headerStream.atEnd()) {
+            const QString line = headerStream.readLine().trimmed();
+            if (line.startsWith(QLatin1String("element vertex"))) {
+                vertexCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                inVertex = true;
+                continue;
+            }
+            if (line.startsWith(QLatin1String("element face"))) {
+                faceCount = line.section(QLatin1Char(' '), 2, 2).toInt();
+                inVertex = false;
+                continue;
+            }
+            if (inVertex && line.startsWith(QLatin1String("property "))) {
+                ++vertexPropCount;
+            }
+            if (line.contains(QLatin1String("format ascii"))) {
+                isAscii = true;
+            }
+        }
+
+        if (vertexCount <= 0) {
+            throw std::runtime_error("PLY 顶点数量无效");
+        }
+
+        LoadedMeshData mesh;
+        if (isAscii) {
+            QTextStream in(allData);
+            while (!in.atEnd()) {
+                if (in.readLine().trimmed() == QLatin1String("end_header")) {
+                    break;
+                }
+            }
+
+            mesh.vertices.reserve(vertexCount);
+            for (int i = 0; i < vertexCount && !in.atEnd(); ++i) {
+                const QString line = in.readLine().trimmed();
+                if (line.isEmpty()) {
+                    --i;
+                    continue;
+                }
+                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() < 3) {
+                    continue;
+                }
+                mesh.vertices.append(
+                    QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+            }
+
+            mesh.faces.reserve(faceCount);
+            for (int i = 0; i < faceCount && !in.atEnd(); ++i) {
+                const QString line = in.readLine().trimmed();
+                if (line.isEmpty()) {
+                    --i;
+                    continue;
+                }
+                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() < 4) {
+                    continue;
+                }
+                const int n = parts[0].toInt();
+                if (n < 3 || parts.size() < n + 1) {
+                    continue;
+                }
+                const int i0 = parts[1].toInt();
+                for (int t = 1; t < n - 1; ++t) {
+                    Face face;
+                    face.a = i0;
+                    face.b = parts[1 + t].toInt();
+                    face.c = parts[2 + t].toInt();
+                    mesh.faces.append(face);
+                }
+            }
+        } else {
+            if (vertexPropCount < 3) {
+                throw std::runtime_error("PLY 顶点属性数不足");
+            }
+            const int vertexSize = vertexPropCount * static_cast<int>(sizeof(float));
+            int offset = headerBytes;
+
+            mesh.vertices.reserve(vertexCount);
+            for (int i = 0; i < vertexCount; ++i) {
+                if (offset + vertexSize > allData.size()) {
+                    break;
+                }
+                const float *f = reinterpret_cast<const float *>(allData.constData() + offset);
+                mesh.vertices.append(QVector3D(f[0], f[1], f[2]));
+                offset += vertexSize;
+            }
+
+            mesh.faces.reserve(faceCount);
+            for (int i = 0; i < faceCount; ++i) {
+                if (offset >= allData.size()) {
+                    break;
+                }
+                const quint8 n = static_cast<quint8>(allData[offset++]);
+                if (n < 3 || offset + n * 4 > allData.size()) {
+                    break;
+                }
+                const int i0 = readInt32LeBytes(allData.constData() + offset);
+                for (int t = 1; t < n - 1; ++t) {
+                    Face face;
+                    face.a = i0;
+                    face.b = readInt32LeBytes(allData.constData() + offset + t * 4);
+                    face.c = readInt32LeBytes(allData.constData() + offset + (t + 1) * 4);
+                    mesh.faces.append(face);
+                }
+                offset += n * 4;
+            }
+        }
+
+        return mesh;
+    }
+
     } // namespace
 
     // 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
     MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
-        setWindowTitle(QStringLiteral("Remote Sensing Qt Starter"));
-        createMenus();
-        createUi();
+        setWindowTitle(QStringLiteral("Remote Sensing Qt Starter")); // 设置窗口标题
+        createMenus();                                               // 构建菜单栏
+        createUi();                                                  // 构建界面控件
         appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL "
-                                "多波段、参数化算法、DEM/正射流程的工程骨架。"));
-        updateActionStates();
+                                "多波段、参数化算法、DEM/正射流程的工程骨架。")); // 记录启动日志
+        updateActionStates(); // 初始化菜单项的启用状态（刚启动时所有菜单应该禁用）
     }
 
     // 构建菜单栏：数据、影像处理、摄影测量/三维
     void MainWindow::createMenus() {
         // ---- "数据" 菜单 ----
         auto *dataMenu = menuBar()->addMenu(QStringLiteral("数据")); // 创建"数据"菜单
-        connect(dataMenu->addAction(QStringLiteral("从 PLY 提取 Mesh...")), &QAction::triggered, this,
-                &MainWindow::openPlyExtractMesh);
-        dataMenu->addSeparator();
         connect(dataMenu->addAction(QStringLiteral("加载遥感影像(GDAL，可多选)")), &QAction::triggered,
                 this, &MainWindow::openRasterDatasets); // 添加"加载遥感影像"并连接点击信号
         connect(dataMenu->addAction(QStringLiteral("加载点云")), &QAction::triggered, this,
                 &MainWindow::openPointCloud); // 添加"加载点云"并连接
+        connect(dataMenu->addAction(QStringLiteral("加载 Mesh")), &QAction::triggered, this,
+                &MainWindow::openMesh); // 添加"加载 Mesh"并连接
         connect(dataMenu->addAction(QStringLiteral("加载 DEM")), &QAction::triggered, this,
                 &MainWindow::openDem); // 添加"加载 DEM"并连接
         dataMenu->addSeparator();      // 添加分隔线，将加载与删除操作分开
@@ -894,9 +961,6 @@
         pcToDemAction_ =
             pcMenu->addAction(QStringLiteral("点云转 DEM...")); // 添加"点云转 DEM"并保存指针
         connect(pcToDemAction_, &QAction::triggered, this, &MainWindow::runPointCloudToDem);
-        pcMeshReconAction_ = pcMenu->addAction(QStringLiteral("点云 Mesh 重建..."));
-        connect(pcMeshReconAction_, &QAction::triggered, this,
-                &MainWindow::runPointCloudMeshReconstruction);
         exportPlyAction_ =
             pcMenu->addAction(QStringLiteral("导出 PLY...")); // 添加"导出 PLY"并保存指针
         connect(exportPlyAction_, &QAction::triggered, this, &MainWindow::exportPly);
@@ -929,10 +993,9 @@
         tabs_ = new QTabWidget(right);          // 创建标签页控件
         imageScene_ = new QGraphicsScene(this); // 创建图形场景（管理所有图形项）
 
-        imageView_ = new ZoomableGraphicsView(imageScene_, tabs_);
-        imageView_->setDragMode(QGraphicsView::ScrollHandDrag);
-        imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
-        imageView_->setResizeAnchor(QGraphicsView::AnchorUnderMouse);
+        imageView_ = new ZoomableGraphicsView(imageScene_, tabs_); // 创建图形视图（显示场景内容）
+        imageView_->setDragMode(QGraphicsView::ScrollHandDrag); // 设置拖拽模式：手型抓手平移
+        imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse); // 缩放时以鼠标位置为中心
         imageView_->setMouseTracking(true);
         if (imageView_->viewport()) {
             imageView_->viewport()->setMouseTracking(true);
@@ -952,7 +1015,7 @@
         logEdit_->setReadOnly(true);
         bottomTabs->addTab(logEdit_, QStringLiteral("Log"));
 
-        auto *aiPanel = new DomesticVisionChatPanel([this]() {
+        auto *aiPanel = new DeepSeekChatPanel([this]() {
             QStringList lines;
             lines << QStringLiteral("Imported layer count: %1").arg(layers_.size());
             const auto selected = selectedLayerIndices();
@@ -975,7 +1038,7 @@
                     typeName = QStringLiteral("Point cloud");
                     break;
                 case DataType::Mesh:
-                    typeName = QStringLiteral("Point cloud mesh (V,E,F)");
+                    typeName = QStringLiteral("Mesh");
                     break;
                 case DataType::Dem:
                     typeName = QStringLiteral("DEM");
@@ -997,12 +1060,12 @@
                     lines << QStringLiteral("- Projection: %1").arg(raster->projection().left(240));
                     const auto gt = raster->geoTransform();
                     lines << QStringLiteral("- GeoTransform: [%1, %2, %3, %4, %5, %6]")
-                                 .arg(gt[0])
-                                 .arg(gt[1])
-                                 .arg(gt[2])
-                                 .arg(gt[3])
-                                 .arg(gt[4])
-                                 .arg(gt[5]);
+                                .arg(gt[0])
+                                .arg(gt[1])
+                                .arg(gt[2])
+                                .arg(gt[3])
+                                .arg(gt[4])
+                                .arg(gt[5]);
                     const QImage &display = raster->currentDisplayImage();
                     if (!display.isNull()) {
                         lines << QStringLiteral("- Display image: %1 x %2").arg(display.width()).arg(display.height());
@@ -1012,13 +1075,13 @@
                     for (int band = 0; band < bandLimit; ++band) {
                         const auto &b = raster->band(band);
                         lines << QStringLiteral("  Band %1: %2, %3 x %4, min=%5, max=%6, nodata=%7")
-                                     .arg(band + 1)
-                                     .arg(b.name.isEmpty() ? QStringLiteral("(unnamed)") : b.name)
-                                     .arg(b.width)
-                                     .arg(b.height)
-                                     .arg(b.minValue)
-                                     .arg(b.maxValue)
-                                     .arg(b.hasNoDataValue ? QString::number(b.noDataValue) : QStringLiteral("none"));
+                                    .arg(band + 1)
+                                    .arg(b.name.isEmpty() ? QStringLiteral("(unnamed)") : b.name)
+                                    .arg(b.width)
+                                    .arg(b.height)
+                                    .arg(b.minValue)
+                                    .arg(b.maxValue)
+                                    .arg(b.hasNoDataValue ? QString::number(b.noDataValue) : QStringLiteral("none"));
                     }
                     lines << QStringLiteral("- Land-cover note: metadata and band ranges can suggest clues, but reliable object identification needs visual interpretation or a trained classifier.");
                 } else if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
@@ -1033,9 +1096,9 @@
                             sumZ += z;
                         }
                         lines << QStringLiteral("- Elevation min/max/mean: %1 / %2 / %3")
-                                     .arg(minZ)
-                                     .arg(maxZ)
-                                     .arg(sumZ / elevations.size());
+                                    .arg(minZ)
+                                    .arg(maxZ)
+                                    .arg(sumZ / elevations.size());
                     }
                 } else if (const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
                     const auto &points = pc->points();
@@ -1051,12 +1114,12 @@
                             maxP.setZ(std::max(maxP.z(), p.z()));
                         }
                         lines << QStringLiteral("- Bounds: min(%1, %2, %3), max(%4, %5, %6)")
-                                     .arg(minP.x())
-                                     .arg(minP.y())
-                                     .arg(minP.z())
-                                     .arg(maxP.x())
-                                     .arg(maxP.y())
-                                     .arg(maxP.z());
+                                    .arg(minP.x())
+                                    .arg(minP.y())
+                                    .arg(minP.z())
+                                    .arg(maxP.x())
+                                    .arg(maxP.y())
+                                    .arg(maxP.z());
                     }
                 } else if (const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
                     const auto &vertices = mesh->vertices();
@@ -1072,36 +1135,17 @@
                             maxP.setZ(std::max(maxP.z(), p.z()));
                         }
                         lines << QStringLiteral("- Vertex bounds: min(%1, %2, %3), max(%4, %5, %6)")
-                                     .arg(minP.x())
-                                     .arg(minP.y())
-                                     .arg(minP.z())
-                                     .arg(maxP.x())
-                                     .arg(maxP.y())
-                                     .arg(maxP.z());
+                                    .arg(minP.x())
+                                    .arg(minP.y())
+                                    .arg(minP.z())
+                                    .arg(maxP.x())
+                                    .arg(maxP.y())
+                                    .arg(maxP.z());
                         lines << QStringLiteral("- Face count: %1").arg(mesh->faces().size());
                     }
                 }
             }
             return lines.join(QStringLiteral("\n"));
-        }, [this]() {
-            const auto raster = selectedRaster();
-            if (raster) {
-                const int bandIndex = selectedBandIndex();
-                if (bandIndex >= 0 && bandIndex < raster->bandCount()) {
-                    return io::renderSingleBandGray(*raster, bandIndex);
-                }
-                if (!raster->currentDisplayImage().isNull()) {
-                    return raster->currentDisplayImage();
-                }
-            }
-
-            for (int i = 0; i < layers_.size(); ++i) {
-                const auto rasterLayer = std::dynamic_pointer_cast<RasterLayer>(layers_.at(i));
-                if (rasterLayer && !rasterLayer->currentDisplayImage().isNull()) {
-                    return rasterLayer->currentDisplayImage();
-                }
-            }
-            return QImage{};
         }, bottomTabs);
         bottomTabs->addTab(aiPanel, QStringLiteral("AI Assistant"));
 
@@ -1116,7 +1160,7 @@
         right->setStretchFactor(1, 2); // 第1个（日志面板）：拉伸因子 = 2
         right->setSizes({620, 300});
 
-        setCentralWidget(root);
+        setCentralWidget(root); // 将分割器设为窗口的中心控件（填满整个窗口）
 
         coordLabel_ = new QLabel(QStringLiteral(""), this);
         coordLabel_->setMinimumWidth(260);
@@ -1241,16 +1285,6 @@
             }
             QSplitter {
                 padding: 4px;
-            }
-            QStatusBar {
-                background-color: #fff5f8;
-                color: #5a4a4a;
-                border-top: 1px solid #f4b8c8;
-                font-weight: normal;
-            }
-            QStatusBar QLabel {
-                color: #5a4a4a;
-                background: transparent;
             }
         )"));
     }
@@ -1485,6 +1519,10 @@
             layers_.add(layer);
             appendLog(
                 QStringLiteral("已加载点云：%1（%2 个点）").arg(info.fileName()).arg(points.size()));
+
+            // 在三维窗口中显示点云
+            scene3DWidget_->setPoints(points);
+            tabs_->setCurrentWidget(scene3DWidget_);
         } catch (const std::exception &e) {
             appendLog(QStringLiteral("点云加载失败 [%1]：%2")
                         .arg(info.fileName(), QString::fromUtf8(e.what())));
@@ -1494,6 +1532,7 @@
     }
 
     // 加载三维网格模型
+    // 在后台线程解析 Mesh 文件（OBJ/PLY），避免阻塞 UI
     // 在后台线程解析 Mesh 文件（OBJ/PLY），避免阻塞 UI
     void MainWindow::openMesh() {
         const QString path =
@@ -1513,6 +1552,8 @@
         dialog->setWindowModality(Qt::WindowModal);
         dialog->setCancelButton(nullptr);
         dialog->show();
+        // 粉色风格，匹配三维场景配色
+        dialog->setStyleSheet(QStringLiteral("QProgressDialog{background-color:#FFF0F5;}QLabel{color:#8B3A62;font:bold;padding:8px;}QProgressBar{border:1px solid #DDA0DD;border-radius:4px;background-color:#FFE4E9;text-align:center;height:20px;}QProgressBar::chunk{background-color:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0#FFB6C1,stop:0.5#FF69B4,stop:1#DB7093);border-radius:3px;}"));
 
         // 后台解析文件（不能在后台线程操作 Qt UI）
         auto *watcher = new QFutureWatcher<LoadedMeshData>(this);
@@ -1570,7 +1611,6 @@
         // 后台解析完成后，切回主线程更新界面
         connect(watcher, &QFutureWatcher<LoadedMeshData>::finished, this,
                 [this, watcher, info, path, dialog]() {
-            // 关闭进度对话框
             dialog->accept();
 
             try {
@@ -1608,9 +1648,6 @@
         // 进入模态事件循环，保持 UI 响应，直到后台解析完成
         dialog->exec();
     }
-
-
-    // 加载 DEM：使用 GDAL 读取 DEM GeoTIFF/ASCII Grid 格式
     void MainWindow::openDem() {
         const QString path = QFileDialog::getOpenFileName(
             this, QStringLiteral("加载 DEM"), QString(),
@@ -1870,7 +1907,7 @@
                     if (!result.image.isNull()) {
                         auto preview = std::make_shared<RasterLayer>(
                             leftCopy->name() + QStringLiteral("_DEM预览"), QString(),
-                            io::bandsFromDisplayImage(result.image), result.image);
+                            QVector<RasterBand>{}, result.image);
                         preview->setTreeGroup(QStringLiteral("DEM 重建"));
                         preview->setRenderDescription(QStringLiteral("立体匹配预览"));
                         layers_.add(preview);
@@ -1925,8 +1962,8 @@
         }
 
         const QString resultName = raster->name() + QStringLiteral("_正射");
-        auto resultLayer = std::make_shared<RasterLayer>(
-            resultName, QString(), io::bandsFromDisplayImage(result.image), result.image);
+        auto resultLayer = std::make_shared<RasterLayer>(resultName, QString(), QVector<RasterBand>{},
+                                                        result.image);
         resultLayer->setRenderDescription(QStringLiteral("正射校正结果"));
         resultLayer->setTreeGroup(QStringLiteral("正射影像校正"));
         layers_.add(resultLayer);
@@ -1941,7 +1978,7 @@
     void MainWindow::exportPly() {
         const auto indices = selectedLayerIndices();
         if (indices.empty()) {
-            appendLog(QStringLiteral("导出 PLY 提示：请先选中一个点云或 Mesh 重建结果图层。"));
+            appendLog(QStringLiteral("导出 PLY 提示：请先选中一个点云或 Mesh 图层。"));
             return;
         }
 
@@ -2041,7 +2078,11 @@ void MainWindow::runPointCloudDownsample() {
 
     auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_降采样"),
                                                       QString(), result.pointCloudResult);
-    applyPointCloudResult(newLayer, QStringLiteral("体素降采样"), result.message);
+    layers_.add(newLayer);
+    scene3DWidget_->setPoints(result.pointCloudResult);
+    tabs_->setCurrentWidget(scene3DWidget_);
+    refreshLayerTree();
+    appendLog(result.message);
 }
 
 // ── 点云统计滤波 ──
@@ -2081,7 +2122,11 @@ void MainWindow::runPointCloudFilter() {
 
     auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_滤波"),
                                                       QString(), result.pointCloudResult);
-    applyPointCloudResult(newLayer, QStringLiteral("统计滤波"), result.message);
+    layers_.add(newLayer);
+    scene3DWidget_->setPoints(result.pointCloudResult);
+    tabs_->setCurrentWidget(scene3DWidget_);
+    refreshLayerTree();
+    appendLog(result.message);
 }
 
 // ── 点云转 DEM ──
@@ -2116,125 +2161,12 @@ void MainWindow::runPointCloudToDem() {
     const auto result = algo.execute(dummyInput, ctx);
 
     if (result.demResult) {
-        result.demResult->setTreeGroup(QStringLiteral("点云转 DEM"));
-        const int idx = layers_.add(result.demResult);
+        layers_.add(std::static_pointer_cast<DataObject>(result.demResult));
         refreshLayerTree();
-        revealLayerInTree(idx);
         appendLog(result.message);
     } else {
         appendLog(result.message);
     }
-}
-
-void MainWindow::runPointCloudMeshReconstruction() {
-    const auto indices = selectedLayerIndices();
-    std::shared_ptr<PointCloudLayer> pcLayer;
-    for (int idx : indices) {
-        try {
-            auto layer = layers_.at(idx);
-            pcLayer = std::dynamic_pointer_cast<PointCloudLayer>(layer);
-            if (pcLayer)
-                break;
-        } catch (...) {
-        }
-    }
-    if (!pcLayer) {
-        appendLog(QStringLiteral("请先选中一个点云图层。"));
-        return;
-    }
-
-    const QVector<QVector3D> pointsCopy = pcLayer->points();
-    const QString layerName = pcLayer->name();
-
-    auto *progress = new QProgressDialog(QStringLiteral("正在重建 Mesh，请稍候…"), QString(), 0, 0,
-                                         this);
-    progress->setWindowModality(Qt::WindowModal);
-    progress->setCancelButton(nullptr);
-    progress->setMinimumDuration(0);
-    progress->setWindowTitle(QStringLiteral("点云 Mesh 重建"));
-    progress->show();
-    QApplication::processEvents();
-
-    auto *watcher = new QFutureWatcher<pcmesh::MeshBuildResult>(this);
-    connect(watcher, &QFutureWatcher<pcmesh::MeshBuildResult>::finished, this,
-            [this, watcher, progress, layerName]() {
-                progress->close();
-                progress->deleteLater();
-
-                const pcmesh::MeshBuildResult built = watcher->result();
-                watcher->deleteLater();
-
-                appendLog(built.message);
-                if (!built.ok || built.vertices.isEmpty() || built.faces.isEmpty()) {
-                    QMessageBox::warning(this, QStringLiteral("Mesh 重建失败"), built.message);
-                    return;
-                }
-
-                auto newLayer = std::make_shared<MeshLayer>(
-                    layerName + QStringLiteral("_Mesh"), QString(), built.vertices, built.faces,
-                    built.edges);
-                applyMeshResult(newLayer, QStringLiteral("点云 Mesh 重建"));
-            });
-
-    watcher->setFuture(QtConcurrent::run([pointsCopy]() {
-        PointCloudMeshReconstructionAlgorithm algo;
-        ProcessingContext ctx;
-        ctx.pointCloudData = &pointsCopy;
-        const ProcessingResult result = algo.execute(RasterLayer(QStringLiteral("pc"), QString()), ctx);
-        pcmesh::MeshBuildResult built;
-        built.ok = !result.meshVertexResult.isEmpty() && !result.meshFaceResult.isEmpty();
-        built.message = result.message;
-        built.vertices = result.meshVertexResult;
-        built.edges = result.meshEdgeResult;
-        built.faces = result.meshFaceResult;
-        return built;
-    }));
-}
-
-void MainWindow::openPlyExtractMesh() {
-    const QString path =
-        QFileDialog::getOpenFileName(this, QStringLiteral("从 PLY 提取 Mesh"), QString(),
-                                     QStringLiteral("PLY (*.ply);;All Files (*.*)"));
-    if (path.isEmpty())
-        return;
-
-    appendLog(QStringLiteral("正在处理 PLY：%1").arg(path));
-
-    auto *progress = new QProgressDialog(QStringLiteral("正在从 PLY 生成 Mesh…"), QString(), 0, 0,
-                                         this);
-    progress->setWindowModality(Qt::WindowModal);
-    progress->setCancelButton(nullptr);
-    progress->setMinimumDuration(0);
-    progress->setWindowTitle(QStringLiteral("PLY Mesh"));
-    progress->show();
-    QApplication::processEvents();
-
-    auto *watcher = new QFutureWatcher<pcmesh::MeshBuildResult>(this);
-    connect(watcher, &QFutureWatcher<pcmesh::MeshBuildResult>::finished, this,
-            [this, watcher, progress, path]() {
-                progress->close();
-                progress->deleteLater();
-
-                const pcmesh::MeshBuildResult built = watcher->result();
-                watcher->deleteLater();
-
-                appendLog(built.message);
-                if (!built.ok || built.vertices.isEmpty() || built.faces.isEmpty()) {
-                    QMessageBox::warning(this, QStringLiteral("Mesh 重建失败"), built.message);
-                    return;
-                }
-
-                const QString baseName = QFileInfo(path).completeBaseName();
-                const QString treeGroup = built.loadedFromPlyFaces
-                                              ? QStringLiteral("PLY Mesh 提取")
-                                              : QStringLiteral("PLY 点云 Mesh 重建");
-                auto newLayer = std::make_shared<MeshLayer>(
-                    baseName + QStringLiteral("_Mesh"), path, built.vertices, built.faces,
-                    built.edges);
-                applyMeshResult(newLayer, treeGroup);
-            });
-
-    watcher->setFuture(QtConcurrent::run([path]() { return pcmesh::extractMeshFromPlyFile(path); }));
 }
 
 // 当图层树选中项改变时，刷新影像显示和菜单状态
@@ -2452,10 +2384,8 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         } else if (const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
             info += QStringLiteral("点数: %1\n").arg(pc->points().size());
         } else if (const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
-            info += QStringLiteral("类型: 点云重建 Mesh M=(V,E,F)\n");
-            info += QStringLiteral("顶点 V: %1\n").arg(mesh->vertices().size());
-            info += QStringLiteral("边 E: %1\n").arg(mesh->edges().size());
-            info += QStringLiteral("面 F: %1\n").arg(mesh->faces().size());
+            info += QStringLiteral("顶点数: %1\n").arg(mesh->vertices().size());
+            info += QStringLiteral("三角面: %1\n").arg(mesh->faces().size());
         } else if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
             info += QStringLiteral("尺寸: %1 x %2\n").arg(dem->width()).arg(dem->height());
         }
@@ -2481,6 +2411,7 @@ void MainWindow::refreshLayerTree() {
     auto *resultRoot = ensureTopFolder(layerTree_, QStringLiteral("处理结果"));
     auto *rasterFolder = ensureChildFolder(sourceRoot, QStringLiteral("遥感影像"));
     auto *pointFolder = ensureChildFolder(sourceRoot, QStringLiteral("点云"));
+    auto *meshFolder = ensureChildFolder(sourceRoot, QStringLiteral("Mesh"));
     auto *demFolder = ensureChildFolder(sourceRoot, QStringLiteral("DEM"));
 
     for (int i = 0; i < layers_.size(); ++i) {
@@ -2497,7 +2428,7 @@ void MainWindow::refreshLayerTree() {
                 parent = pointFolder;
                 break;
             case DataType::Mesh:
-                parent = ensureChildFolder(resultRoot, QStringLiteral("点云 Mesh 重建"));
+                parent = meshFolder;
                 break;
             case DataType::Dem:
                 parent = demFolder;
@@ -2617,20 +2548,13 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             const int displayH = activeDisplaySizeForCoords_.isEmpty()
                                      ? static_cast<int>(rect.height())
                                      : activeDisplaySizeForCoords_.height();
-            if (displayW <= 0 || displayH <= 0) {
+            if (displayW <= 0 || displayH <= 0 || raster->bandCount() <= 0) {
                 coordLabel_->setText(QString());
                 return QMainWindow::eventFilter(watched, event);
             }
 
-            int rasterW = displayW;
-            int rasterH = displayH;
-            if (raster->bandCount() > 0) {
-                rasterW = raster->band(0).width;
-                rasterH = raster->band(0).height;
-            } else if (!raster->currentDisplayImage().isNull()) {
-                rasterW = raster->currentDisplayImage().width();
-                rasterH = raster->currentDisplayImage().height();
-            }
+            const int rasterW = raster->band(0).width;
+            const int rasterH = raster->band(0).height;
             if (rasterW <= 0 || rasterH <= 0) {
                 coordLabel_->setText(QString());
                 return QMainWindow::eventFilter(watched, event);
@@ -2712,7 +2636,6 @@ void MainWindow::updateActionStates() {
     int selectedRasters = 0;
     int selectedDems = 0;
     int selectedPointClouds = 0;
-    int selectedMeshes = 0;
     for (const int index : selectedLayerIndices()) {
         try {
             const auto layer = layers_.at(index);
@@ -2722,8 +2645,6 @@ void MainWindow::updateActionStates() {
                 ++selectedDems;
             } else if (layer->type() == DataType::PointCloud) {
                 ++selectedPointClouds;
-            } else if (layer->type() == DataType::Mesh) {
-                ++selectedMeshes;
             }
         } catch (const std::exception &) {
         }
@@ -2731,7 +2652,6 @@ void MainWindow::updateActionStates() {
 
     const bool hasOneRaster = selectedRasters == 1;
     const bool hasPointCloud = selectedPointClouds >= 1;
-    const bool hasMesh = selectedMeshes >= 1;
     if (deleteLayerAction_) {
         deleteLayerAction_->setEnabled(!selectedLayerIndices().empty());
     }
@@ -2765,11 +2685,8 @@ void MainWindow::updateActionStates() {
     if (pcToDemAction_) {
         pcToDemAction_->setEnabled(hasPointCloud);
     }
-    if (pcMeshReconAction_) {
-        pcMeshReconAction_->setEnabled(hasPointCloud);
-    }
     if (exportPlyAction_) {
-        exportPlyAction_->setEnabled(hasPointCloud || hasMesh);
+        exportPlyAction_->setEnabled(hasPointCloud);
     }
 }
 
@@ -2874,7 +2791,7 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
     std::shared_ptr<RasterLayer> layer = result.rasterResult;
     if (!layer && !result.image.isNull()) {
         layer = std::make_shared<RasterLayer>(source->name() + suffix, QString(),
-                                              io::bandsFromDisplayImage(result.image), result.image);
+                                              QVector<RasterBand>{}, result.image);
         layer->setRenderDescription(result.message);
     }
 
@@ -2890,43 +2807,6 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
         }
     }
 
-    updateActionStates();
-}
-
-void MainWindow::applyPointCloudResult(const std::shared_ptr<PointCloudLayer> &layer,
-                                       const QString &treeGroup, const QString &message) {
-    if (!message.isEmpty())
-        appendLog(message);
-    if (!layer)
-        return;
-    layer->setTreeGroup(treeGroup);
-    const int idx = layers_.add(layer);
-    refreshLayerTree();
-    revealLayerInTree(idx);
-    updateActionStates();
-}
-
-void MainWindow::applyMeshResult(const std::shared_ptr<MeshLayer> &layer, const QString &treeGroup,
-                                 const QString &message) {
-    if (!message.isEmpty())
-        appendLog(message);
-    if (!layer)
-        return;
-    layer->setTreeGroup(treeGroup);
-    const int idx = layers_.add(layer);
-    refreshLayerTree();
-    revealLayerInTree(idx);
-    QTreeWidgetItemIterator it(layerTree_);
-    while (*it) {
-        QTreeWidgetItem *item = *it;
-        if (static_cast<NodeKind>(item->data(0, kNodeKindRole).toInt()) == NodeKind::Layer &&
-            item->data(0, kLayerIndexRole).toInt() == idx) {
-            layerTree_->setCurrentItem(item);
-            layerTree_->scrollToItem(item);
-            break;
-        }
-        ++it;
-    }
     updateActionStates();
 }
 

@@ -10,8 +10,10 @@
 #include <QVector3D>
 #include <QVector>
 #include <QWheelEvent>
+#include <algorithm>
+#include <cmath>
 
-class Scene3DWidget : public QOpenGLWidget, protected QOpenGLFunctions {
+class Scene3DWidget : public QOpenGLWidget {
     Q_OBJECT
   public:
     explicit Scene3DWidget(QWidget *parent = nullptr);
@@ -37,15 +39,12 @@ class Scene3DWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     QVector<QVector3D> m_points;
     QVector<QVector3D> meshVertices_;
     QVector<rs::Face> meshFaces_;
-
-    float m_rotX = 0;
-    float m_rotY = 0;
-    float m_zoom = 1.0f;
+    float m_rotX = 0, m_rotY = 0, m_zoom = 1.0f;
     QPoint m_lastPos;
     QVector3D m_center;
     float m_halfExtent = 1.0f;
 
-    // GPU ??????? + ?????
+    // GPU 加速：显示列表 + 缓存包围盒
     GLuint m_meshDList = 0;
     bool m_dlistValid = false;
     QVector3D m_cachedCenter;
