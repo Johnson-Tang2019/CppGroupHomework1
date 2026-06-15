@@ -1,15 +1,56 @@
 #include "rs/MainWindow.h"
+#include "rs/SplashScreen.h"
+
 #include <QApplication>
 #include <QDebug>
+#include <QScreen>
+
 #ifdef RS_WITH_GDAL
 #include <gdal_priv.h>
 #endif
-//2026.6.6
+
+namespace {
+
+void centerOnScreen(QWidget *widget) {
+    if (!widget) {
+        return;
+    }
+    if (QScreen *screen = QApplication::primaryScreen()) {
+        const QRect geo = screen->availableGeometry();
+        widget->move(geo.center() - widget->rect().center());
+    }
+}
+
+void fitMainWindowToScreen(QWidget *widget) {
+    if (!widget) {
+        return;
+    }
+
+    QScreen *screen = QApplication::primaryScreen();
+    if (!screen) {
+        widget->resize(1280, 800);
+        return;
+    }
+
+    const QRect geo = screen->availableGeometry();
+    constexpr int kMinW = 960;
+    constexpr int kMinH = 640;
+    constexpr int kMargin = 8;
+
+    // 尽量铺满可用屏幕，只留很窄的边距，避免超出任务栏区域
+    int width = qMax(kMinW, geo.width() - kMargin * 2);
+    int height = qMax(kMinH, geo.height() - kMargin * 2);
+
+    widget->setMinimumSize(kMinW, kMinH);
+    widget->resize(width, height);
+    widget->move(geo.x() + kMargin, geo.y() + kMargin);
+}
+
+} // namespace
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-
-    app.setStyle("Fusion");
+    app.setStyle(QStringLiteral("Fusion"));
     QString pinkTheme = R"(
         /* ── 全局默认 ── */
         QWidget { background-color: #fff0f5; color: #4a2030; }
@@ -45,7 +86,16 @@ int main(int argc, char *argv[]) {
         QSplitter::handle:hover { background-color: #ff69b4; }
 
         /* ── 状态栏 ── */
-        QStatusBar { background-color: #ff69b4; color: white; font-weight: bold; }
+        QStatusBar {
+            background-color: #fff5f8;
+            color: #5a4a4a;
+            border-top: 1px solid #f4b8c8;
+            font-weight: normal;
+        }
+        QStatusBar QLabel {
+            color: #5a4a4a;
+            background: transparent;
+        }
 
         /* ── 对话框 ── */
         QDialog { background-color: #fff0f5; }
@@ -119,7 +169,20 @@ int main(int argc, char *argv[]) {
 #endif
 
     rs::MainWindow window;
-    window.resize(1280, 800); // 扩大默认窗口比例
-    window.show();
+    fitMainWindowToScreen(&window);
+    window.setVisible(false);
+
+    rs::SplashScreen splash;
+    centerOnScreen(&splash);
+
+    // 启动闪屏插画
+    splash.setHeroImagePath(QStringLiteral(":/splash_hero.png"));
+    QObject::connect(&splash, &rs::SplashScreen::finished, &window, [&window]() {
+        window.show();
+        window.raise();
+        window.activateWindow();
+    });
+
+    splash.start(2800);
     return app.exec();
 }

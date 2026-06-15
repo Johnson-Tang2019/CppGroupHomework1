@@ -10,7 +10,13 @@
 
 namespace rs {  // 遥感（Remote Sensing）命名空间
 
-// 三维网格的三角面片，由三个顶点索引构成
+// 三维网格的边，由两个顶点索引构成（Mesh M=(V,E,F) 中的 E）
+struct Edge {
+    int a {}; // 第一个顶点索引（0-based）
+    int b {}; // 第二个顶点索引
+};
+
+// 三维网格的三角面片，由三个顶点索引构成（Mesh M=(V,E,F) 中的 F）
 struct Face {
     int a {};  // 第一个顶点的索引（0-based）
     int b {};  // 第二个顶点的索引
@@ -120,26 +126,32 @@ private:
 };
 
 // ============================================================================
-// MeshLayer：三维网格图层（三角面片模型）
-// 存储顶点列表和三角面片索引
+// MeshLayer：点云重建得到的三维网格 M=(V,E,F)
+// 含顶点、边、面及拓扑信息，仅由点云 Mesh 重建流程生成
 // ============================================================================
 class MeshLayer final : public DataObject {
 public:
-    // 构造函数：name-名称，path-路径，vertices-顶点列表，faces-三角面片列表
-    MeshLayer(QString name, QString path, QVector<QVector3D> vertices, QVector<Face> faces)
-        : DataObject(std::move(name), std::move(path), DataType::Mesh),  // 类型为 Mesh
+    MeshLayer(QString name, QString path, QVector<QVector3D> vertices, QVector<Face> faces,
+              QVector<Edge> edges = {})
+        : DataObject(std::move(name), std::move(path), DataType::Mesh),
           vertices_(std::move(vertices)),
-          faces_(std::move(faces)) {}
+          faces_(std::move(faces)),
+          edges_(std::move(edges)) {}
 
-    const QVector<QVector3D>& vertices() const { return vertices_; }  // 获取所有顶点坐标
-    const QVector<Face>& faces() const { return faces_; }              // 获取所有三角面片
+    const QVector<QVector3D> &vertices() const { return vertices_; }
+    const QVector<Face> &faces() const { return faces_; }
+    const QVector<Edge> &edges() const { return edges_; }
     QString summary() const override {
-        return QStringLiteral("%1 vertices, %2 faces").arg(vertices_.size()).arg(faces_.size());  // 返回顶点数和面数
+        return QStringLiteral("V=%1 E=%2 F=%3")
+            .arg(vertices_.size())
+            .arg(edges_.size())
+            .arg(faces_.size());
     }
 
 private:
-    QVector<QVector3D> vertices_;  // 所有顶点的三维坐标列表
-    QVector<Face> faces_;          // 所有三角面片的顶点索引列表
+    QVector<QVector3D> vertices_;
+    QVector<Face> faces_;
+    QVector<Edge> edges_;
 };
 
 // ============================================================================

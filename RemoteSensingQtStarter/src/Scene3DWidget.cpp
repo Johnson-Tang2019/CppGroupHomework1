@@ -1,8 +1,7 @@
 #include "rs/Scene3DWidget.h"
+
 #include <GL/gl.h>
-#include <QMouseEvent>
 #include <QShowEvent>
-#include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 
@@ -50,6 +49,8 @@ static void computeBounds(const QVector<QVector3D> &points,
     halfExtent = maxDist > 0 ? maxDist : 1.0f;
 }
 
+} // namespace
+
 Scene3DWidget::Scene3DWidget(QWidget *parent) : QOpenGLWidget(parent) {}
 
 Scene3DWidget::~Scene3DWidget() {
@@ -77,8 +78,9 @@ void Scene3DWidget::setPoints(const QVector<QVector3D> &points) {
 
 void Scene3DWidget::setMesh(const QVector<QVector3D> &vertices, const QVector<rs::Face> &faces) {
     meshVertices_ = vertices;
-    meshFaces_ = faces;
-    if (!vertices.isEmpty()) {
+    meshFaces_ = subsampleFaces(faces, kMaxDisplayFaces);
+    drawWireframe_ = meshFaces_.size() <= kWireframeFaceLimit;
+    if (!vertices.isEmpty())
         m_points.clear();
     }
     markDlistDirty();
@@ -140,11 +142,78 @@ void Scene3DWidget::clearData() {
     update();
 }
 
+void Scene3DWidget::updateBounds() {
+    computeBounds(m_points, meshVertices_, m_center, m_halfExtent);
+}
+
+void Scene3DWidget::invalidateGpu() {
+    gpuDirty_ = true;
+}
+
+void Scene3DWidget::rebuildGpuBuffers() {
+    const float scale = (m_halfExtent > 0) ? (1.0f / m_halfExtent) : 1.0f;
+
+    if (!m_points.isEmpty()) {
+        if (!pointVbo_.isCreated())
+            pointVbo_.create();
+        pointVbo_.bind();
+        QVector<float> data;
+        data.reserve(m_points.size() * 3);
+        for (const auto &p : m_points) {
+            data.append((p.x() - m_center.x()) * scale);
+            data.append((p.y() - m_center.y()) * scale);
+            data.append((p.z() - m_center.z()) * scale);
+        }
+        pointDrawCount_ = m_points.size();
+        pointVbo_.allocate(data.constData(), data.size() * static_cast<int>(sizeof(float)));
+        pointVbo_.release();
+    } else {
+        pointDrawCount_ = 0;
+    }
+
+    const bool hasMeshFaces = !meshVertices_.isEmpty() && !meshFaces_.isEmpty();
+    if (hasMeshFaces) {
+        if (!meshVbo_.isCreated())
+            meshVbo_.create();
+        meshVbo_.bind();
+        QVector<float> data;
+        data.reserve(meshFaces_.size() * 18);
+        for (const auto &face : meshFaces_) {
+            if (face.a < 0 || face.a >= meshVertices_.size() || face.b < 0 ||
+                face.b >= meshVertices_.size() || face.c < 0 || face.c >= meshVertices_.size())
+                continue;
+            const QVector3D &va = meshVertices_[face.a];
+            const QVector3D &vb = meshVertices_[face.b];
+            const QVector3D &vc = meshVertices_[face.c];
+            const QVector3D n = faceNormal(va, vb, vc);
+            const float shade = 0.4f + 0.6f * std::abs(n.z());
+            const float cr = 1.0f * shade;
+            const float cg = 0.55f * shade;
+            const float cb = 0.75f * shade;
+            const QVector3D verts[3] = {va, vb, vc};
+            for (const auto &v : verts) {
+                data.append((v.x() - m_center.x()) * scale);
+                data.append((v.y() - m_center.y()) * scale);
+                data.append((v.z() - m_center.z()) * scale);
+                data.append(cr);
+                data.append(cg);
+                data.append(cb);
+            }
+        }
+        meshTriangleVertexCount_ = data.size() / 6;
+        meshVbo_.allocate(data.constData(), data.size() * static_cast<int>(sizeof(float)));
+        meshVbo_.release();
+    } else {
+        meshTriangleVertexCount_ = 0;
+    }
+
+    gpuDirty_ = false;
+}
+
 void Scene3DWidget::showEvent(QShowEvent *event) {
     QOpenGLWidget::showEvent(event);
     if (!m_points.isEmpty() || (!meshVertices_.isEmpty() && !meshFaces_.isEmpty())) {
         update();
-    }
 }
 
 void Scene3DWidget::initializeGL() {
@@ -260,10 +329,10 @@ void Scene3DWidget::rebuildDisplayList() {
         glEnd();
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     } else if (hasMeshVerticesOnly) {
-        glDisable(GL_LIGHTING);
         glPointSize(3.0f);
-        glBegin(GL_POINTS);
         glColor3f(0.85f, 0.35f, 0.55f);
+        glBegin(GL_POINTS);
+        const float scale = (m_halfExtent > 0) ? (1.0f / m_halfExtent) : 1.0f;
         for (const auto &v : meshVertices_) {
             glVertex3f((v.x() - cx) * scale, (v.y() - cy) * scale, (v.z() - cz) * scale);
         }
@@ -372,6 +441,7 @@ void Scene3DWidget::fitToBounds() {
     m_zoom = 1.0f;
     m_rotX = 0;
     m_rotY = 0;
+    invalidateGpu();
     update();
 }
 

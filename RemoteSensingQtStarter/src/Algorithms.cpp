@@ -1,16 +1,22 @@
 #include "../include/rs/Algorithms.h"
 #include "../include/rs/RasterRenderDialog.h" 
-#include "../include/rs/RasterIO.h" 
+#include "../include/rs/RasterIO.h"
+#include "../include/rs/pcmesh/PcMeshReconstruction.h" 
 #include <QDialog>
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QPixmap>
 #include <QImage>
 #include <QCoreApplication>
+#include <QPointF>
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <numeric>
+#include <optional>
+#include <random>
 #include <iostream>
 
 #ifdef RS_WITH_OPENCV
@@ -827,6 +833,52 @@ ProcessingResult PointCloudToDemAlgorithm::execute(
 
     return {{}, QStringLiteral("点云转 DEM 完成：%1（%2x%3）")
                 .arg(layerName).arg(cols).arg(rows), dem};
+}
+
+QString PointCloudMeshReconstructionAlgorithm::name() const {
+    return QStringLiteral("点云 Mesh 重建");
+}
+QString PointCloudMeshReconstructionAlgorithm::category() const {
+    return QStringLiteral("点云处理");
+}
+std::vector<AlgorithmParameter> PointCloudMeshReconstructionAlgorithm::parameterSchema() const {
+    return {{QStringLiteral("ballRadiusScale"), QStringLiteral("球半径(0=自动)"), QStringLiteral("0"),
+             QStringLiteral("Ball Pivoting 半径；0 表示按点云平均点距自动估计")},
+            {QStringLiteral("maxTriangles"), QStringLiteral("最大三角面数"), QStringLiteral("250000"),
+             QStringLiteral("限制输出规模；越大表面越完整")},
+            {QStringLiteral("normalNeighbors"), QStringLiteral("法向邻居数"), QStringLiteral("24"),
+             QStringLiteral("法向估计使用的邻域点数，越大越平滑")}};
+}
+
+ProcessingResult PointCloudMeshReconstructionAlgorithm::execute(const RasterLayer & /*input*/,
+                                                               const ProcessingContext &context) const {
+    if (!context.pointCloudData) {
+        return {{}, QStringLiteral("Mesh 重建失败：未提供点云数据")};
+    }
+    const auto &points = *context.pointCloudData;
+    if (points.size() < 30) {
+        return {{}, QStringLiteral("Mesh 重建失败：点云点数过少（至少 30 点）")};
+    }
+
+    pcmesh::PcMeshOptions options;
+    options.ballRadiusScale =
+        context.parameters.value(QStringLiteral("ballRadiusScale"), 0.0).toFloat();
+    options.maxTriangles =
+        std::max(1000, context.parameters.value(QStringLiteral("maxTriangles"), 250000).toInt());
+    options.normalNeighbors = std::clamp(
+        context.parameters.value(QStringLiteral("normalNeighbors"), 24).toInt(), 8, 48);
+
+    const pcmesh::MeshBuildResult built = pcmesh::reconstructFromPointCloud(points, options);
+    if (!built.ok) {
+        return {{}, built.message};
+    }
+
+    ProcessingResult out;
+    out.meshVertexResult = built.vertices;
+    out.meshEdgeResult = built.edges;
+    out.meshFaceResult = built.faces;
+    out.message = built.message;
+    return out;
 }
 
 } // namespace rs

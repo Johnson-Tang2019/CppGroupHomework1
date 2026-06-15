@@ -38,16 +38,19 @@ endif()
 add_executable(RemoteSensingQtStarter WIN32
     src/main.cpp
     src/MainWindow.cpp
+    src/SplashScreen.cpp
     src/Algorithms.cpp
     src/ExtendedAlgorithms.cpp
     src/RemoteSensingIndices.cpp
     src/RasterIO.cpp
     src/RasterRenderDialog.cpp
     src/Scene3DWidget.cpp
+    src/pcmesh/PcMeshReconstruction.cpp
     include/rs/DataObject.h
     include/rs/Geometry.h
     include/rs/LayerManager.h
     resources/app.rc
+    resources/resources.qrc
     include/rs/ProcessingAlgorithm.h
     include/rs/Algorithms.h
     include/rs/ExtendedAlgorithms.h
@@ -55,7 +58,9 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/RasterIO.h
     include/rs/RasterRenderDialog.h
     include/rs/MainWindow.h
+    include/rs/SplashScreen.h
     include/rs/Scene3DWidget.h    #增加
+    include/rs/pcmesh/PcMeshReconstruction.h
 )
 
 # Windows EXE 图标：将 .ico 复制到构建目录，确保 RC 编译器能找到
@@ -89,4 +94,8 @@ endif()
 if(MSVC)
     target_compile_options(RemoteSensingQtStarter PRIVATE /W4 /permissive- /utf-8)
 endif()
+
+add_executable(mesh_test tools/mesh_test.cpp src/pcmesh/PcMeshReconstruction.cpp)
+target_include_directories(mesh_test PRIVATE include)
+target_link_libraries(mesh_test PRIVATE ${QT_PACKAGE}::Core ${QT_PACKAGE}::Gui)
 

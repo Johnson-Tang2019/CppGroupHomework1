@@ -10,7 +10,7 @@ namespace rs {        // 遥感（Remote Sensing）命名空间
 enum class DataType {
     Raster,      // 遥感栅格影像（多波段 GeoTIFF/IMG 等）
     PointCloud,  // 点云数据（PLY/LAS/XYZ 等格式的三维点集）
-    Mesh,        // 三维网格模型（OBJ/PLY 等格式的三角网）
+    Mesh,        // 点云重建网格 M=(V,E,F)，仅作为处理结果存在
     Dem,         // 数字高程模型（GeoTIFF/ASCII Grid 等格式）
     Result       // 算法处理结果（直方图、均衡化影像等）
 };

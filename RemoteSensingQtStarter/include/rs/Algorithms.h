@@ -127,4 +127,14 @@ public:
                              const ProcessingContext& context) const override;
 };
 
+// PointCloudMeshReconstructionAlgorithm：点云 Mesh 重建（Ball Pivoting 表面三角网）
+class PointCloudMeshReconstructionAlgorithm final : public ProcessingAlgorithm {
+public:
+    QString name() const override;
+    QString category() const override;
+    std::vector<AlgorithmParameter> parameterSchema() const override;
+    ProcessingResult execute(const RasterLayer& input,
+                             const ProcessingContext& context) const override;
+};
+
 } // namespace rs
