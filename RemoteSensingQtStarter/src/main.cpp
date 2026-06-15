@@ -52,6 +52,8 @@ void fitMainWindowToScreen(QWidget *widget) {
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    QCoreApplication::setOrganizationName(QStringLiteral("CppGroupHomework"));
+    QCoreApplication::setApplicationName(QStringLiteral("RemoteSensingQtStarter"));
     app.setStyle(QStringLiteral("Fusion"));
     app.setWindowIcon(QIcon(QStringLiteral(":/splash_hero.png")));
     QString pinkTheme = R"(

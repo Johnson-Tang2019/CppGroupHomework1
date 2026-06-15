@@ -11,6 +11,8 @@
     #include "rs/Translation.h"
 
     #include <QApplication>
+    #include <QBuffer>
+    #include <QDialog>
     #include <QFutureWatcher>
     #include <QHBoxLayout>
     #include <QJsonArray>
@@ -24,6 +26,7 @@
     #include <QMouseEvent>
     #include <QProgressDialog>
     #include <QPushButton>
+    #include <QSettings>
     #include <QStatusBar>
     #include <QUrl>
     #include <QWheelEvent>
@@ -319,6 +322,362 @@
         QNetworkAccessManager network_;
         QJsonArray history_;
         std::function<QString()> contextProvider_;
+    };
+
+    class VisionChatPanel final : public QWidget {
+    public:
+        explicit VisionChatPanel(std::function<QString()> contextProvider,
+                                 std::function<QImage()> imageProvider,
+                                 QWidget *parent = nullptr)
+            : QWidget(parent),
+              contextProvider_(std::move(contextProvider)),
+              imageProvider_(std::move(imageProvider)) {
+            auto *layout = new QVBoxLayout(this);
+            layout->setContentsMargins(6, 6, 6, 6);
+
+            auto *keyRow = new QHBoxLayout;
+            keyRow->addWidget(new QLabel(QStringLiteral("国产视觉 Key:"), this));
+            apiKeyEdit_ = new QLineEdit(this);
+            apiKeyEdit_->setEchoMode(QLineEdit::Password);
+            apiKeyEdit_->setPlaceholderText(QStringLiteral("ARK_API_KEY"));
+            const QString envKey = QString::fromUtf8(qgetenv("ARK_API_KEY")).trimmed();
+            apiKeyEdit_->setText(envKey.isEmpty()
+                                     ? QStringLiteral("ark-1add2ab0-f33a-43d6-be15-5b3986fd85ae-f729a")
+                                     : envKey);
+            keyRow->addWidget(apiKeyEdit_, 1);
+            layout->addLayout(keyRow);
+
+            auto *urlRow = new QHBoxLayout;
+            urlRow->addWidget(new QLabel(QStringLiteral("接口 URL:"), this));
+            apiUrlEdit_ = new QLineEdit(QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions"), this);
+            urlRow->addWidget(apiUrlEdit_, 1);
+            layout->addLayout(urlRow);
+
+            auto *modelRow = new QHBoxLayout;
+            modelRow->addWidget(new QLabel(QStringLiteral("模型/Endpoint:"), this));
+            modelEdit_ = new QLineEdit(QStringLiteral("ep-20260614191726-976lp"), this);
+            modelRow->addWidget(modelEdit_, 1);
+            contextButton_ = new QPushButton(QStringLiteral("Insert File Info"), this);
+            modelRow->addWidget(contextButton_);
+            layout->addLayout(modelRow);
+
+            usageLabel_ = new QLabel(this);
+            usageLabel_->setWordWrap(true);
+            layout->addWidget(usageLabel_);
+
+            chatEdit_ = new QTextEdit(this);
+            chatEdit_->setReadOnly(true);
+            chatEdit_->setMinimumHeight(150);
+            chatEdit_->setPlaceholderText(QStringLiteral("Ask the domestic vision model to identify land-cover, buildings, roads, water, vegetation, or imported data."));
+            layout->addWidget(chatEdit_, 8);
+
+            inputEdit_ = new QTextEdit(this);
+            inputEdit_->setMaximumHeight(110);
+            inputEdit_->setPlaceholderText(QStringLiteral("Type your message here. Imported layer information and current selected image are attached automatically."));
+            layout->addWidget(inputEdit_, 1);
+
+            auto *buttonRow = new QHBoxLayout;
+            buttonRow->addStretch(1);
+            clearButton_ = new QPushButton(QStringLiteral("Clear"), this);
+            sendButton_ = new QPushButton(QStringLiteral("Send"), this);
+            buttonRow->addWidget(clearButton_);
+            buttonRow->addWidget(sendButton_);
+            layout->addLayout(buttonRow);
+
+            resetHistory();
+            updateUsageLabel();
+
+            connect(sendButton_, &QPushButton::clicked, this, [this]() { sendPrompt(); });
+            connect(clearButton_, &QPushButton::clicked, this, [this]() {
+                chatEdit_->clear();
+                resetHistory();
+            });
+            connect(contextButton_, &QPushButton::clicked, this, [this]() {
+                appendMessage(QStringLiteral("Imported file info"), currentLayerContext());
+            });
+        }
+
+    private:
+        void resetHistory() {
+            history_ = QJsonArray{
+                QJsonObject{{QStringLiteral("role"), QStringLiteral("system")},
+                            {QStringLiteral("content"),
+                             QStringLiteral("You are a remote-sensing vision assistant. Analyze the attached image when present, identify visible land-cover and objects, and clearly separate visual evidence from uncertainty. Answer in Chinese by default.")}}};
+        }
+
+        QString currentLayerContext() const {
+            if (!contextProvider_) {
+                return QStringLiteral("No layer context provider is available.");
+            }
+            const QString context = contextProvider_().trimmed();
+            return context.isEmpty() ? QStringLiteral("No imported layer is available.") : context;
+        }
+
+        void appendMessage(const QString &speaker, const QString &text) {
+            const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+            chatEdit_->append(QStringLiteral("<b>[%1] %2:</b>")
+                                  .arg(timestamp.toHtmlEscaped(), speaker.toHtmlEscaped()));
+            chatEdit_->append(text.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>")));
+            chatEdit_->append(QString());
+        }
+
+        QString currentImageDataUrl() const {
+            if (!imageProvider_) {
+                return {};
+            }
+
+            QImage image = imageProvider_();
+            if (image.isNull()) {
+                return {};
+            }
+
+            constexpr int kMaxSide = 1280;
+            if (image.width() > kMaxSide || image.height() > kMaxSide) {
+                image = image.scaled(kMaxSide, kMaxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            }
+            image = image.convertToFormat(QImage::Format_RGB888);
+
+            QByteArray bytes;
+            QBuffer buffer(&bytes);
+            buffer.open(QIODevice::WriteOnly);
+            if (!image.save(&buffer, "JPG", 85)) {
+                return {};
+            }
+
+            return QStringLiteral("data:image/jpeg;base64,%1").arg(QString::fromLatin1(bytes.toBase64()));
+        }
+
+        bool usingDefaultVisionService(const QString &apiKey,
+                                       const QString &apiUrl,
+                                       const QString &model) const {
+            Q_UNUSED(apiKey);
+            return apiUrl == QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions") &&
+                   model == QStringLiteral("ep-20260614191726-976lp");
+        }
+
+        void updateUsageLabel() {
+            if (!usageLabel_) {
+                return;
+            }
+
+            QSettings settings;
+            if (settings.value(QStringLiteral("ai/defaultVisionUnlocked"), false).toBool()) {
+                usageLabel_->setText(QStringLiteral("默认国产视觉模型：已永久开通"));
+                return;
+            }
+
+            const int used = settings.value(QStringLiteral("ai/defaultVisionUseCount"), 0).toInt();
+            usageLabel_->setText(QStringLiteral("默认国产视觉模型：免费体验已用 %1 / 5 次").arg(used));
+        }
+
+        bool ensureDefaultVisionAccess() {
+            QSettings settings;
+            if (settings.value(QStringLiteral("ai/defaultVisionUnlocked"), false).toBool()) {
+                updateUsageLabel();
+                return true;
+            }
+
+            const int used = settings.value(QStringLiteral("ai/defaultVisionUseCount"), 0).toInt();
+            if (used < 5) {
+                return true;
+            }
+
+            QDialog dialog(this);
+            dialog.setWindowTitle(QStringLiteral("开通永久 AI 服务"));
+            dialog.setModal(true);
+            dialog.resize(520, 720);
+
+            auto *layout = new QVBoxLayout(&dialog);
+            auto *title = new QLabel(QStringLiteral("默认国产视觉模型免费体验 5 次已用完"), &dialog);
+            title->setAlignment(Qt::AlignCenter);
+            title->setStyleSheet(QStringLiteral("font-size:18px;font-weight:600;"));
+            layout->addWidget(title);
+
+            auto *desc = new QLabel(QStringLiteral("请使用微信扫码支付 0.01 元。支付完成后点击下方按钮，即可在本机永久开通后续 AI 服务。"), &dialog);
+            desc->setWordWrap(true);
+            desc->setAlignment(Qt::AlignCenter);
+            layout->addWidget(desc);
+
+            auto *qrLabel = new QLabel(&dialog);
+            qrLabel->setAlignment(Qt::AlignCenter);
+            const QPixmap qr(QStringLiteral(":/wechat_ai_unlock.jpg"));
+            if (!qr.isNull()) {
+                qrLabel->setPixmap(qr.scaled(360, 520, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            } else {
+                qrLabel->setText(QStringLiteral("收款码资源加载失败"));
+            }
+            layout->addWidget(qrLabel, 1);
+
+            auto *hint = new QLabel(QStringLiteral("说明：当前版本采用本地确认方式保存开通状态。"), &dialog);
+            hint->setWordWrap(true);
+            hint->setAlignment(Qt::AlignCenter);
+            layout->addWidget(hint);
+
+            auto *buttonRow = new QHBoxLayout;
+            auto *cancelButton = new QPushButton(QStringLiteral("稍后再说"), &dialog);
+            auto *unlockButton = new QPushButton(QStringLiteral("我已支付，永久开通"), &dialog);
+            unlockButton->setDefault(true);
+            buttonRow->addStretch(1);
+            buttonRow->addWidget(cancelButton);
+            buttonRow->addWidget(unlockButton);
+            layout->addLayout(buttonRow);
+
+            connect(cancelButton, &QPushButton::clicked, &dialog, &QDialog::reject);
+            connect(unlockButton, &QPushButton::clicked, &dialog, [&]() {
+                settings.setValue(QStringLiteral("ai/defaultVisionUnlocked"), true);
+                settings.sync();
+                updateUsageLabel();
+                dialog.accept();
+            });
+
+            return dialog.exec() == QDialog::Accepted;
+        }
+
+        void recordDefaultVisionUseIfNeeded(const QString &apiKey,
+                                            const QString &apiUrl,
+                                            const QString &model) {
+            if (!usingDefaultVisionService(apiKey, apiUrl, model)) {
+                return;
+            }
+
+            QSettings settings;
+            if (settings.value(QStringLiteral("ai/defaultVisionUnlocked"), false).toBool()) {
+                return;
+            }
+
+            const int used = settings.value(QStringLiteral("ai/defaultVisionUseCount"), 0).toInt();
+            settings.setValue(QStringLiteral("ai/defaultVisionUseCount"), used + 1);
+            settings.sync();
+            updateUsageLabel();
+        }
+
+        void sendPrompt() {
+            const QString apiKey = apiKeyEdit_->text().trimmed();
+            const QString apiUrl = apiUrlEdit_->text().trimmed().isEmpty()
+                                       ? QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions")
+                                       : apiUrlEdit_->text().trimmed();
+            const QString prompt = inputEdit_->toPlainText().trimmed();
+            const QString model = modelEdit_->text().trimmed().isEmpty()
+                                      ? QStringLiteral("ep-20260614191726-976lp")
+                                      : modelEdit_->text().trimmed();
+
+            if (apiKey.isEmpty()) {
+                QMessageBox::warning(this, QStringLiteral("Vision API Key"),
+                                     QStringLiteral("Please enter your Ark API key or set ARK_API_KEY."));
+                return;
+            }
+            if (prompt.isEmpty()) {
+                return;
+            }
+            if (usingDefaultVisionService(apiKey, apiUrl, model) && !ensureDefaultVisionAccess()) {
+                appendMessage(QStringLiteral("AI Assistant"), QStringLiteral("已取消发送。开通后可继续使用默认国产视觉模型。"));
+                return;
+            }
+
+            inputEdit_->clear();
+            appendMessage(QStringLiteral("You"), prompt + QStringLiteral("\n[Current selected image attached when available]"));
+            sendButton_->setEnabled(false);
+            sendButton_->setText(QStringLiteral("Sending..."));
+
+            const QString layerContext = currentLayerContext();
+            const QString promptWithContext =
+                QStringLiteral("当前程序中已导入的数据如下。请优先观察随请求附带的当前选中影像，识别可见地物，例如建筑、道路、水体、植被、裸地、阴影等；同时结合元数据回答。不要把仅由元数据推测的内容说成确定事实。\n\n%1\n\n用户问题：%2")
+                    .arg(layerContext, prompt);
+
+            QJsonValue userContent = promptWithContext;
+            const QString imageDataUrl = currentImageDataUrl();
+            if (!imageDataUrl.isEmpty()) {
+                QJsonArray contentParts;
+                contentParts.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                                                {QStringLiteral("text"), promptWithContext}});
+                contentParts.append(QJsonObject{
+                    {QStringLiteral("type"), QStringLiteral("image_url")},
+                    {QStringLiteral("image_url"), QJsonObject{{QStringLiteral("url"), imageDataUrl}}}});
+                userContent = contentParts;
+            }
+
+            QJsonArray requestMessages = history_;
+            requestMessages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                               {QStringLiteral("content"), userContent}});
+
+            QJsonObject body;
+            body.insert(QStringLiteral("model"), model);
+            body.insert(QStringLiteral("messages"), requestMessages);
+            body.insert(QStringLiteral("temperature"), 0.3);
+            body.insert(QStringLiteral("stream"), false);
+
+            QNetworkRequest request{QUrl(apiUrl)};
+            request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+            request.setRawHeader("Authorization", QByteArray("Bearer ") + apiKey.toUtf8());
+
+            recordDefaultVisionUseIfNeeded(apiKey, apiUrl, model);
+            auto *reply = network_.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+            connect(reply, &QNetworkReply::finished, this, [this, reply, prompt]() {
+                handleReply(reply, prompt);
+                reply->deleteLater();
+            });
+        }
+
+        void handleReply(QNetworkReply *reply, const QString &prompt) {
+            sendButton_->setEnabled(true);
+            sendButton_->setText(QStringLiteral("Send"));
+
+            const QByteArray responseBody = reply->readAll();
+            if (reply->error() != QNetworkReply::NoError) {
+                appendMessage(QStringLiteral("Vision Error"),
+                              reply->errorString() + QStringLiteral("\n") + QString::fromUtf8(responseBody));
+                return;
+            }
+
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                appendMessage(QStringLiteral("Vision Error"),
+                              QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
+                return;
+            }
+
+            const QJsonObject root = doc.object();
+            if (root.contains(QStringLiteral("error"))) {
+                const QJsonObject error = root.value(QStringLiteral("error")).toObject();
+                appendMessage(QStringLiteral("Vision Error"),
+                              error.value(QStringLiteral("message")).toString(QString::fromUtf8(responseBody)));
+                return;
+            }
+
+            const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
+            if (choices.isEmpty()) {
+                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("Vision model returned no choices."));
+                return;
+            }
+
+            const QJsonObject message = choices.first().toObject().value(QStringLiteral("message")).toObject();
+            const QString answer = message.value(QStringLiteral("content")).toString().trimmed();
+            if (answer.isEmpty()) {
+                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("Vision model returned an empty answer."));
+                return;
+            }
+
+            history_.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                        {QStringLiteral("content"), prompt}});
+            history_.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("assistant")},
+                                        {QStringLiteral("content"), answer}});
+            appendMessage(QStringLiteral("国产视觉"), answer);
+        }
+
+        QLineEdit *apiKeyEdit_{};
+        QLineEdit *apiUrlEdit_{};
+        QLineEdit *modelEdit_{};
+        QLabel *usageLabel_{};
+        QTextEdit *chatEdit_{};
+        QTextEdit *inputEdit_{};
+        QPushButton *sendButton_{};
+        QPushButton *clearButton_{};
+        QPushButton *contextButton_{};
+        QNetworkAccessManager network_;
+        QJsonArray history_;
+        std::function<QString()> contextProvider_;
+        std::function<QImage()> imageProvider_;
     };
 
     quint8 readUInt8At(QFile &file, qint64 offset) {
@@ -1061,7 +1420,7 @@
         logEdit_->setReadOnly(true);
         bottomTabs_->addTab(logEdit_, QString());
 
-        auto *aiPanel = new DeepSeekChatPanel([this]() {
+        auto *aiPanel = new VisionChatPanel([this]() {
             QStringList lines;
             lines << QStringLiteral("Imported layer count: %1").arg(layers_.size());
             const auto selected = selectedLayerIndices();
@@ -1192,6 +1551,28 @@
                 }
             }
             return lines.join(QStringLiteral("\n"));
+        }, [this]() -> QImage {
+            if (const auto raster = selectedRaster()) {
+                const QImage &display = raster->currentDisplayImage();
+                if (!display.isNull()) {
+                    return display;
+                }
+            }
+
+            if (!imageScene_ || imageScene_->items().isEmpty()) {
+                return {};
+            }
+
+            const QRectF bounds = imageScene_->itemsBoundingRect();
+            if (!bounds.isValid() || bounds.isEmpty()) {
+                return {};
+            }
+
+            QImage snapshot(bounds.size().toSize(), QImage::Format_ARGB32);
+            snapshot.fill(Qt::transparent);
+            QPainter painter(&snapshot);
+            imageScene_->render(&painter, QRectF(snapshot.rect()), bounds);
+            return snapshot;
         }, bottomTabs_);
         bottomTabs_->addTab(aiPanel, QString());
 
