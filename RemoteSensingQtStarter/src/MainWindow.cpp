@@ -1,4 +1,4 @@
-    // ===== 主窗口界面与交互逻辑 (Group3 - UI & Main Interaction) =====
+﻿    // ===== 涓荤獥鍙ｇ晫闈笌浜や簰閫昏緫 (Group3 - UI & Main Interaction) =====
     #include "rs/MainWindow.h"
     #include "rs/Algorithms.h"
     #include "rs/RasterIO.h"
@@ -31,6 +31,7 @@
     #include <QRegularExpression>
     #include <QSettings>
     #include <QStatusBar>
+    #include <QToolBar>
     #include <QUrl>
     #include <QWheelEvent>
     #include <QTreeWidgetItemIterator>
@@ -44,18 +45,66 @@
     namespace rs {
     namespace {
 
-    // 自定义角色，用于在 QTreeWidgetItem 中存储额外数据
-    constexpr int kLayerIndexRole = Qt::UserRole + 1; // 存储图层在 LayerManager 中的索引
-    constexpr int kBandIndexRole = Qt::UserRole + 2;  // 存储波段索引（用于波段子节点）
-    constexpr int kNodeKindRole = Qt::UserRole + 3;   // 存储节点类型（文件夹/图层/波段）
-    constexpr int kFolderKeyRole = Qt::UserRole + 4;  // 文件夹稳定键（语言切换时不变）
+    // 鑷畾涔夎鑹诧紝鐢ㄤ簬鍦?QTreeWidgetItem 涓瓨鍌ㄩ澶栨暟鎹?
+    constexpr int kLayerIndexRole = Qt::UserRole + 1; // 瀛樺偍鍥惧眰鍦?LayerManager 涓殑绱㈠紩
+    constexpr int kBandIndexRole = Qt::UserRole + 2;  // 瀛樺偍娉㈡绱㈠紩锛堢敤浜庢尝娈靛瓙鑺傜偣锛?
+    constexpr int kNodeKindRole = Qt::UserRole + 3;   // 瀛樺偍鑺傜偣绫诲瀷锛堟枃浠跺す/鍥惧眰/娉㈡锛?
+    constexpr int kFolderKeyRole = Qt::UserRole + 4;  // 鏂囦欢澶圭ǔ瀹氶敭锛堣瑷€鍒囨崲鏃朵笉鍙橈級
 
-    // 图层树节点的类型枚举
+    // 鍥惧眰鏍戣妭鐐圭殑绫诲瀷鏋氫妇
     enum class NodeKind {
-        Folder, // 文件夹节点（如"源数据/遥感影像"），不可选中
-        Layer,  // 图层节点，可选中/勾选
-        Band    // 波段子节点，仅信息展示
+        Folder, // 鏂囦欢澶硅妭鐐癸紙濡?婧愭暟鎹?閬ユ劅褰卞儚"锛夛紝涓嶅彲閫変腑
+        Layer,  // 鍥惧眰鑺傜偣锛屽彲閫変腑/鍕鹃€?
+        Band    // 娉㈡瀛愯妭鐐癸紝浠呬俊鎭睍绀?
     };
+
+    QIcon colorIcon(const QColor &color, const QString &mark) {
+        constexpr int size = 32;
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        painter.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPointSize(mark.size() > 1 ? 10 : 15);
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(pixmap.rect(), Qt::AlignCenter, mark);
+        return QIcon(pixmap);
+    }
+
+    QIcon iconForKey(const QString &key) {
+        if (key == QStringLiteral("menu.data")) return colorIcon(QColor(QStringLiteral("#2f80ed")), QStringLiteral("D"));
+        if (key == QStringLiteral("menu.raster")) return colorIcon(QColor(QStringLiteral("#eb5757")), QStringLiteral("R"));
+        if (key == QStringLiteral("menu.index")) return colorIcon(QColor(QStringLiteral("#219653")), QStringLiteral("ND"));
+        if (key == QStringLiteral("menu.photogrammetry")) return colorIcon(QColor(QStringLiteral("#bb6bd9")), QStringLiteral("3D"));
+        if (key == QStringLiteral("menu.pointcloud")) return colorIcon(QColor(QStringLiteral("#00a884")), QStringLiteral("PC"));
+        if (key.contains(QStringLiteral("load_raster"))) return colorIcon(QColor(QStringLiteral("#2f80ed")), QStringLiteral("RS"));
+        if (key.contains(QStringLiteral("load_pointcloud"))) return colorIcon(QColor(QStringLiteral("#00a884")), QStringLiteral("PC"));
+        if (key.contains(QStringLiteral("load_mesh"))) return colorIcon(QColor(QStringLiteral("#8e44ad")), QStringLiteral("M"));
+        if (key.contains(QStringLiteral("load_dem"))) return colorIcon(QColor(QStringLiteral("#7b8a18")), QStringLiteral("DEM"));
+        if (key.contains(QStringLiteral("panorama"))) return colorIcon(QColor(QStringLiteral("#00a0b0")), QStringLiteral("360"));
+        if (key.contains(QStringLiteral("delete"))) return colorIcon(QColor(QStringLiteral("#d64545")), QStringLiteral("DEL"));
+        if (key.contains(QStringLiteral("clear"))) return colorIcon(QColor(QStringLiteral("#f2994a")), QStringLiteral("CLR"));
+        if (key.contains(QStringLiteral("render"))) return colorIcon(QColor(QStringLiteral("#eb5757")), QStringLiteral("RGB"));
+        if (key.contains(QStringLiteral("histogram"))) return colorIcon(QColor(QStringLiteral("#9b51e0")), QStringLiteral("H"));
+        if (key.contains(QStringLiteral("equalize")) || key.contains(QStringLiteral("stretch")) || key.contains(QStringLiteral("clahe"))) return colorIcon(QColor(QStringLiteral("#f2c94c")), QStringLiteral("EQ"));
+        if (key.contains(QStringLiteral("filter")) || key.contains(QStringLiteral("denoise"))) return colorIcon(QColor(QStringLiteral("#56ccf2")), QStringLiteral("F"));
+        if (key.contains(QStringLiteral("feature")) || key.contains(QStringLiteral("canny"))) return colorIcon(QColor(QStringLiteral("#2d9cdb")), QStringLiteral("FX"));
+        if (key.contains(QStringLiteral("class")) || key.contains(QStringLiteral("kmeans")) || key.contains(QStringLiteral("svm"))) return colorIcon(QColor(QStringLiteral("#27ae60")), QStringLiteral("CL"));
+        if (key.contains(QStringLiteral("index"))) return colorIcon(QColor(QStringLiteral("#219653")), QStringLiteral("ND"));
+        if (key.contains(QStringLiteral("dem"))) return colorIcon(QColor(QStringLiteral("#6fcf97")), QStringLiteral("Z"));
+        if (key.contains(QStringLiteral("ortho"))) return colorIcon(QColor(QStringLiteral("#bb6bd9")), QStringLiteral("OR"));
+        if (key.contains(QStringLiteral("texture"))) return colorIcon(QColor(QStringLiteral("#f2994a")), QStringLiteral("TX"));
+        if (key.contains(QStringLiteral("export"))) return colorIcon(QColor(QStringLiteral("#2f80ed")), QStringLiteral("EX"));
+        if (key.contains(QStringLiteral("pointcloud"))) return colorIcon(QColor(QStringLiteral("#00a884")), QStringLiteral("PC"));
+        return colorIcon(QColor(QStringLiteral("#607d8b")), QStringLiteral("TO"));
+    }
 
     struct LoadedMeshData {
         QVector<QVector3D> vertices;
@@ -88,7 +137,7 @@
         if (ext == QStringLiteral("xyz") || ext == QStringLiteral("txt") || ext == QStringLiteral("csv")) {
             QFile file(path);
             if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                throw std::runtime_error("无法打开点云文件");
+                throw std::runtime_error("鏃犳硶鎵撳紑鐐逛簯鏂囦欢");
             }
             QTextStream in(&file);
             while (!in.atEnd()) {
@@ -117,15 +166,15 @@
         } else if (ext == QStringLiteral("las")) {
             QFile lasFile(path);
             if (!lasFile.open(QIODevice::ReadOnly)) {
-                throw std::runtime_error("无法打开 LAS 文件");
+                throw std::runtime_error("鏃犳硶鎵撳紑 LAS 鏂囦欢");
             }
             const QByteArray lasData = lasFile.readAll();
             if (lasData.size() < 227) {
-                throw std::runtime_error("LAS 文件头不完整");
+                throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
             }
             const unsigned char *hdr = reinterpret_cast<const unsigned char *>(lasData.constData());
             if (hdr[0] != 'L' || hdr[1] != 'A' || hdr[2] != 'S' || hdr[3] != 'F') {
-                throw std::runtime_error("无效的 LAS 签名");
+                throw std::runtime_error("鏃犳晥鐨?LAS 绛惧悕");
             }
             const quint32 offset = *reinterpret_cast<const quint32 *>(hdr + 96);
             const quint16 recLen = *reinterpret_cast<const quint16 *>(hdr + 105);
@@ -137,7 +186,7 @@
             const double yOff = *reinterpret_cast<const double *>(hdr + 163);
             const double zOff = *reinterpret_cast<const double *>(hdr + 171);
             if (recLen < 12 || static_cast<quint64>(offset) >= static_cast<quint64>(lasData.size())) {
-                throw std::runtime_error("LAS 记录信息无效");
+                throw std::runtime_error("LAS 璁板綍淇℃伅鏃犳晥");
             }
             quint64 totalPoints = ptCount;
             if (totalPoints == 0 && lasData.size() >= 255) {
@@ -156,11 +205,11 @@
                                         static_cast<float>(iz * zScale + zOff)));
             }
         } else {
-            throw std::runtime_error("不支持的点云格式");
+            throw std::runtime_error("涓嶆敮鎸佺殑鐐逛簯鏍煎紡");
         }
 
         if (points.isEmpty()) {
-            throw std::runtime_error("未能读取到任何点数据");
+            throw std::runtime_error("鏈兘璇诲彇鍒颁换浣曠偣鏁版嵁");
         }
         return points;
     }
@@ -174,7 +223,7 @@
         if (ext == QStringLiteral("obj")) {
             QFile file(path);
             if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                throw std::runtime_error("无法打开 OBJ 文件");
+                throw std::runtime_error("鏃犳硶鎵撳紑 OBJ 鏂囦欢");
             }
             QTextStream in(&file);
             while (!in.atEnd()) {
@@ -201,11 +250,11 @@
         } else if (ext == QStringLiteral("ply")) {
             return loadMeshFromPly(path);
         } else {
-            throw std::runtime_error("不支持的 Mesh 格式");
+            throw std::runtime_error("涓嶆敮鎸佺殑 Mesh 鏍煎紡");
         }
 
         if (vertices.isEmpty()) {
-            throw std::runtime_error("未能读取到任何顶点数据");
+            throw std::runtime_error("No vertex data was read");
         }
         return {vertices, faces};
     }
@@ -414,7 +463,7 @@
 
             const QString layerContext = currentLayerContext();
             const QString promptWithContext =
-                QStringLiteral("当前程序中已导入的数据如下。请只基于这些信息和用户问题回答；如果仅凭元数据无法可靠识别具体地物，请明确说明不确定性，并给出可验证的判断依据。\n\n%1\n\n用户问题：%2")
+                QStringLiteral("褰撳墠绋嬪簭涓凡瀵煎叆鐨勬暟鎹涓嬨€傝鍙熀浜庤繖浜涗俊鎭拰鐢ㄦ埛闂鍥炵瓟锛涘鏋滀粎鍑厓鏁版嵁鏃犳硶鍙潬璇嗗埆鍏蜂綋鍦扮墿锛岃鏄庣‘璇存槑涓嶇‘瀹氭€э紝骞剁粰鍑哄彲楠岃瘉鐨勫垽鏂緷鎹€俓n\n%1\n\n鐢ㄦ埛闂锛?2")
                     .arg(layerContext, prompt);
 
             QJsonArray requestMessages = history_;
@@ -512,7 +561,7 @@
             layout->setContentsMargins(6, 6, 6, 6);
 
             auto *keyRow = new QHBoxLayout;
-            keyRow->addWidget(new QLabel(QStringLiteral("国产视觉 Key:"), this));
+            keyRow->addWidget(new QLabel(QStringLiteral("国产视觉密钥:"), this));
             apiKeyEdit_ = new QLineEdit(this);
             apiKeyEdit_->setEchoMode(QLineEdit::Password);
             apiKeyEdit_->setPlaceholderText(QStringLiteral("ARK_API_KEY"));
@@ -524,16 +573,16 @@
             layout->addLayout(keyRow);
 
             auto *urlRow = new QHBoxLayout;
-            urlRow->addWidget(new QLabel(QStringLiteral("接口 URL:"), this));
+            urlRow->addWidget(new QLabel(QStringLiteral("接口地址:"), this));
             apiUrlEdit_ = new QLineEdit(QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions"), this);
             urlRow->addWidget(apiUrlEdit_, 1);
             layout->addLayout(urlRow);
 
             auto *modelRow = new QHBoxLayout;
-            modelRow->addWidget(new QLabel(QStringLiteral("模型/Endpoint:"), this));
+            modelRow->addWidget(new QLabel(QStringLiteral("模型/接入点:"), this));
             modelEdit_ = new QLineEdit(QStringLiteral("ep-20260614191726-976lp"), this);
             modelRow->addWidget(modelEdit_, 1);
-            contextButton_ = new QPushButton(QStringLiteral("Insert File Info"), this);
+            contextButton_ = new QPushButton(QStringLiteral("插入文件信息"), this);
             modelRow->addWidget(contextButton_);
             layout->addLayout(modelRow);
 
@@ -544,18 +593,18 @@
             chatEdit_ = new QTextEdit(this);
             chatEdit_->setReadOnly(true);
             chatEdit_->setMinimumHeight(150);
-            chatEdit_->setPlaceholderText(QStringLiteral("Ask the domestic vision model to identify land-cover, buildings, roads, water, vegetation, or imported data."));
+            chatEdit_->setPlaceholderText(QStringLiteral("可以让国产视觉模型识别地物、建筑、道路、水体、植被，或分析已导入数据。"));
             layout->addWidget(chatEdit_, 8);
 
             inputEdit_ = new QTextEdit(this);
             inputEdit_->setMaximumHeight(110);
-            inputEdit_->setPlaceholderText(QStringLiteral("Type your message here. Imported layer information and current selected image are attached automatically."));
+            inputEdit_->setPlaceholderText(QStringLiteral("在这里输入问题。程序会自动附带导入图层信息和当前显示画面。"));
             layout->addWidget(inputEdit_, 1);
 
             auto *buttonRow = new QHBoxLayout;
             buttonRow->addStretch(1);
-            clearButton_ = new QPushButton(QStringLiteral("Clear"), this);
-            sendButton_ = new QPushButton(QStringLiteral("Send"), this);
+            clearButton_ = new QPushButton(QStringLiteral("清空"), this);
+            sendButton_ = new QPushButton(QStringLiteral("发送"), this);
             buttonRow->addWidget(clearButton_);
             buttonRow->addWidget(sendButton_);
             layout->addLayout(buttonRow);
@@ -638,12 +687,12 @@
 
             QSettings settings;
             if (settings.value(QStringLiteral("ai/defaultVisionUnlocked"), false).toBool()) {
-                usageLabel_->setText(QStringLiteral("默认国产视觉模型：已永久开通"));
+                usageLabel_->setText(QStringLiteral("默认视觉模型：已永久开通"));
                 return;
             }
 
             const int used = settings.value(QStringLiteral("ai/defaultVisionUseCount"), 0).toInt();
-            usageLabel_->setText(QStringLiteral("默认国产视觉模型：免费体验已用 %1 / 5 次").arg(used));
+            usageLabel_->setText(QStringLiteral("默认视觉模型：免费试用已使用 %1 / 5 次").arg(used));
         }
 
         bool ensureDefaultVisionAccess() {
@@ -669,7 +718,7 @@
             title->setStyleSheet(QStringLiteral("font-size:18px;font-weight:600;"));
             layout->addWidget(title);
 
-            auto *desc = new QLabel(QStringLiteral("请使用微信扫码支付 0.01 元。支付完成后点击下方按钮，即可在本机永久开通后续 AI 服务。"), &dialog);
+            auto *desc = new QLabel(QStringLiteral("请扫描微信收款码支付 0.01 元。支付后点击下方按钮，即可在本机永久开通 AI 服务。"), &dialog);
             desc->setWordWrap(true);
             desc->setAlignment(Qt::AlignCenter);
             layout->addWidget(desc);
@@ -680,11 +729,11 @@
             if (!qr.isNull()) {
                 qrLabel->setPixmap(qr.scaled(360, 520, Qt::KeepAspectRatio, Qt::SmoothTransformation));
             } else {
-                qrLabel->setText(QStringLiteral("收款码资源加载失败"));
+                qrLabel->setText(QStringLiteral("支付二维码资源加载失败"));
             }
             layout->addWidget(qrLabel, 1);
 
-            auto *hint = new QLabel(QStringLiteral("说明：当前版本采用本地确认方式保存开通状态。"), &dialog);
+            auto *hint = new QLabel(QStringLiteral("提示：当前版本会在本机保存开通确认。"), &dialog);
             hint->setWordWrap(true);
             hint->setAlignment(Qt::AlignCenter);
             layout->addWidget(hint);
@@ -738,26 +787,26 @@
                                       : modelEdit_->text().trimmed();
 
             if (apiKey.isEmpty()) {
-                QMessageBox::warning(this, QStringLiteral("Vision API Key"),
-                                     QStringLiteral("Please enter your Ark API key or set ARK_API_KEY."));
+                QMessageBox::warning(this, QStringLiteral("视觉模型 API Key"),
+                                     QStringLiteral("请输入 Ark API Key，或设置 ARK_API_KEY 环境变量。"));
                 return;
             }
             if (prompt.isEmpty()) {
                 return;
             }
             if (usingDefaultVisionService(apiKey, apiUrl, model) && !ensureDefaultVisionAccess()) {
-                appendMessage(QStringLiteral("AI Assistant"), QStringLiteral("已取消发送。开通后可继续使用默认国产视觉模型。"));
+                appendMessage(QStringLiteral("AI 助手"), QStringLiteral("发送已取消。请开通后继续使用默认国产视觉模型。"));
                 return;
             }
 
             inputEdit_->clear();
-            appendMessage(QStringLiteral("You"), prompt + QStringLiteral("\n[Current selected image attached when available]"));
+            appendMessage(QStringLiteral("你"), prompt + QStringLiteral("\n[已自动附带当前显示画面（如可用）]"));
             sendButton_->setEnabled(false);
-            sendButton_->setText(QStringLiteral("Sending..."));
+            sendButton_->setText(QStringLiteral("发送中..."));
 
             const QString layerContext = currentLayerContext();
             const QString promptWithContext =
-                QStringLiteral("当前程序中已导入的数据如下。请优先观察随请求附带的当前选中影像，识别可见地物，例如建筑、道路、水体、植被、裸地、阴影等；同时结合元数据回答。不要把仅由元数据推测的内容说成确定事实。\n\n%1\n\n用户问题：%2")
+                QStringLiteral("当前程序中已导入的数据如下。请优先观察随请求附带的当前显示画面，识别可见地物，例如建筑、道路、水体、植被、裸地、阴影等；同时结合元数据回答。不要把仅由元数据推测的内容说成确定事实。\n\n%1\n\n用户问题：%2")
                     .arg(layerContext, prompt);
 
             QJsonValue userContent = promptWithContext;
@@ -796,11 +845,11 @@
 
         void handleReply(QNetworkReply *reply, const QString &prompt) {
             sendButton_->setEnabled(true);
-            sendButton_->setText(QStringLiteral("Send"));
+            sendButton_->setText(QStringLiteral("发送"));
 
             const QByteArray responseBody = reply->readAll();
             if (reply->error() != QNetworkReply::NoError) {
-                appendMessage(QStringLiteral("Vision Error"),
+                appendMessage(QStringLiteral("视觉错误"),
                               reply->errorString() + QStringLiteral("\n") + QString::fromUtf8(responseBody));
                 return;
             }
@@ -808,29 +857,29 @@
             QJsonParseError parseError{};
             const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
             if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-                appendMessage(QStringLiteral("Vision Error"),
-                              QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
+                appendMessage(QStringLiteral("视觉错误"),
+                              QStringLiteral("接口返回的 JSON 无效：%1").arg(parseError.errorString()));
                 return;
             }
 
             const QJsonObject root = doc.object();
             if (root.contains(QStringLiteral("error"))) {
                 const QJsonObject error = root.value(QStringLiteral("error")).toObject();
-                appendMessage(QStringLiteral("Vision Error"),
+                appendMessage(QStringLiteral("视觉错误"),
                               error.value(QStringLiteral("message")).toString(QString::fromUtf8(responseBody)));
                 return;
             }
 
             const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
             if (choices.isEmpty()) {
-                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("Vision model returned no choices."));
+                appendMessage(QStringLiteral("视觉错误"), QStringLiteral("视觉模型没有返回候选结果。"));
                 return;
             }
 
             const QJsonObject message = choices.first().toObject().value(QStringLiteral("message")).toObject();
             const QString answer = message.value(QStringLiteral("content")).toString().trimmed();
             if (answer.isEmpty()) {
-                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("Vision model returned an empty answer."));
+                appendMessage(QStringLiteral("视觉错误"), QStringLiteral("视觉模型返回了空回答。"));
                 return;
             }
 
@@ -858,58 +907,58 @@
 
     quint8 readUInt8At(QFile &file, qint64 offset) {
         if (!file.seek(offset))
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         char value = 0;
         if (file.read(&value, 1) != 1)
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         return static_cast<quint8>(value);
     }
 
     quint16 readUInt16LeAt(QFile &file, qint64 offset) {
         if (!file.seek(offset))
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         QDataStream stream(&file);
         stream.setByteOrder(QDataStream::LittleEndian);
         quint16 value = 0;
         stream >> value;
         if (stream.status() != QDataStream::Ok)
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         return value;
     }
 
     quint32 readUInt32LeAt(QFile &file, qint64 offset) {
         if (!file.seek(offset))
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         QDataStream stream(&file);
         stream.setByteOrder(QDataStream::LittleEndian);
         quint32 value = 0;
         stream >> value;
         if (stream.status() != QDataStream::Ok)
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         return value;
     }
 
     quint64 readUInt64LeAt(QFile &file, qint64 offset) {
         if (!file.seek(offset))
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         QDataStream stream(&file);
         stream.setByteOrder(QDataStream::LittleEndian);
         quint64 value = 0;
         stream >> value;
         if (stream.status() != QDataStream::Ok)
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         return value;
     }
 
     double readDoubleLeAt(QFile &file, qint64 offset) {
         if (!file.seek(offset))
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         QDataStream stream(&file);
         stream.setByteOrder(QDataStream::LittleEndian);
         double value = 0.0;
         stream >> value;
         if (stream.status() != QDataStream::Ok)
-            throw std::runtime_error("LAS 文件头不完整");
+            throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
         return value;
     }
 
@@ -923,10 +972,10 @@
     QVector<QVector3D> readLasPoints(const QString &path) {
         QFile file(path);
         if (!file.open(QIODevice::ReadOnly)) {
-            throw std::runtime_error("无法打开 LAS 文件");
+            throw std::runtime_error("鏃犳硶鎵撳紑 LAS 鏂囦欢");
         }
         if (file.read(4) != QByteArray("LASF", 4)) {
-            throw std::runtime_error("不是有效的 LAS 文件");
+            throw std::runtime_error("涓嶆槸鏈夋晥鐨?LAS 鏂囦欢");
         }
 
         const quint32 pointDataOffset = readUInt32LeAt(file, 96);
@@ -944,7 +993,7 @@
         const double zOffset = readDoubleLeAt(file, 171);
 
         if (pointDataOffset == 0 || recordLength < 12 || pointFormat > 10) {
-            throw std::runtime_error("LAS 点记录格式无效");
+            throw std::runtime_error("LAS header is incomplete");
         }
 
         const qint64 availableRecords =
@@ -959,7 +1008,7 @@
         points.reserve(reserveCount);
         QByteArray record(recordLength, Qt::Uninitialized);
         if (!file.seek(pointDataOffset)) {
-            throw std::runtime_error("无法定位 LAS 点数据");
+            throw std::runtime_error("Invalid LAS file");
         }
         for (quint64 i = 0; i < pointCount; ++i) {
             if (file.read(record.data(), recordLength) != recordLength)
@@ -978,11 +1027,11 @@
             return group;
         }
         static const QHash<QString, QString> keyByGroup = {
-            {QStringLiteral("DEM 重建"), QStringLiteral("tree.group.dem_rebuild")},
-            {QStringLiteral("正射影像校正"), QStringLiteral("tree.group.orthorectify")},
-            {QStringLiteral("灰度直方图"), QStringLiteral("tree.group.histogram")},
-            {QStringLiteral("混淆矩阵精度评价"), QStringLiteral("tree.group.confusion_matrix")},
-            {QStringLiteral("多时相指数对比"), QStringLiteral("tree.group.index_temporal")},
+            {QStringLiteral("DEM 閲嶅缓"), QStringLiteral("tree.group.dem_rebuild")},
+            {QStringLiteral("姝ｅ皠褰卞儚鏍℃"), QStringLiteral("tree.group.orthorectify")},
+            {QStringLiteral("Histogram"), QStringLiteral("tree.group.histogram")},
+            {QStringLiteral("娣锋穯鐭╅樀绮惧害璇勪环"), QStringLiteral("tree.group.confusion_matrix")},
+            {QStringLiteral("Temporal index compare"), QStringLiteral("tree.group.index_temporal")},
         };
         const auto it = keyByGroup.constFind(group);
         if (it != keyByGroup.constEnd()) {
@@ -1010,32 +1059,32 @@
         return QStringLiteral("Unknown");
     }
 
-    // 生成节点的唯一键（从根到当前节点的路径字符串）
+    // 鐢熸垚鑺傜偣鐨勫敮涓€閿紙浠庢牴鍒板綋鍓嶈妭鐐圭殑璺緞瀛楃涓诧級
     QString itemKey(const QTreeWidgetItem *item) {
-        QStringList parts;          // 用于存储从根到当前节点的各层名称
-        const auto *current = item; // 从当前节点开始向上遍历
-        while (current) {           // 一直遍历到根节点（parent 为 nullptr）
+        QStringList parts;          // 鐢ㄤ簬瀛樺偍浠庢牴鍒板綋鍓嶈妭鐐圭殑鍚勫眰鍚嶇О
+        const auto *current = item; // 浠庡綋鍓嶈妭鐐瑰紑濮嬪悜涓婇亶鍘?
+        while (current) {           // 涓€鐩撮亶鍘嗗埌鏍硅妭鐐癸紙parent 涓?nullptr锛?
             const QString folderKey = current->data(0, kFolderKeyRole).toString();
             parts.prepend(folderKey.isEmpty() ? current->text(0) : folderKey);
-            current = current->parent(); // 向上移动到父节点
+            current = current->parent(); // 鍚戜笂绉诲姩鍒扮埗鑺傜偣
         }
         return parts.join(QLatin1Char('/'));
     }
 
-    // 递归收集所有展开节点的键
+    // 閫掑綊鏀堕泦鎵€鏈夊睍寮€鑺傜偣鐨勯敭
     void collectExpandedKeys(QTreeWidgetItem *item, QSet<QString> &keys) {
-        if (!item) { // 空节点，直接返回
+        if (!item) { // 绌鸿妭鐐癸紝鐩存帴杩斿洖
             return;
         }
-        if (item->isExpanded()) {       // 如果当前节点是展开状态
-            keys.insert(itemKey(item)); // 则记录它的路径键
+        if (item->isExpanded()) {       // 濡傛灉褰撳墠鑺傜偣鏄睍寮€鐘舵€?
+            keys.insert(itemKey(item)); // 鍒欒褰曞畠鐨勮矾寰勯敭
         }
-        for (int i = 0; i < item->childCount(); ++i) { // 遍历所有子节点
-            collectExpandedKeys(item->child(i), keys); // 递归处理每个子节点
+        for (int i = 0; i < item->childCount(); ++i) { // 閬嶅巻鎵€鏈夊瓙鑺傜偣
+            collectExpandedKeys(item->child(i), keys); // 閫掑綊澶勭悊姣忎釜瀛愯妭鐐?
         }
     }
 
-    // 在指定父节点下查找或创建子文件夹
+    // 鍦ㄦ寚瀹氱埗鑺傜偣涓嬫煡鎵炬垨鍒涘缓瀛愭枃浠跺す
     QTreeWidgetItem *ensureChildFolder(QTreeWidgetItem *parent, const QString &folderKey,
                                        const QString &displayName) {
         for (int i = 0; i < parent->childCount(); ++i) {
@@ -1053,7 +1102,7 @@
         return folder;
     }
 
-    // 在顶层节点中查找或创建文件夹
+    // 鍦ㄩ《灞傝妭鐐逛腑鏌ユ壘鎴栧垱寤烘枃浠跺す
     QTreeWidgetItem *ensureTopFolder(QTreeWidget *tree, const QString &folderKey,
                                      const QString &displayName) {
         for (int i = 0; i < tree->topLevelItemCount(); ++i) {
@@ -1081,14 +1130,14 @@
     LoadedMeshData loadMeshFromPly(const QString &path) {
         QFile file(path);
         if (!file.open(QIODevice::ReadOnly)) {
-            throw std::runtime_error("无法打开 PLY 文件");
+            throw std::runtime_error("鏃犳硶鎵撳紑 PLY 鏂囦欢");
         }
         const QByteArray allData = file.readAll();
         file.close();
 
         const int headerEndPos = allData.indexOf("end_header");
         if (headerEndPos < 0) {
-            throw std::runtime_error("PLY 缺少 end_header");
+            throw std::runtime_error("PLY 缂哄皯 end_header");
         }
         const int nlPos = allData.indexOf('\n', headerEndPos);
         const int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
@@ -1121,7 +1170,7 @@
         }
 
         if (vertexCount <= 0) {
-            throw std::runtime_error("PLY 顶点数量无效");
+            throw std::runtime_error("PLY 椤剁偣鏁伴噺鏃犳晥");
         }
 
         LoadedMeshData mesh;
@@ -1174,7 +1223,7 @@
             }
         } else {
             if (vertexPropCount < 3) {
-                throw std::runtime_error("PLY 顶点属性数不足");
+                throw std::runtime_error("PLY 椤剁偣灞炴€ф暟涓嶈冻");
             }
             const int vertexSize = vertexPropCount * static_cast<int>(sizeof(float));
             int offset = headerBytes;
@@ -1215,7 +1264,7 @@
 
     } // namespace
 
-    // 构造函数：初始化窗口标题、菜单、UI 布局，记录启动日志
+    // 鏋勯€犲嚱鏁帮細鍒濆鍖栫獥鍙ｆ爣棰樸€佽彍鍗曘€乁I 甯冨眬锛岃褰曞惎鍔ㄦ棩蹇?
     MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         createMenus();
         createUi();
@@ -1223,19 +1272,17 @@
         connect(&Translation::instance(), &Translation::languageChanged, this, &MainWindow::retranslateUi);
         connect(&AppTheme::instance(), &AppTheme::themeChanged, this, &MainWindow::applyThemeStyles);
         retranslateUi();
-        appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL "
-                                "多波段、参数化算法、DEM/正射流程的工程骨架。"));
         restoreLastSession();
         updateActionStates();
     }
 
-    // 构建菜单栏：数据、影像处理、摄影测量/三维
+    // 鏋勫缓鑿滃崟鏍忥細鏁版嵁銆佸奖鍍忓鐞嗐€佹憚褰辨祴閲?涓夌淮
     void MainWindow::createMenus() {
         translatableMenus_.clear();
         translatableActions_.clear();
 
         const auto regTopMenu = [this](const QString &key) {
-            auto *m = menuBar()->addMenu(QString());
+            auto *m = menuBar()->addMenu(Translation::instance().tr(key));
             m->setProperty("trKey", key);
             translatableMenus_.append(m);
             return m;
@@ -1243,12 +1290,14 @@
         const auto regSubMenu = [this](QMenu *parent, const QString &key) {
             auto *m = parent->addMenu(QString());
             m->setProperty("trKey", key);
+            m->setIcon(iconForKey(key));
             translatableMenus_.append(m);
             return m;
         };
         const auto regAction = [this](QMenu *menu, const QString &key) {
             auto *a = menu->addAction(QString());
             a->setProperty("trKey", key);
+            a->setIcon(iconForKey(key));
             translatableActions_.append(a);
             return a;
         };
@@ -1287,15 +1336,15 @@
                     QStringList modes = {QStringLiteral("percent"), QStringLiteral("linear")};
                     bool ok = false;
                     const QString mode = QInputDialog::getItem(
-                        this, QStringLiteral("拉伸模式"), QStringLiteral("选择拉伸方式："),
-                        {QStringLiteral("百分比拉伸"), QStringLiteral("线性拉伸")}, 0, false, &ok);
+                        this, QStringLiteral("Stretch mode"), QStringLiteral("Choose stretch mode:"),
+                        {QStringLiteral("Percent stretch"), QStringLiteral("Linear stretch")}, 0, false, &ok);
                     if (!ok)
                         return;
                     StretchEnhancementAlgorithm algo;
                     ProcessingContext ctx;
                     ctx.bandIndex = selectedBandIndex();
                     ctx.parameters[QStringLiteral("mode")] =
-                        mode.contains(QStringLiteral("线性")) ? QStringLiteral("linear")
+                        mode.contains(QStringLiteral("Linear")) ? QStringLiteral("linear")
                                                             : QStringLiteral("percent");
                     executeRasterAlgorithm(algo, ctx);
                 });
@@ -1365,11 +1414,11 @@
         connect(regAction(featureMenu, QStringLiteral("action.canny")), &QAction::triggered, this,
                 [this]() {
                     bool ok = false;
-                    const int t1 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("低阈值:"),
+                    const int t1 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("浣庨槇鍊?"),
                                                         50, 1, 500, 1, &ok);
                     if (!ok)
                         return;
-                    const int t2 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("高阈值:"),
+                    const int t2 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("楂橀槇鍊?"),
                                                         150, 1, 500, 1, &ok);
                     if (!ok)
                         return;
@@ -1386,7 +1435,7 @@
                 [this]() {
                     bool ok = false;
                     const int k = QInputDialog::getInt(this, QStringLiteral("K-Means"),
-                                                    QStringLiteral("类别数 K："), 3, 2, 10, 1, &ok);
+                                                    QStringLiteral("Class count K:"), 3, 2, 10, 1, &ok);
                     if (!ok)
                         return;
                     KMeansClassificationAlgorithm algo;
@@ -1398,11 +1447,11 @@
                 [this]() {
                     bool ok = false;
                     const int classes = QInputDialog::getInt(this, QStringLiteral("SVM"),
-                                                        QStringLiteral("类别数："), 3, 2, 10, 1, &ok);
+                                                        QStringLiteral("绫诲埆鏁帮細"), 3, 2, 10, 1, &ok);
                     if (!ok)
                         return;
                     const int samples = QInputDialog::getInt(this, QStringLiteral("SVM"),
-                                                            QStringLiteral("训练样本数："), 500, 50, 5000,
+                                                            QStringLiteral("璁粌鏍锋湰鏁帮細"), 500, 50, 5000,
                                                             50, &ok);
                     if (!ok)
                         return;
@@ -1419,8 +1468,8 @@
         connect(regAction(classMenu, QStringLiteral("action.connected_components")), &QAction::triggered, this,
                 [this]() {
                     bool ok = false;
-                    const int minArea = QInputDialog::getInt(this, QStringLiteral("连通域"),
-                                                            QStringLiteral("最小面积："), 100, 1, 100000,
+                    const int minArea = QInputDialog::getInt(this, QStringLiteral("杩為€氬煙"),
+                                                            QStringLiteral("鏈€灏忛潰绉細"), 100, 1, 100000,
                                                             10, &ok);
                     if (!ok)
                         return;
@@ -1446,19 +1495,19 @@
                         }
                     }
                     if (!pred || !ref) {
-                        appendLog(QStringLiteral("请选中两个栅格图层（预测结果 + 参考分类）。"));
+                        appendLog(QStringLiteral("Temporal comparison needs at least two raster layers."));
                         return;
                     }
                     const QString csvPath = QFileDialog::getSaveFileName(
-                        this, QStringLiteral("导出混淆矩阵 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
+                        this, QStringLiteral("瀵煎嚭娣锋穯鐭╅樀 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
                     ConfusionMatrixAlgorithm algo;
                     ProcessingContext ctx;
                     ctx.auxiliaryRaster = ref.get();
                     if (!csvPath.isEmpty())
                         ctx.parameters[QStringLiteral("csvPath")] = csvPath;
                     const auto result = algo.execute(*pred, ctx);
-                    applyProcessingResult(result, pred, QStringLiteral("混淆矩阵精度评价"),
-                                        QStringLiteral("_精度"));
+                    applyProcessingResult(result, pred, QStringLiteral("娣锋穯鐭╅樀绮惧害璇勪环"),
+                                        QStringLiteral("_绮惧害"));
                 });
 
         indexMenu_ = regTopMenu(QStringLiteral("menu.index"));
@@ -1468,13 +1517,13 @@
                                         QStringLiteral("NDBI")};
                     bool ok = false;
                     const QString index = QInputDialog::getItem(
-                        this, QStringLiteral("遥感指数"), QStringLiteral("选择指数："), indices, 0, false,
+                        this, QStringLiteral("Layer selection"), QStringLiteral("Choose layer:"), indices, 0, false,
                         &ok);
                     if (!ok)
                         return;
                     const bool threshold = QMessageBox::question(
-                                            this, QStringLiteral("阈值分割"),
-                                            QStringLiteral("是否应用阈值分割掩膜？")) == QMessageBox::Yes;
+                                            this, QStringLiteral("Export CSV"),
+                                            QStringLiteral("鏄惁搴旂敤闃堝€煎垎鍓叉帺鑶滐紵")) == QMessageBox::Yes;
                     RemoteSensingIndexAlgorithm algo;
                     ProcessingContext ctx;
                     ctx.parameters[QStringLiteral("index")] = index;
@@ -1482,7 +1531,7 @@
                     ctx.parameters[QStringLiteral("threshold")] = 0.2;
                     const auto raster = selectedRaster();
                     if (!raster) {
-                        appendLog(QStringLiteral("请先选择遥感影像图层。"));
+                        appendLog(QStringLiteral("Please select a layer first."));
                         return;
                     }
                     const auto result = algo.execute(*raster, ctx);
@@ -1505,7 +1554,7 @@
                         }
                     }
                     if (!t1 || !t2) {
-                        appendLog(QStringLiteral("请选中两个时相的栅格图层。"));
+                        appendLog(QStringLiteral("Temporal comparison needs at least two raster layers."));
                         return;
                     }
                     IndexTemporalCompareAlgorithm algo;
@@ -1513,18 +1562,18 @@
                     ctx.auxiliaryRaster = t2.get();
                     ctx.parameters[QStringLiteral("index")] = QStringLiteral("NDVI");
                     const auto result = algo.execute(*t1, ctx);
-                    applyProcessingResult(result, t1, QStringLiteral("多时相指数对比"),
-                                        QStringLiteral("_时相对比"));
+                    applyProcessingResult(result, t1, QStringLiteral("Temporal index compare"),
+                                        QStringLiteral("_鏃剁浉瀵规瘮"));
                 });
         connect(regAction(indexMenu_, QStringLiteral("action.index_export_csv")), &QAction::triggered, this,
                 [this]() {
                     const auto raster = selectedRaster();
                     if (!raster) {
-                        appendLog(QStringLiteral("请先选择图层。"));
+                        appendLog(QStringLiteral("Please select a layer first."));
                         return;
                     }
                     const QString path = QFileDialog::getSaveFileName(
-                        this, QStringLiteral("导出 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
+                        this, QStringLiteral("瀵煎嚭 CSV"), QString(), QStringLiteral("CSV (*.csv)"));
                     if (path.isEmpty())
                         return;
                     RemoteSensingIndexAlgorithm algo;
@@ -1580,42 +1629,42 @@
         setMenuWidget(menuWrap);
     }
 
-    // 构建界面布局：左侧图层树 + 右侧影像/三维标签页 + 底部日志面板
+    // 鏋勫缓鐣岄潰甯冨眬锛氬乏渚у浘灞傛爲 + 鍙充晶褰卞儚/涓夌淮鏍囩椤?+ 搴曢儴鏃ュ織闈㈡澘
     void MainWindow::createUi() {
-        // 主分割器：水平方向，将窗口分为左侧（图层树）和右侧（影像+日志）
+        // 涓诲垎鍓插櫒锛氭按骞虫柟鍚戯紝灏嗙獥鍙ｅ垎涓哄乏渚э紙鍥惧眰鏍戯級鍜屽彸渚э紙褰卞儚+鏃ュ織锛?
         auto *root = new QSplitter(Qt::Horizontal, this);
-        // ---- 左侧：图层树 ----
-        layerTree_ = new QTreeWidget(root);                                 // 创建图层树控件
+        // ---- 宸︿晶锛氬浘灞傛爲 ----
+        layerTree_ = new QTreeWidget(root);                                 // 鍒涘缓鍥惧眰鏍戞帶浠?
         layerTree_->setHeaderLabel(Translation::instance().tr(QStringLiteral("layer_tree")));
-        layerTree_->setAlternatingRowColors(true);                          // 开启交替行颜色
-        layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection); // 支持 Ctrl/Shift 多选
-        layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);            // 启用自定义右键菜单
+        layerTree_->setAlternatingRowColors(true);                          // 寮€鍚氦鏇胯棰滆壊
+        layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection); // 鏀寔 Ctrl/Shift 澶氶€?
+        layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);            // 鍚敤鑷畾涔夊彸閿彍鍗?
         connect(layerTree_, &QTreeWidget::itemSelectionChanged, this,
-                &MainWindow::onSelectionChanged); // 选中项改变时刷新影像
+                &MainWindow::onSelectionChanged); // 閫変腑椤规敼鍙樻椂鍒锋柊褰卞儚
         connect(layerTree_, &QTreeWidget::itemChanged, this,
-                &MainWindow::onLayerItemChanged); // 勾选框改变时切换可见性
+                &MainWindow::onLayerItemChanged); // 鍕鹃€夋鏀瑰彉鏃跺垏鎹㈠彲瑙佹€?
         connect(layerTree_, &QTreeWidget::customContextMenuRequested, this,
-                &MainWindow::showLayerContextMenu); // 右键弹出菜单
+                &MainWindow::showLayerContextMenu); // 鍙抽敭寮瑰嚭鑿滃崟
 
-        // ---- 右侧：上下分割（上方影像标签页 + 下方日志） ----
-        auto *right = new QSplitter(Qt::Vertical, root); // 右侧垂直分割器
+        // ---- 鍙充晶锛氫笂涓嬪垎鍓诧紙涓婃柟褰卞儚鏍囩椤?+ 涓嬫柟鏃ュ織锛?----
+        auto *right = new QSplitter(Qt::Vertical, root); // 鍙充晶鍨傜洿鍒嗗壊鍣?
         right->setChildrenCollapsible(false);
         right->setHandleWidth(8);
 
-        // 标签页控件：二维影像 / 三维场景
-        tabs_ = new QTabWidget(right);          // 创建标签页控件
-        imageScene_ = new QGraphicsScene(this); // 创建图形场景（管理所有图形项）
+        // 鏍囩椤垫帶浠讹細浜岀淮褰卞儚 / 涓夌淮鍦烘櫙
+        tabs_ = new QTabWidget(right);          // 鍒涘缓鏍囩椤垫帶浠?
+        imageScene_ = new QGraphicsScene(this); // 鍒涘缓鍥惧舰鍦烘櫙锛堢鐞嗘墍鏈夊浘褰㈤」锛?
 
-        imageView_ = new ZoomableGraphicsView(imageScene_, tabs_); // 创建图形视图（显示场景内容）
-        imageView_->setDragMode(QGraphicsView::ScrollHandDrag); // 设置拖拽模式：手型抓手平移
-        imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse); // 缩放时以鼠标位置为中心
+        imageView_ = new ZoomableGraphicsView(imageScene_, tabs_); // 鍒涘缓鍥惧舰瑙嗗浘锛堟樉绀哄満鏅唴瀹癸級
+        imageView_->setDragMode(QGraphicsView::ScrollHandDrag); // 璁剧疆鎷栨嫿妯″紡锛氭墜鍨嬫姄鎵嬪钩绉?
+        imageView_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse); // 缂╂斁鏃朵互榧犳爣浣嶇疆涓轰腑蹇?
         imageView_->setMouseTracking(true);
         if (imageView_->viewport()) {
             imageView_->viewport()->setMouseTracking(true);
             imageView_->viewport()->installEventFilter(this);
         }
 
-        // 三维场景页：QOpenGLWidget 点云预览
+        // 涓夌淮鍦烘櫙椤碉細QOpenGLWidget 鐐逛簯棰勮
         scene3DWidget_ = new Scene3DWidget(tabs_);
         panorama360Widget_ = new Panorama360Widget(tabs_);
 
@@ -1813,14 +1862,103 @@
         }, bottomTabs_);
         bottomTabs_->addTab(aiPanel, QString());
 
-        // 设置分割器拉伸比例（控件随窗口缩放时的比例分配）
-        root->setStretchFactor(0, 1);  // 第0个（图层树）：拉伸因子 = 1
-        root->setStretchFactor(1, 5);  // 第1个（右侧区域）：拉伸因子 = 5
-        right->setStretchFactor(0, 5); // 第0个（影像标签页）：拉伸因子 = 5
-        right->setStretchFactor(1, 2); // 第1个（日志面板）：拉伸因子 = 2
+        auto *toolBar = new QToolBar(QStringLiteral("Tools"), this);
+        toolBar->setObjectName(QStringLiteral("mainToolBar"));
+        toolBar->setMovable(false);
+        toolBar->setFloatable(false);
+        toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        addToolBar(Qt::TopToolBarArea, toolBar);
+
+        if (loadRasterAction_) {
+            loadRasterAction_->setIcon(iconForKey(QStringLiteral("action.load_raster")));
+            toolBar->addAction(loadRasterAction_);
+        }
+        if (loadPointCloudAction_) {
+            loadPointCloudAction_->setIcon(iconForKey(QStringLiteral("action.load_pointcloud")));
+            toolBar->addAction(loadPointCloudAction_);
+        }
+        if (loadMeshAction_) {
+            loadMeshAction_->setIcon(iconForKey(QStringLiteral("action.load_mesh")));
+            toolBar->addAction(loadMeshAction_);
+        }
+        if (loadDemAction_) {
+            loadDemAction_->setIcon(iconForKey(QStringLiteral("action.load_dem")));
+            toolBar->addAction(loadDemAction_);
+        }
+
+        toolBar->addSeparator();
+        auto *exportSelectedAction =
+            toolBar->addAction(iconForKey(QStringLiteral("action.export")),
+                               QStringLiteral("Export Layer"));
+        exportSelectedAction->setToolTip(QStringLiteral("Export the first selected exportable layer."));
+        connect(exportSelectedAction, &QAction::triggered, this, [this]() {
+            const auto indices = selectedLayerIndices();
+            for (int index : indices) {
+                if (canExportLayer(index)) {
+                    exportLayerImage(index);
+                    return;
+                }
+            }
+            QMessageBox::information(this, QStringLiteral("Export Layer"),
+                                     QStringLiteral("Please select an exportable layer on the left first."));
+        });
+        if (deleteLayerAction_) {
+            deleteLayerAction_->setIcon(iconForKey(QStringLiteral("action.delete_layer")));
+            toolBar->addAction(deleteLayerAction_);
+        }
+        if (clearProjectAction_) {
+            clearProjectAction_->setIcon(iconForKey(QStringLiteral("action.clear_project")));
+            toolBar->addAction(clearProjectAction_);
+        }
+
+        toolBar->addSeparator();
+        if (renderAction_) {
+            renderAction_->setIcon(iconForKey(QStringLiteral("action.render")));
+            toolBar->addAction(renderAction_);
+        }
+        auto *zoomInAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#2f80ed")), QStringLiteral("+")), QStringLiteral("Zoom In"));
+        connect(zoomInAction, &QAction::triggered, this, [this]() {
+            if (!imageView_) {
+                return;
+            }
+            tabs_->setCurrentWidget(imageView_);
+            imageView_->scale(1.25, 1.25);
+        });
+        auto *zoomOutAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#56ccf2")), QStringLiteral("-")), QStringLiteral("Zoom Out"));
+        connect(zoomOutAction, &QAction::triggered, this, [this]() {
+            if (!imageView_) {
+                return;
+            }
+            tabs_->setCurrentWidget(imageView_);
+            imageView_->scale(0.8, 0.8);
+        });
+        auto *fitViewAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#27ae60")), QStringLiteral("FIT")), QStringLiteral("Fit View"));
+        connect(fitViewAction, &QAction::triggered, this, [this]() {
+            if (!imageView_ || !imageScene_ || imageScene_->sceneRect().isEmpty()) {
+                return;
+            }
+            tabs_->setCurrentWidget(imageView_);
+            imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
+        });
+
+        toolBar->addSeparator();
+        auto *aiAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#9b51e0")), QStringLiteral("AI")), QStringLiteral("AI 助手"));
+        connect(aiAction, &QAction::triggered, this, [this, aiPanel]() {
+            bottomTabs_->setCurrentWidget(aiPanel);
+        });
+
+        // 璁剧疆鍒嗗壊鍣ㄦ媺浼告瘮渚嬶紙鎺т欢闅忕獥鍙ｇ缉鏀炬椂鐨勬瘮渚嬪垎閰嶏級
+        root->setStretchFactor(0, 1);  // 绗?涓紙鍥惧眰鏍戯級锛氭媺浼稿洜瀛?= 1
+        root->setStretchFactor(1, 5);  // 绗?涓紙鍙充晶鍖哄煙锛夛細鎷変几鍥犲瓙 = 5
+        right->setStretchFactor(0, 5); // 绗?涓紙褰卞儚鏍囩椤碉級锛氭媺浼稿洜瀛?= 5
+        right->setStretchFactor(1, 2); // 绗?涓紙鏃ュ織闈㈡澘锛夛細鎷変几鍥犲瓙 = 2
         right->setSizes({620, 300});
 
-        setCentralWidget(root); // 将分割器设为窗口的中心控件（填满整个窗口）
+        setCentralWidget(root); // 灏嗗垎鍓插櫒璁句负绐楀彛鐨勪腑蹇冩帶浠讹紙濉弧鏁翠釜绐楀彛锛?
 
         coordLabel_ = new QLabel(QStringLiteral(""), this);
         coordLabel_->setMinimumWidth(260);
@@ -1833,7 +1971,7 @@
         setStyleSheet(AppTheme::instance().mainWindowStyleSheet());
     }
 
-    // 打开文件对话框选择遥感影像，使用 GDAL 读取并加载到图层管理器
+    // 鎵撳紑鏂囦欢瀵硅瘽妗嗛€夋嫨閬ユ劅褰卞儚锛屼娇鐢?GDAL 璇诲彇骞跺姞杞藉埌鍥惧眰绠＄悊鍣?
     void MainWindow::openRasterDatasets() {
         const auto &t = Translation::instance();
         const QStringList paths = QFileDialog::getOpenFileNames(
@@ -1873,14 +2011,14 @@
                         QMessageBox::information(this, t.tr(QStringLiteral("geo.title")), body);
                     }
                     layers_.add(raster);
-                    appendLog(QStringLiteral("已加载影像：%1（%2 波段，%3x%4）")
+                    appendLog(QStringLiteral("Loaded point cloud: %1, %2 points, bounds %3x%4x%5")
                                 .arg(info.fileName())
                                 .arg(raster->bandCount())
                                 .arg(raster->bandCount() > 0 ? raster->band(0).width : 0)
                                 .arg(raster->bandCount() > 0 ? raster->band(0).height : 0));
                 }
             } catch (const std::exception &e) {
-                appendLog(QStringLiteral("加载失败 [%1]：%2")
+                appendLog(QStringLiteral("鍔犺浇澶辫触 [%1]锛?2")
                             .arg(info.fileName(), QString::fromUtf8(e.what())));
             }
         }
@@ -1888,7 +2026,7 @@
         updateActionStates();
     }
 
-    // 加载点云：支持 PLY、XYZ、LAS 格式
+    // 鍔犺浇鐐逛簯锛氭敮鎸?PLY銆乆YZ銆丩AS 鏍煎紡
     void MainWindow::openPointCloud() {
         const auto &t = Translation::instance();
         const QString path = QFileDialog::getOpenFileName(
@@ -1904,10 +2042,10 @@
 
         try {
             if (ext == QStringLiteral("xyz")) {
-                // XYZ 文本格式
+                // XYZ 鏂囨湰鏍煎紡
                 QFile file(path);
                 if (!file.open(QIODevice::ReadOnly)) {
-                    throw std::runtime_error("无法打开文件");
+                    throw std::runtime_error("鏃犳硶鎵撳紑鏂囦欢");
                 }
                 QTextStream in(&file);
                 while (!in.atEnd()) {
@@ -1922,18 +2060,18 @@
                 }
                 file.close();
             } else if (ext == QStringLiteral("ply")) {
-                // PLY 格式（支持 ASCII 和二进制小端）
+                // PLY 鏍煎紡锛堟敮鎸?ASCII 鍜屼簩杩涘埗灏忕锛?
                 QFile file(path);
                 if (!file.open(QIODevice::ReadOnly)) {
-                    throw std::runtime_error("无法打开 PLY 文件");
+                    throw std::runtime_error("鏃犳硶鎵撳紑 PLY 鏂囦欢");
                 }
                 QByteArray allData = file.readAll();
                 file.close();
 
-                // ── 解析文本头 ──
+                // 鈹€鈹€ 瑙ｆ瀽鏂囨湰澶?鈹€鈹€
                 int headerEndPos = allData.indexOf("end_header");
                 if (headerEndPos < 0) {
-                    throw std::runtime_error("PLY 缺少 end_header");
+                    throw std::runtime_error("PLY 缂哄皯 end_header");
                 }
                 int nlPos = allData.indexOf('\n', headerEndPos);
                 int headerBytes = (nlPos >= 0) ? nlPos + 1 : allData.size();
@@ -1964,7 +2102,7 @@
                 }
 
                 if (vertexCount <= 0) {
-                    throw std::runtime_error("PLY 顶点数量无效");
+                    throw std::runtime_error("PLY 椤剁偣鏁伴噺鏃犳晥");
                 }
 
                 if (isAscii) {
@@ -1991,9 +2129,9 @@
                         }
                     }
                 } else {
-                    // 二进制 PLY（小端 float）
+                    // 浜岃繘鍒?PLY锛堝皬绔?float锛?
                     if (propCount < 3) {
-                        throw std::runtime_error("PLY 顶点属性数不足");
+                        throw std::runtime_error("PLY 椤剁偣灞炴€ф暟涓嶈冻");
                     }
                     int vertexSize = propCount * sizeof(float);
                     const char *vertexData = allData.constData() + headerBytes;
@@ -2007,22 +2145,22 @@
                     }
                 }
             } else if (ext == QStringLiteral("las")) {
-                // LAS 格式（使用已定义的 readLasPoints 辅助函数）
-                // 需要对应的辅助函数在文件上方定义（其他同学已添加）
+                // LAS 鏍煎紡锛堜娇鐢ㄥ凡瀹氫箟鐨?readLasPoints 杈呭姪鍑芥暟锛?
+                // 闇€瑕佸搴旂殑杈呭姪鍑芥暟鍦ㄦ枃浠朵笂鏂瑰畾涔夛紙鍏朵粬鍚屽宸叉坊鍔狅級
                 QFile lasFile(path);
                 if (!lasFile.open(QIODevice::ReadOnly)) {
-                    throw std::runtime_error("无法打开 LAS 文件");
+                    throw std::runtime_error("鏃犳硶鎵撳紑 LAS 鏂囦欢");
                 }
-                // LAS 格式使用完整的二进制读取方法
+                // LAS 鏍煎紡浣跨敤瀹屾暣鐨勪簩杩涘埗璇诲彇鏂规硶
                 QByteArray lasData = lasFile.readAll();
                 lasFile.close();
-                // 简单 LAS 读取：仅读取 xyz 点
+                // 绠€鍗?LAS 璇诲彇锛氫粎璇诲彇 xyz 鐐?
                 if (lasData.size() < 227) {
-                    throw std::runtime_error("LAS 文件头不完整");
+                    throw std::runtime_error("LAS 鏂囦欢澶翠笉瀹屾暣");
                 }
                 const unsigned char *hdr = reinterpret_cast<const unsigned char *>(lasData.constData());
                 if (hdr[0] != 'L' || hdr[1] != 'A' || hdr[2] != 'S' || hdr[3] != 'F') {
-                    throw std::runtime_error("无效的 LAS 签名");
+                    throw std::runtime_error("鏃犳晥鐨?LAS 绛惧悕");
                 }
                 quint32 offset = *reinterpret_cast<const quint32 *>(hdr + 96);
                 quint16 recLen = *reinterpret_cast<const quint16 *>(hdr + 105);
@@ -2034,7 +2172,7 @@
                 double yOff = *reinterpret_cast<const double *>(hdr + 163);
                 double zOff = *reinterpret_cast<const double *>(hdr + 171);
                 if (recLen < 12)
-                    throw std::runtime_error("LAS 记录长度无效");
+                    throw std::runtime_error("LAS 璁板綍闀垮害鏃犳晥");
                 quint64 totalPoints = ptCount;
                 if (totalPoints == 0 && lasData.size() >= 255) {
                     totalPoints = *reinterpret_cast<const quint64 *>(hdr + 247);
@@ -2042,7 +2180,7 @@
                 quint64 maxRead = (lasData.size() - offset) / recLen;
                 quint64 n = std::min(totalPoints, maxRead);
                 if (n > 10000000)
-                    n = 10000000; // 最多读取 1000 万点
+                    n = 10000000; // 鏈€澶氳鍙?1000 涓囩偣
                 points.reserve(static_cast<int>(n));
                 for (quint64 i = 0; i < n; ++i) {
                     const char *rec = lasData.constData() + offset + i * recLen;
@@ -2054,32 +2192,32 @@
                                             static_cast<float>(iz * zScale + zOff)));
                 }
             } else {
-                throw std::runtime_error("不支持的格式");
+                throw std::runtime_error("涓嶆敮鎸佺殑鏍煎紡");
             }
 
             if (points.isEmpty()) {
-                throw std::runtime_error("未能读取到任何点数据");
+                throw std::runtime_error("鏈兘璇诲彇鍒颁换浣曠偣鏁版嵁");
             }
 
             auto layer = std::make_shared<PointCloudLayer>(info.fileName(), path, points);
             layers_.add(layer);
             appendLog(
-                QStringLiteral("已加载点云：%1（%2 个点）").arg(info.fileName()).arg(points.size()));
+                QStringLiteral("Loaded point cloud: %1, %2 points").arg(info.fileName()).arg(points.size()));
 
-            // 在三维窗口中显示点云
+            // 鍦ㄤ笁缁寸獥鍙ｄ腑鏄剧ず鐐逛簯
             scene3DWidget_->setPoints(points);
             tabs_->setCurrentWidget(scene3DWidget_);
         } catch (const std::exception &e) {
-            appendLog(QStringLiteral("点云加载失败 [%1]：%2")
+            appendLog(QStringLiteral("鐐逛簯鍔犺浇澶辫触 [%1]锛?2")
                         .arg(info.fileName(), QString::fromUtf8(e.what())));
         }
         refreshLayerTree();
         updateActionStates();
     }
 
-    // 加载三维网格模型
-    // 在后台线程解析 Mesh 文件（OBJ/PLY），避免阻塞 UI
-    // 在后台线程解析 Mesh 文件（OBJ/PLY），避免阻塞 UI
+    // 鍔犺浇涓夌淮缃戞牸妯″瀷
+    // 鍦ㄥ悗鍙扮嚎绋嬭В鏋?Mesh 鏂囦欢锛圤BJ/PLY锛夛紝閬垮厤闃诲 UI
+    // 鍦ㄥ悗鍙扮嚎绋嬭В鏋?Mesh 鏂囦欢锛圤BJ/PLY锛夛紝閬垮厤闃诲 UI
     void MainWindow::openMesh() {
         const auto &t = Translation::instance();
         const QString path = QFileDialog::getOpenFileName(
@@ -2091,18 +2229,18 @@
         const QFileInfo info(path);
         const QString ext = info.suffix().toLower();
 
-        // 显示进度对话框，让用户知道正在加载
+        // 鏄剧ず杩涘害瀵硅瘽妗嗭紝璁╃敤鎴风煡閬撴鍦ㄥ姞杞?
         auto *dialog = new QProgressDialog(
-            QStringLiteral("正在加载 Mesh：%1 ...").arg(info.fileName()),
+            QStringLiteral("姝ｅ湪鍔犺浇 Mesh锛?1 ...").arg(info.fileName()),
             QString(), 0, 0, this);
-        dialog->setWindowTitle(QStringLiteral("加载中"));
+        dialog->setWindowTitle(QStringLiteral("Band rendering"));
         dialog->setWindowModality(Qt::WindowModal);
         dialog->setCancelButton(nullptr);
         dialog->show();
-        // 粉色风格，匹配三维场景配色
+        // 绮夎壊椋庢牸锛屽尮閰嶄笁缁村満鏅厤鑹?
         dialog->setStyleSheet(QStringLiteral("QProgressDialog{background-color:#FFF0F5;}QLabel{color:#8B3A62;font:bold;padding:8px;}QProgressBar{border:1px solid #DDA0DD;border-radius:4px;background-color:#FFE4E9;text-align:center;height:20px;}QProgressBar::chunk{background-color:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0#FFB6C1,stop:0.5#FF69B4,stop:1#DB7093);border-radius:3px;}"));
 
-        // 后台解析文件（不能在后台线程操作 Qt UI）
+        // 鍚庡彴瑙ｆ瀽鏂囦欢锛堜笉鑳藉湪鍚庡彴绾跨▼鎿嶄綔 Qt UI锛?
         auto *watcher = new QFutureWatcher<LoadedMeshData>(this);
         watcher->setFuture(QtConcurrent::run([path, ext]() -> LoadedMeshData {
             QVector<QVector3D> vertices;
@@ -2111,7 +2249,7 @@
             if (ext == QStringLiteral("obj")) {
                 QFile file(path);
                 if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                    throw std::runtime_error("无法打开 OBJ 文件");
+                    throw std::runtime_error("鏃犳硶鎵撳紑 OBJ 鏂囦欢");
                 }
                 QTextStream in(&file);
                 while (!in.atEnd()) {
@@ -2145,17 +2283,17 @@
                 vertices = plyMesh.vertices;
                 faces = plyMesh.faces;
             } else {
-                throw std::runtime_error("不支持的格式: " + ext.toStdString() + "，仅支持 OBJ/PLY");
+                throw std::runtime_error("涓嶆敮鎸佺殑鏍煎紡: " + ext.toStdString() + "锛屼粎鏀寔 OBJ/PLY");
             }
 
             if (vertices.isEmpty()) {
-                throw std::runtime_error("未能读取到任何顶点数据");
+                throw std::runtime_error("No vertex data was read");
             }
 
             return {vertices, faces};
         }));
 
-        // 后台解析完成后，切回主线程更新界面
+        // 鍚庡彴瑙ｆ瀽瀹屾垚鍚庯紝鍒囧洖涓荤嚎绋嬫洿鏂扮晫闈?
         connect(watcher, &QFutureWatcher<LoadedMeshData>::finished, this,
                 [this, watcher, info, path, dialog]() {
             dialog->accept();
@@ -2172,18 +2310,18 @@
                 tabs_->setCurrentWidget(scene3DWidget_);
                 scene3DWidget_->update();
                 if (faces.isEmpty()) {
-                    appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，未读取到三角面，已在三维场景显示顶点）")
+                    appendLog(QStringLiteral("Loaded mesh: %1, %2 vertices")
                                 .arg(info.fileName())
                                 .arg(vertices.size()));
                 } else {
-                    appendLog(QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")
+                    appendLog(QStringLiteral("Loaded mesh: %1, %2 vertices, %3 faces")
                                 .arg(info.fileName())
                                 .arg(vertices.size())
                                 .arg(faces.size()));
-                    appendLog(QStringLiteral("三维场景已完整显示 Mesh，使用 VBO/索引缓冲与平滑法线改善性能和细节。"));
+                    appendLog(QStringLiteral("Mesh preview loaded."));
                 }
             } catch (const std::exception &e) {
-                appendLog(QStringLiteral("Mesh 加载失败 [%1]：%2")
+                appendLog(QStringLiteral("Mesh 鍔犺浇澶辫触 [%1]锛?2")
                             .arg(info.fileName(), QString::fromUtf8(e.what())));
             }
 
@@ -2193,7 +2331,7 @@
             updateActionStates();
         });
 
-        // 进入模态事件循环，保持 UI 响应，直到后台解析完成
+        // 杩涘叆妯℃€佷簨浠跺惊鐜紝淇濇寔 UI 鍝嶅簲锛岀洿鍒板悗鍙拌В鏋愬畬鎴?
         dialog->exec();
     }
     void MainWindow::openDem() {
@@ -2208,17 +2346,17 @@
         try {
             const auto dem = io::loadDemDataset(path, info.fileName());
             layers_.add(dem);
-            appendLog(QStringLiteral("已加载 DEM：%1（%2x%3）")
+            appendLog(QStringLiteral("Loaded DEM: %1, %2x%3")
                         .arg(info.fileName())
                         .arg(dem->width())
                         .arg(dem->height()));
         } catch (const std::exception &e) {
             const QString reason = QString::fromUtf8(e.what());
-            appendLog(QStringLiteral("DEM 加载失败 [%1]：%2").arg(info.fileName(), reason));
-            if (reason.contains(QStringLiteral("未启用 GDAL"))) {
-                QMessageBox::warning(this, QStringLiteral("GDAL 未启用"),
-                                    QStringLiteral("当前构建未启用 GDAL，无法读取 DEM 文件。\n"
-                                                    "请使用 MSYS2 脚本 build_msys2_ucrt.ps1 构建，或在 CMake 中启用 GDAL。"));
+            appendLog(QStringLiteral("DEM 鍔犺浇澶辫触 [%1]锛?2").arg(info.fileName(), reason));
+            if (reason.contains(QStringLiteral("鏈惎鐢?GDAL"))) {
+                QMessageBox::warning(this, QStringLiteral("GDAL unavailable"),
+                                    QStringLiteral("褰撳墠鏋勫缓鏈惎鐢?GDAL锛屾棤娉曡鍙?DEM 鏂囦欢銆俓n"
+                                                    "Please build with GDAL enabled."));
             }
         }
         refreshLayerTree();
@@ -2242,7 +2380,7 @@
 
         if (image.isNull()) {
             const QString qtError = reader.errorString();
-            appendLog(QStringLiteral("Qt 读取 360 街景图失败：%1；尝试使用 GDAL 兜底。").arg(qtError));
+            appendLog(QStringLiteral("Qt failed to load panorama image: %1").arg(qtError));
 
             try {
                 const auto raster = io::loadRasterDataset(path);
@@ -2254,7 +2392,7 @@
                     loadDetail = QStringLiteral("GDAL gray fallback");
                 }
             } catch (const std::exception &e) {
-                appendLog(QStringLiteral("GDAL 兜底读取也失败：%1").arg(QString::fromUtf8(e.what())));
+                appendLog(QStringLiteral("GDAL 鍏滃簳璇诲彇涔熷け璐ワ細%1").arg(QString::fromUtf8(e.what())));
             }
 
             if (image.isNull()) {
@@ -2264,9 +2402,9 @@
                 }
                 const QString formats = formatNames.join(QStringLiteral(", "));
                 QMessageBox::warning(
-                    this, QStringLiteral("加载失败"),
-                    QStringLiteral("无法读取该图片文件。\n\nQt 错误：%1\n\n当前 Qt 可用图片格式：%2\n\n"
-                                   "请确认运行目录下存在 imageformats/qjpeg 或 qjpegd 插件。")
+                    this, QStringLiteral("鍔犺浇澶辫触"),
+                    QStringLiteral("Unable to read this image file.\n\nQt error: %1\n\nAvailable Qt image formats: %2\n\n"
+                                   "Please ensure Qt image plugins are deployed.")
                         .arg(qtError, formats));
                 return;
             }
@@ -2276,7 +2414,7 @@
         if (image.height() > 0) {
             const double ratio = static_cast<double>(image.width()) / static_cast<double>(image.height());
             if (std::abs(ratio - 2.0) > 0.25) {
-                appendLog(QStringLiteral("提示：当前 360 图片比例为 %1:1，非标准 2:1，仍按全景显示。")
+                appendLog(QStringLiteral("Panorama aspect ratio warning: %1:1." )
                               .arg(ratio, 0, 'f', 2));
             }
         }
@@ -2286,21 +2424,21 @@
         revealLayerInTree(layerIndex);
         panorama360Widget_->setPanorama(image, info.fileName());
         tabs_->setCurrentWidget(panorama360Widget_);
-        appendLog(QStringLiteral("已加载 360 街景图：%1（%2x%3）")
+        appendLog(QStringLiteral("Loaded 360 panorama: %1, %2x%3")
                       .arg(info.fileName())
                       .arg(image.width())
                       .arg(image.height()));
-        appendLog(QStringLiteral("360 街景图读取方式：%1").arg(loadDetail));
+        appendLog(QStringLiteral("360 琛楁櫙鍥捐鍙栨柟寮忥細%1").arg(loadDetail));
     }
 
-    // 删除图层树中选中的图层
+    // 鍒犻櫎鍥惧眰鏍戜腑閫変腑鐨勫浘灞?
     void MainWindow::deleteSelectedLayers() {
         const auto indices = selectedLayerIndices();
         if (indices.empty()) {
             return;
         }
 
-        // 检查是否有被删除的三维图层，如有则清空三维场景
+        // 妫€鏌ユ槸鍚︽湁琚垹闄ょ殑涓夌淮鍥惧眰锛屽鏈夊垯娓呯┖涓夌淮鍦烘櫙
         bool has3DLayer = false;
         bool hasPanoramaLayer = false;
         for (const int idx : indices) {
@@ -2324,19 +2462,19 @@
             panorama360Widget_->clearPanorama();
         }
         refreshLayerTree();
-        appendLog(QStringLiteral("已删除 %1 个选中图层。").arg(indices.size()));
+        appendLog(QStringLiteral("Deleted %1 selected layer(s).").arg(indices.size()));
         updateActionStates();
     }
 
-    // 清空所有图层，重置工程
+    // 娓呯┖鎵€鏈夊浘灞傦紝閲嶇疆宸ョ▼
     void MainWindow::clearProject() {
-        layers_.clear();      // 清空所有图层
-        imageScene_->clear(); // 清空图像场景
+        layers_.clear();      // 娓呯┖鎵€鏈夊浘灞?
+        imageScene_->clear(); // 娓呯┖鍥惧儚鍦烘櫙
         scene3DWidget_->clearData();
         panorama360Widget_->clearPanorama();
-        refreshLayerTree();   // 刷新图层树
-        appendLog(QStringLiteral("工程已初始化。"));
-        updateActionStates(); // 更新菜单所有操作按钮的状态
+        refreshLayerTree();   // 鍒锋柊鍥惧眰鏍?
+        appendLog(QStringLiteral("Project cleared."));
+        updateActionStates(); // 鏇存柊鑿滃崟鎵€鏈夋搷浣滄寜閽殑鐘舵€?
     }
 
     void MainWindow::closeEvent(QCloseEvent *event) {
@@ -2405,7 +2543,7 @@
         if (count <= 0) {
             settings.endArray();
             settings.endGroup();
-            appendLog(QStringLiteral("未发现上次加载的数据。"));
+            appendLog(QStringLiteral("No saved session found."));
             return;
         }
 
@@ -2439,13 +2577,13 @@
                 } else if (type == QStringLiteral("panorama360")) {
                     const QImage image = loadPanoramaImageSync(path);
                     if (image.isNull()) {
-                        throw std::runtime_error("无法读取 360 街景图");
+                        throw std::runtime_error("Failed to restore panorama image");
                     }
                     layer = std::make_shared<Panorama360Layer>(info.fileName(), path, image);
                 }
 
                 if (!layer) {
-                    throw std::runtime_error("未知图层类型");
+                    throw std::runtime_error("Unknown layer type");
                 }
                 layer->setVisible(visible);
                 layers_.add(layer);
@@ -2461,10 +2599,10 @@
 
         refreshLayerTree();
         updateActionStates();
-        appendLog(QStringLiteral("已恢复上次加载的数据：成功 %1 项，失败 %2 项。").arg(restored).arg(failed));
+        appendLog(QStringLiteral("Restored last session: %1 layer(s), %2 failed.").arg(restored).arg(failed));
     }
 
-    // 打开波段组合/设色对话框
+    // 鎵撳紑娉㈡缁勫悎/璁捐壊瀵硅瘽妗?
     void MainWindow::configureRasterRendering() {
         const auto raster = selectedRaster();
         if (!raster) {
@@ -2498,50 +2636,49 @@
         }
 
         if (image.isNull()) {
-            appendLog(QStringLiteral("渲染失败：%1，请确认加载时已读取像素样本且波段索引有效。")
-                        .arg(raster->name()));
+            appendLog(QStringLiteral("Render failed for %1").arg(raster->name()));
             return;
         }
         raster->setCurrentDisplayImage(image);
         raster->setRenderDescription(description);
         displayRaster(raster, -1);
-        appendLog(QStringLiteral("已渲染影像：%1，%2。").arg(raster->name(), description));
+        appendLog(QStringLiteral("Displayed raster: %1, %2").arg(raster->name(), description));
     }
 
-    // 执行灰度直方图算法
+    // 鎵ц鐏板害鐩存柟鍥剧畻娉?
     void MainWindow::runHistogram() {
         const auto raster = selectedRaster();
         if (!raster) {
-            appendLog(QStringLiteral("请先选择一个遥感影像图层。"));
+            appendLog(QStringLiteral("Please select a raster layer."));
             return;
         }
 
         const int bandIdx = selectedBandIndex();
         const int bandCount = raster->bandCount();
 
-        // 让用户选择波段
+        // 璁╃敤鎴烽€夋嫨娉㈡
         int targetBand = bandIdx >= 0 && bandIdx < bandCount ? bandIdx : 0;
         if (bandCount > 1) {
             QStringList bandNames;
             for (int i = 0; i < bandCount; ++i)
                 bandNames << QStringLiteral("Band %1").arg(i + 1);
             bool ok = false;
-            const QString chosen = QInputDialog::getItem(this, QStringLiteral("选择波段"),
-                                                        QStringLiteral("请选择要统计直方图的波段："),
+            const QString chosen = QInputDialog::getItem(this, QStringLiteral("閫夋嫨娉㈡"),
+                                                        QStringLiteral("璇烽€夋嫨瑕佺粺璁＄洿鏂瑰浘鐨勬尝娈碉細"),
                                                         bandNames, targetBand, false, &ok);
             if (!ok)
                 return;
             targetBand = bandNames.indexOf(chosen);
         }
 
-        // 让用户输入分箱数
+        // 璁╃敤鎴疯緭鍏ュ垎绠辨暟
         bool ok = false;
-        const int bins = QInputDialog::getInt(this, QStringLiteral("直方图参数"),
-                                            QStringLiteral("分箱数："), 256, 2, 65536, 1, &ok);
+        const int bins = QInputDialog::getInt(this, QStringLiteral("Histogram"),
+                                            QStringLiteral("鍒嗙鏁帮細"), 256, 2, 65536, 1, &ok);
         if (!ok)
             return;
 
-        // 执行算法（先模拟，等人员二实现后替换以下代码）
+        // 鎵ц绠楁硶锛堝厛妯℃嫙锛岀瓑浜哄憳浜屽疄鐜板悗鏇挎崲浠ヤ笅浠ｇ爜锛?
         ProcessingContext ctx;
         ctx.bandIndex = targetBand;
         ctx.parameters[QStringLiteral("bins")] = bins;
@@ -2549,14 +2686,14 @@
 
         HistogramAlgorithm algorithm;
         const auto result = algorithm.execute(*raster, ctx);
-        applyProcessingResult(result, raster, QStringLiteral("灰度直方图"), QStringLiteral("_直方图"));
+        applyProcessingResult(result, raster, QStringLiteral("Gray histogram"), QStringLiteral("_histogram"));
     }
 
-    // 执行直方图均衡化算法
+    // 鎵ц鐩存柟鍥惧潎琛″寲绠楁硶
     void MainWindow::runHistogramEqualization() {
         const auto raster = selectedRaster();
         if (!raster) {
-            appendLog(QStringLiteral("请先选择一个遥感影像图层。"));
+            appendLog(QStringLiteral("Please select a raster layer."));
             return;
         }
 
@@ -2566,26 +2703,26 @@
         executeRasterAlgorithm(algorithm, ctx);
     }
 
-    // 执行 ORB/SIFT 特征提取
+    // 鎵ц ORB/SIFT 鐗瑰緛鎻愬彇
     void MainWindow::runFeatureExtraction() {
         const auto raster = selectedRaster();
         if (!raster) {
-            appendLog(QStringLiteral("请先选择一个遥感影像图层。"));
+            appendLog(QStringLiteral("Please select a raster layer."));
             return;
         }
 
-        // 让用户选择特征提取方法
+        // 璁╃敤鎴烽€夋嫨鐗瑰緛鎻愬彇鏂规硶
         QStringList methods = {QStringLiteral("ORB"), QStringLiteral("SIFT"), QStringLiteral("AKAZE")};
         bool ok = false;
         const QString method =
-            QInputDialog::getItem(this, QStringLiteral("特征提取方法"),
-                                QStringLiteral("请选择特征提取方法："), methods, 0, false, &ok);
+            QInputDialog::getItem(this, QStringLiteral("鐗瑰緛鎻愬彇鏂规硶"),
+                                QStringLiteral("Choose feature method:"), methods, 0, false, &ok);
         if (!ok)
             return;
 
-        // 让用户输入最大特征数
+        // 璁╃敤鎴疯緭鍏ユ渶澶х壒寰佹暟
         const int maxFeatures =
-            QInputDialog::getInt(this, QStringLiteral("特征提取参数"), QStringLiteral("最大特征数："),
+            QInputDialog::getInt(this, QStringLiteral("Feature extraction"), QStringLiteral("Max features:"),
                                 2000, 10, 100000, 100, &ok);
         if (!ok)
             return;
@@ -2598,9 +2735,9 @@
         executeRasterAlgorithm(algorithm, ctx);
     }
 
-    // 执行 DEM 重建流程
+    // 鎵ц DEM 閲嶅缓娴佺▼
     void MainWindow::runDemReconstruction() {
-        // 需要选中两个栅格影像
+        // 闇€瑕侀€変腑涓や釜鏍呮牸褰卞儚
         const auto indices = selectedLayerIndices();
         std::vector<std::shared_ptr<RasterLayer>> selectedRasters;
         for (const int idx : indices) {
@@ -2613,30 +2750,30 @@
         }
 
         if (selectedRasters.size() < 2) {
-            appendLog(QStringLiteral("请选中两个遥感影像作为立体像对（左影像和右影像）。"));
+            appendLog(QStringLiteral("DEM reconstruction requires two raster layers."));
             return;
         }
 
         const auto &leftImage = selectedRasters[0];
         const auto &rightImage = selectedRasters[1];
 
-        // 让用户选择输出目录
+        // 璁╃敤鎴烽€夋嫨杈撳嚭鐩綍
         const QString outputDir =
-            QFileDialog::getExistingDirectory(this, QStringLiteral("选择 DEM 输出目录"), QString());
+            QFileDialog::getExistingDirectory(this, QStringLiteral("閫夋嫨 DEM 杈撳嚭鐩綍"), QString());
         if (outputDir.isEmpty())
             return;
 
-        // DEM 重建在后台线程执行，避免 SGBM 阻塞 UI
+        // DEM 閲嶅缓鍦ㄥ悗鍙扮嚎绋嬫墽琛岋紝閬垮厤 SGBM 闃诲 UI
         const auto leftCopy = leftImage;
         const auto rightCopy = rightImage;
         const QString outputDirCopy = outputDir;
 
-        auto *progress = new QProgressDialog(QStringLiteral("正在执行 SGBM 立体匹配，请稍候…"), QString(),
+        auto *progress = new QProgressDialog(QStringLiteral("Running SGBM dense matching..."), QString(),
                                             0, 0, this);
         progress->setWindowModality(Qt::WindowModal);
         progress->setCancelButton(nullptr);
         progress->setMinimumDuration(0);
-        progress->setWindowTitle(QStringLiteral("DEM 重建"));
+        progress->setWindowTitle(QStringLiteral("DEM 閲嶅缓"));
         progress->show();
         QApplication::processEvents();
 
@@ -2651,15 +2788,15 @@
 
                     appendLog(result.message);
                     if (result.demResult) {
-                        result.demResult->setTreeGroup(QStringLiteral("DEM 重建"));
+                        result.demResult->setTreeGroup(QStringLiteral("DEM 閲嶅缓"));
                         layers_.add(result.demResult);
                     }
                     if (!result.image.isNull()) {
                         auto preview = std::make_shared<RasterLayer>(
-                            leftCopy->name() + QStringLiteral("_DEM预览"), QString(),
+                            leftCopy->name() + QStringLiteral("_DEM棰勮"), QString(),
                             QVector<RasterBand>{}, result.image);
-                        preview->setTreeGroup(QStringLiteral("DEM 重建"));
-                        preview->setRenderDescription(QStringLiteral("立体匹配预览"));
+                        preview->setTreeGroup(QStringLiteral("DEM 閲嶅缓"));
+                        preview->setRenderDescription(QStringLiteral("绔嬩綋鍖归厤棰勮"));
                         layers_.add(preview);
                     }
                     refreshLayerTree();
@@ -2678,9 +2815,9 @@
         }));
     }
 
-    // 执行正射校正流程
+    // 鎵ц姝ｅ皠鏍℃娴佺▼
     void MainWindow::runOrthorectification() {
-        // 需要选中一个影像和一个 DEM
+        // 闇€瑕侀€変腑涓€涓奖鍍忓拰涓€涓?DEM
         std::shared_ptr<RasterLayer> raster;
         std::shared_ptr<DemLayer> dem;
 
@@ -2696,26 +2833,26 @@
         }
 
         if (!raster || !dem) {
-            appendLog(QStringLiteral("请选中一个遥感影像和一个 DEM 图层。"));
+            appendLog(QStringLiteral("Please select raster and DEM layers."));
             return;
         }
 
-        // 正射校正（使用统一 ProcessingAlgorithm 接口，DEM 通过 context 传递）
+        // 姝ｅ皠鏍℃锛堜娇鐢ㄧ粺涓€ ProcessingAlgorithm 鎺ュ彛锛孌EM 閫氳繃 context 浼犻€掞級
         ProcessingContext ctx;
         ctx.auxiliaryDem = dem.get();
 
         OrthorectificationAlgorithm algorithm;
         const auto result = algorithm.execute(*raster, ctx);
         if (result.image.isNull()) {
-            appendLog(result.message.isEmpty() ? QStringLiteral("正射校正失败。") : result.message);
+            appendLog(result.message.isEmpty() ? QStringLiteral("Orthorectification failed.") : result.message);
             return;
         }
 
-        const QString resultName = raster->name() + QStringLiteral("_正射");
+        const QString resultName = raster->name() + QStringLiteral("_姝ｅ皠");
         auto resultLayer = std::make_shared<RasterLayer>(resultName, QString(), QVector<RasterBand>{},
                                                         result.image);
-        resultLayer->setRenderDescription(QStringLiteral("正射校正结果"));
-        resultLayer->setTreeGroup(QStringLiteral("正射影像校正"));
+        resultLayer->setRenderDescription(QStringLiteral("姝ｅ皠鏍℃缁撴灉"));
+        resultLayer->setTreeGroup(QStringLiteral("姝ｅ皠褰卞儚鏍℃"));
         layers_.add(resultLayer);
         refreshLayerTree();
         revealLayerInTree(layers_.size() - 1);
@@ -2740,7 +2877,7 @@
         }
 
         if (!raster || !dem) {
-            appendLog(QStringLiteral("请同时选中一个遥感影像图层和一个 DEM 图层，再执行 DEM 三维贴图。"));
+            appendLog(QStringLiteral("Please select raster and DEM layers."));
             return;
         }
 
@@ -2757,7 +2894,7 @@
         }
 
         if (texture.isNull()) {
-            appendLog(QStringLiteral("DEM 三维贴图失败：影像 %1 没有可用的渲染图像。").arg(raster->name()));
+            appendLog(QStringLiteral("DEM texture mapping completed: %1").arg(raster->name()));
             return;
         }
 
@@ -2768,19 +2905,19 @@
         QString note;
         if (raster->bandCount() > 0 &&
             (raster->band(0).width != dem->width() || raster->band(0).height != dem->height())) {
-            note = QStringLiteral("（影像与 DEM 尺寸不同，已按 DEM 网格范围拉伸贴合）");
+            note = QStringLiteral("Raster texture draped on DEM.");
         }
-        appendLog(QStringLiteral("已完成 DEM 三维贴图：DEM=%1，纹理=%2，来源=%3 %4")
+        appendLog(QStringLiteral("宸插畬鎴?DEM 涓夌淮璐村浘锛欴EM=%1锛岀汗鐞?%2锛屾潵婧?%3 %4")
                       .arg(dem->name(), raster->name(), textureSource, note));
     }
 
-    // ============ 三维点云/Mesh============
+    // ============ 涓夌淮鐐逛簯/Mesh============
 
-    // ── 导出 PLY ──
+    // 鈹€鈹€ 瀵煎嚭 PLY 鈹€鈹€
     void MainWindow::exportPly() {
         const auto indices = selectedLayerIndices();
         if (indices.empty()) {
-            appendLog(QStringLiteral("导出 PLY 提示：请先选中一个点云或 Mesh 图层。"));
+            appendLog(QStringLiteral("Export PLY failed: please select a point cloud or mesh layer."));
             return;
         }
 
@@ -2788,21 +2925,21 @@
             try {
                 auto layer = layers_.at(idx);
                 QString path = QFileDialog::getSaveFileName(
-                    this, QStringLiteral("导出 PLY"), layer->name() + QStringLiteral(".ply"),
+                    this, QStringLiteral("瀵煎嚭 PLY"), layer->name() + QStringLiteral(".ply"),
                     QStringLiteral("PLY (*.ply);;All Files (*.*)"));
                 if (path.isEmpty())
                     continue;
 
                 QFile file(path);
                 if (!file.open(QIODevice::WriteOnly)) {
-                    appendLog(QStringLiteral("无法创建文件: %1").arg(path));
+                    appendLog(QStringLiteral("鏃犳硶鍒涘缓鏂囦欢: %1").arg(path));
                     continue;
                 }
 
                 QTextStream out(&file);
 
                 if (auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
-                    // 导出点云
+                    // 瀵煎嚭鐐逛簯
                     const auto &points = pc->points();
                     out << "ply\nformat ascii 1.0\n"
                         << "element vertex " << points.size() << "\n"
@@ -2812,9 +2949,9 @@
                         out << p.x() << " " << p.y() << " " << p.z() << "\n";
                     }
                     appendLog(
-                        QStringLiteral("已导出点云 PLY：%1（%2 个点）").arg(path).arg(points.size()));
+                        QStringLiteral("Exported PLY: %1, %2 points").arg(path).arg(points.size()));
                 } else if (auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
-                    // 导出 Mesh
+                    // 瀵煎嚭 Mesh
                     const auto &verts = mesh->vertices();
                     const auto &faces = mesh->faces();
                     out << "ply\nformat ascii 1.0\n"
@@ -2829,21 +2966,21 @@
                     for (const auto &f : faces) {
                     out << "3 " << f.a << " " << f.b << " " << f.c << "\n";
                 }
-                appendLog(QStringLiteral("已导出 Mesh PLY：%1（%2 顶点，%3 面）")
+                appendLog(QStringLiteral("宸插鍑?Mesh PLY锛?1锛?2 椤剁偣锛?3 闈級")
                               .arg(path)
                               .arg(verts.size())
                               .arg(faces.size()));
             } else {
-                appendLog(QStringLiteral("选中图层不是点云或 Mesh，无法导出。"));
+                appendLog(QStringLiteral("Mesh layer has no vertices."));
             }
             file.close();
         } catch (const std::exception &e) {
-            appendLog(QStringLiteral("导出失败：%1").arg(QString::fromUtf8(e.what())));
+            appendLog(QStringLiteral("瀵煎嚭澶辫触锛?1").arg(QString::fromUtf8(e.what())));
         }
     }
 }
 
-// ── 点云体素降采样 ──
+// 鈹€鈹€ 鐐逛簯浣撶礌闄嶉噰鏍?鈹€鈹€
 void MainWindow::runPointCloudDownsample() {
     const auto indices = selectedLayerIndices();
     std::shared_ptr<PointCloudLayer> pcLayer;
@@ -2857,18 +2994,18 @@ void MainWindow::runPointCloudDownsample() {
         }
     }
     if (!pcLayer) {
-        appendLog(QStringLiteral("请先选中一个点云图层。"));
+        appendLog(QStringLiteral("Please select a point cloud layer."));
         return;
     }
 
     const auto &points = pcLayer->points();
 
-    // 体素降采样（使用统一 ProcessingAlgorithm 接口）
+    // 浣撶礌闄嶉噰鏍凤紙浣跨敤缁熶竴 ProcessingAlgorithm 鎺ュ彛锛?
     ProcessingContext ctx;
     ctx.pointCloudData = &points;
     ctx.parameters["voxelSize"] = 0.1;
 
-    // 构造一个最小 RasterLayer 满足接口要求（算法内部忽略该参数）
+    // 鏋勯€犱竴涓渶灏?RasterLayer 婊¤冻鎺ュ彛瑕佹眰锛堢畻娉曞唴閮ㄥ拷鐣ヨ鍙傛暟锛?
     RasterLayer dummyInput(pcLayer->name(), pcLayer->path());
     PointCloudVoxelDownsampleAlgorithm algo;
     const auto result = algo.execute(dummyInput, ctx);
@@ -2878,7 +3015,7 @@ void MainWindow::runPointCloudDownsample() {
         return;
     }
 
-    auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_降采样"),
+    auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_downsampled"),
                                                       QString(), result.pointCloudResult);
     layers_.add(newLayer);
     scene3DWidget_->setPoints(result.pointCloudResult);
@@ -2887,7 +3024,7 @@ void MainWindow::runPointCloudDownsample() {
     appendLog(result.message);
 }
 
-// ── 点云统计滤波 ──
+// 鈹€鈹€ 鐐逛簯缁熻婊ゆ尝 鈹€鈹€
 void MainWindow::runPointCloudFilter() {
     const auto indices = selectedLayerIndices();
     std::shared_ptr<PointCloudLayer> pcLayer;
@@ -2901,13 +3038,13 @@ void MainWindow::runPointCloudFilter() {
         }
     }
     if (!pcLayer) {
-        appendLog(QStringLiteral("请先选中一个点云图层。"));
+        appendLog(QStringLiteral("Please select a point cloud layer."));
         return;
     }
 
     const auto &points = pcLayer->points();
 
-    // 统计滤波（使用统一 ProcessingAlgorithm 接口）
+    // 缁熻婊ゆ尝锛堜娇鐢ㄧ粺涓€ ProcessingAlgorithm 鎺ュ彛锛?
     ProcessingContext ctx;
     ctx.pointCloudData = &points;
     ctx.parameters["meanK"] = 20;
@@ -2922,7 +3059,7 @@ void MainWindow::runPointCloudFilter() {
         return;
     }
 
-    auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_滤波"),
+    auto newLayer = std::make_shared<PointCloudLayer>(pcLayer->name() + QStringLiteral("_婊ゆ尝"),
                                                       QString(), result.pointCloudResult);
     layers_.add(newLayer);
     scene3DWidget_->setPoints(result.pointCloudResult);
@@ -2931,7 +3068,7 @@ void MainWindow::runPointCloudFilter() {
     appendLog(result.message);
 }
 
-// ── 点云转 DEM ──
+// 鈹€鈹€ 鐐逛簯杞?DEM 鈹€鈹€
 void MainWindow::runPointCloudToDem() {
     const auto indices = selectedLayerIndices();
     std::shared_ptr<PointCloudLayer> pcLayer;
@@ -2945,13 +3082,13 @@ void MainWindow::runPointCloudToDem() {
         }
     }
     if (!pcLayer) {
-        appendLog(QStringLiteral("请先选中一个点云图层。"));
+        appendLog(QStringLiteral("Please select a point cloud layer."));
         return;
     }
 
     const auto &points = pcLayer->points();
 
-    // 点云转 DEM（使用统一 ProcessingAlgorithm 接口）
+    // 鐐逛簯杞?DEM锛堜娇鐢ㄧ粺涓€ ProcessingAlgorithm 鎺ュ彛锛?
     ProcessingContext ctx;
     ctx.pointCloudData = &points;
     ctx.parameters["gridResolution"] = 1.0;
@@ -2971,13 +3108,13 @@ void MainWindow::runPointCloudToDem() {
     }
 }
 
-// 当图层树选中项改变时，刷新影像显示和菜单状态
+// 褰撳浘灞傛爲閫変腑椤规敼鍙樻椂锛屽埛鏂板奖鍍忔樉绀哄拰鑿滃崟鐘舵€?
 void MainWindow::onSelectionChanged() {
     const auto selected = selectedRaster();
     if (selected) {
         displayRaster(selected, selectedBandIndex());
     } else {
-        // 检查是否选中了 3D 类型的图层
+        // 妫€鏌ユ槸鍚﹂€変腑浜?3D 绫诲瀷鐨勫浘灞?
         const auto indices = selectedLayerIndices();
         for (int idx : indices) {
             try {
@@ -3016,7 +3153,7 @@ void MainWindow::onSelectionChanged() {
     updateActionStates();
 }
 
-// 当图层项的勾选状态改变时，切换其可见性
+// 褰撳浘灞傞」鐨勫嬀閫夌姸鎬佹敼鍙樻椂锛屽垏鎹㈠叾鍙鎬?
 void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
     if (rebuildingTree_ || !item || column != 0) {
         return;
@@ -3065,7 +3202,7 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
                 scene3DWidget_->clearData();
             }
         } else if (layer->type() == DataType::Raster) {
-            // 二维影像图层：刷新当前显示的影像
+            // 浜岀淮褰卞儚鍥惧眰锛氬埛鏂板綋鍓嶆樉绀虹殑褰卞儚
             const auto selected = selectedRaster();
             const auto toggled = std::dynamic_pointer_cast<RasterLayer>(layer);
             if (selected == toggled) {
@@ -3090,7 +3227,7 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
     }
 }
 
-// 右键点击图层树时弹出上下文菜单
+// 鍙抽敭鐐瑰嚮鍥惧眰鏍戞椂寮瑰嚭涓婁笅鏂囪彍鍗?
 void MainWindow::showLayerContextMenu(const QPoint &position) {
     const auto &tr = Translation::instance();
     QTreeWidgetItem *item = layerTree_->itemAt(position);
@@ -3133,7 +3270,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
                     } catch (const std::exception &) {
                     }
                 }
-                appendLog(QStringLiteral("已从树状分组导出 %1/%2 个图层。")
+                appendLog(QStringLiteral("Exported %1/%2 layers")
                               .arg(okCount)
                               .arg(exportableIndices.size()));
             });
@@ -3176,11 +3313,11 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         }
         layers_.removeMany({layerIndex});
         refreshLayerTree();
-        appendLog(QStringLiteral("已删除图层。"));
+        appendLog(QStringLiteral("Layer visibility changed."));
         updateActionStates();
     });
 
-    // ── 导出 ──
+    // 鈹€鈹€ 瀵煎嚭 鈹€鈹€
     if (canExportLayer(layerIndex)) {
         menu.addSeparator();
         QAction *exportAction = menu.addAction(tr.tr(QStringLiteral("action.export_layer")));
@@ -3192,22 +3329,22 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     QAction *zoomAction = menu.addAction(tr.tr(QStringLiteral("action.zoom_to_extent")));
     connect(zoomAction, &QAction::triggered, this, [this, layer]() {
         if (layer->type() == DataType::Raster) {
-            appendLog(QStringLiteral("TODO: 缩放至 %1 的影像范围。").arg(layer->name()));
+            appendLog(QStringLiteral("TODO: export layer %1").arg(layer->name()));
         } else if (layer->type() == DataType::PointCloud || layer->type() == DataType::Mesh) {
             scene3DWidget_->fitToBounds();
-            appendLog(QStringLiteral("缩放至 %1 的范围。").arg(layer->name()));
+            appendLog(QStringLiteral("Export layer %1").arg(layer->name()));
         } else if (layer->type() == DataType::Panorama360) {
             if (const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer)) {
                 panorama360Widget_->setPanorama(pano->image(), pano->name());
                 tabs_->setCurrentWidget(panorama360Widget_);
             }
-            appendLog(QStringLiteral("已切换到 360 街景图层：%1。").arg(layer->name()));
+            appendLog(QStringLiteral("Loaded 360 panorama layer: %1").arg(layer->name()));
         } else {
-            appendLog(QStringLiteral("TODO: 缩放至 %1 的范围。").arg(layer->name()));
+            appendLog(QStringLiteral("TODO: export layer %1").arg(layer->name()));
         }
     });
 
-    // ── 属性对话框 ──
+    // 鈹€鈹€ 灞炴€у璇濇 鈹€鈹€
     QAction *propAction = menu.addAction(tr.tr(QStringLiteral("action.properties")));
     connect(propAction, &QAction::triggered, this, [this, layer]() {
         const auto &t = Translation::instance();
@@ -3251,7 +3388,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     menu.exec(layerTree_->viewport()->mapToGlobal(position));
 }
 
-// 根据 LayerManager 中的数据重建图层树，保持展开/折叠状态
+// 鏍规嵁 LayerManager 涓殑鏁版嵁閲嶅缓鍥惧眰鏍戯紝淇濇寔灞曞紑/鎶樺彔鐘舵€?
 void MainWindow::refreshLayerTree() {
     const auto &t = Translation::instance();
     QSet<QString> expandedKeys;
@@ -3355,7 +3492,7 @@ void MainWindow::refreshLayerTree() {
     rebuildingTree_ = false;
 }
 
-// 在 QGraphicsView 中显示选中的影像（优先显示选中波段）
+// 鍦?QGraphicsView 涓樉绀洪€変腑鐨勫奖鍍忥紙浼樺厛鏄剧ず閫変腑娉㈡锛?
 void MainWindow::displayRaster(const std::shared_ptr<RasterLayer> &raster, int bandIndex) {
     const auto &t = Translation::instance();
     imageScene_->clear();
@@ -3462,7 +3599,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     return QMainWindow::eventFilter(watched, event);
 }
 
-// 获取当前选中的所有图层的索引列表（去重）
+// 鑾峰彇褰撳墠閫変腑鐨勬墍鏈夊浘灞傜殑绱㈠紩鍒楄〃锛堝幓閲嶏級
 std::vector<int> MainWindow::selectedLayerIndices() const {
     std::vector<int> indices;
     for (const auto *item : layerTree_->selectedItems()) {
@@ -3478,7 +3615,7 @@ std::vector<int> MainWindow::selectedLayerIndices() const {
     return indices;
 }
 
-// 获取当前选中的 RasterLayer（非 Raster 类型返回 nullptr）
+// 鑾峰彇褰撳墠閫変腑鐨?RasterLayer锛堥潪 Raster 绫诲瀷杩斿洖 nullptr锛?
 std::shared_ptr<RasterLayer> MainWindow::selectedRaster() const {
     auto *item = layerTree_->currentItem();
     if (!item) {
@@ -3495,7 +3632,7 @@ std::shared_ptr<RasterLayer> MainWindow::selectedRaster() const {
     }
 }
 
-// 获取当前选中的波段索引（-1 表示未选中具体波段）
+// 鑾峰彇褰撳墠閫変腑鐨勬尝娈电储寮曪紙-1 琛ㄧず鏈€変腑鍏蜂綋娉㈡锛?
 int MainWindow::selectedBandIndex() const {
     auto *item = layerTree_->currentItem();
     if (!item) {
@@ -3505,7 +3642,7 @@ int MainWindow::selectedBandIndex() const {
     return value.isValid() ? value.toInt() : -1;
 }
 
-// 根据当前选中图层的类型，更新菜单项的启用/禁用状态
+// 鏍规嵁褰撳墠閫変腑鍥惧眰鐨勭被鍨嬶紝鏇存柊鑿滃崟椤圭殑鍚敤/绂佺敤鐘舵€?
 void MainWindow::updateActionStates() {
     int selectedRasters = 0;
     int selectedDems = 0;
@@ -3567,7 +3704,7 @@ void MainWindow::updateActionStates() {
     }
 }
 
-// 在日志面板追加带时间戳的信息
+// 鍦ㄦ棩蹇楅潰鏉胯拷鍔犲甫鏃堕棿鎴崇殑淇℃伅
 void MainWindow::appendLog(const QString &text) {
     logEdit_->append(QStringLiteral("[%1] %2").arg(
         QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), text));
@@ -3614,7 +3751,7 @@ void MainWindow::refreshStartupLog() {
 void MainWindow::executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx) {
     const auto raster = selectedRaster();
     if (!raster) {
-        appendLog(QStringLiteral("请先选择一个遥感影像图层。"));
+        appendLog(QStringLiteral("Please select a raster layer."));
         return;
     }
     if (ctx.bandIndex < 0)
@@ -3672,42 +3809,42 @@ bool MainWindow::exportLayerToPath(int layerIndex, const QString &path) {
             }
         }
         if (image.isNull()) {
-            appendLog(QStringLiteral("导出失败 [%1]：没有可导出的影像。").arg(raster->name()));
+            appendLog(QStringLiteral("Export failed [%1]: image is empty.").arg(raster->name()));
             return false;
         }
         if (!image.save(path)) {
-            appendLog(QStringLiteral("导出失败：无法写入 %1").arg(path));
+            appendLog(QStringLiteral("瀵煎嚭澶辫触锛氭棤娉曞啓鍏?%1").arg(path));
             return false;
         }
-        appendLog(QStringLiteral("已导出影像：%1 → %2").arg(raster->name(), path));
+        appendLog(QStringLiteral("宸插鍑哄奖鍍忥細%1 鈫?%2").arg(raster->name(), path));
         return true;
     }
 
     if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
         try {
             io::exportDemAsGeoTiff(*dem, path);
-            appendLog(QStringLiteral("已导出 DEM：%1 → %2").arg(dem->name(), path));
+            appendLog(QStringLiteral("宸插鍑?DEM锛?1 鈫?%2").arg(dem->name(), path));
             return true;
         } catch (const std::exception &e) {
-            appendLog(QStringLiteral("DEM 导出失败：%1").arg(QString::fromUtf8(e.what())));
+            appendLog(QStringLiteral("DEM 瀵煎嚭澶辫触锛?1").arg(QString::fromUtf8(e.what())));
             return false;
         }
     }
 
     if (const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer)) {
         if (pano->image().isNull()) {
-            appendLog(QStringLiteral("导出失败 [%1]：没有可导出的街景图。").arg(pano->name()));
+            appendLog(QStringLiteral("Export failed [%1]: panorama image is empty.").arg(pano->name()));
             return false;
         }
         if (!pano->image().save(path)) {
-            appendLog(QStringLiteral("导出失败：无法写入 %1").arg(path));
+            appendLog(QStringLiteral("瀵煎嚭澶辫触锛氭棤娉曞啓鍏?%1").arg(path));
             return false;
         }
-        appendLog(QStringLiteral("已导出 360 街景图：%1 → %2").arg(pano->name(), path));
+        appendLog(QStringLiteral("宸插鍑?360 琛楁櫙鍥撅細%1 鈫?%2").arg(pano->name(), path));
         return true;
     }
 
-    appendLog(QStringLiteral("导出失败 [%1]：该图层类型暂不支持导出。").arg(layer->name()));
+    appendLog(QStringLiteral("Export failed [%1]: unsupported layer type.").arg(layer->name()));
     return false;
 }
 
@@ -3852,3 +3989,4 @@ void MainWindow::retranslateUi() {
 }
 
 } // namespace rs
+
