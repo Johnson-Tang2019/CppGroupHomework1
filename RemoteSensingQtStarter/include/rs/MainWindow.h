@@ -8,6 +8,7 @@
 #include <QAbstractItemView>
 #include <QAction> // Qt 菜单操作类，用于菜单项的启用/禁用控制
 #include <QByteArray>
+#include <QCloseEvent>
 #include <QDataStream>
 #include <QDateTime>
 #include <QEvent>
@@ -35,6 +36,7 @@
 #include <QTextStream>
 #include <QTreeWidget> // Qt 树形控件，显示图层的文件夹层级结构
 #include <QVBoxLayout>
+#include <QVector>
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -54,6 +56,9 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
   Q_OBJECT                                    // Qt 元对象编译器宏，启用信号/槽和元对象功能
 
       public : explicit MainWindow(QWidget *parent = nullptr); // 构造函数，可指定父窗口
+
+  protected:
+    void closeEvent(QCloseEvent *event) override;
 
   private slots:
     // ============ 数据加载（菜单项对应的槽函数） ============
@@ -97,10 +102,13 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void createUi();    // 构建界面布局（分割器、图层树、标签页、日志面板）
     void createMenus(); // 构建菜单栏（数据、影像处理、摄影测量/三维）
     void setupSettingsButton(); // 菜单栏右上角设置按钮
+    void applyThemeStyles();    // 应用主题配色
     void retranslateUi(); // 刷新界面语言
 
     // ============ 图层管理 ============
     void refreshLayerTree(); // 根据 LayerManager 数据重建图层树（保持展开状态）
+    void saveLastSession() const;
+    void restoreLastSession();
 
     // ============ 影像显示 ============
     void displayRaster(const std::shared_ptr<RasterLayer> &raster,
@@ -108,6 +116,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
     // ============ 日志 ============
     void appendLog(const QString &text); // 在日志面板追加带时间戳的消息
+    void refreshStartupLog();            // 刷新启动日志（随语言切换）
 
     // ============ 算法执行辅助 ============
     void executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx = {});
@@ -146,7 +155,6 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QMenu *indexMenu_{};
     QMenu *photogrammetryMenu_{};
     QMenu *pcMenu_{};
-    QMenu *aiMenu_{};
 
     QPushButton *settingsButton_{};
 
@@ -155,7 +163,6 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *loadMeshAction_{};
     QAction *loadDemAction_{};
     QAction *loadPanoramaAction_{};
-    QAction *showAiAction_{};
 
     // ============ 菜单项指针（用于启用/禁用控制） ============
     QAction *deleteLayerAction_{};  // "删除选中图层"菜单项
@@ -173,8 +180,12 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *filterAction_{};       // "统计滤波"菜单项
     QAction *pcToDemAction_{};      // "点云转 DEM"菜单项
 
+    QVector<QMenu *> translatableMenus_;
+    QVector<QAction *> translatableActions_;
+
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
+    bool startupLogPresent_{false};   // 是否已写入启动日志（用于语言切换时刷新）
     LayerManager<DataObject> layers_; // 图层管理器，管理所有数据图层（影像、点云、DEM 等）
     std::shared_ptr<RasterLayer> activeRasterForCoords_; // 当前二维视图用于显示坐标的影像
     QSize activeDisplaySizeForCoords_; // 当前二维视图显示图像的像素尺寸（用于坐标映射）
