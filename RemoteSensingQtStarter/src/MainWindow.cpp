@@ -55,6 +55,13 @@
         Band    // 波段子节点，仅信息展示
     };
 
+    struct LoadedMeshData {
+        QVector<QVector3D> vertices;
+        QVector<Face> faces;
+    };
+
+    LoadedMeshData loadMeshFromPly(const QString &path);
+
     bool hasGeoreference(const RasterLayer &raster) {
         const auto gt = raster.geoTransform();
         constexpr double eps = 1e-12;
@@ -69,6 +76,164 @@
         name.replace(invalidChars, QStringLiteral("_"));
         name = name.trimmed();
         return name.isEmpty() ? QStringLiteral("layer") : name;
+    }
+
+    QVector<QVector3D> loadPointCloudPoints(const QString &path) {
+        const QFileInfo info(path);
+        const QString ext = info.suffix().toLower();
+        QVector<QVector3D> points;
+
+        if (ext == QStringLiteral("xyz") || ext == QStringLiteral("txt") || ext == QStringLiteral("csv")) {
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                throw std::runtime_error("无法打开点云文件");
+            }
+            QTextStream in(&file);
+            while (!in.atEnd()) {
+                QString line = in.readLine().trimmed();
+                if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+                    continue;
+                }
+                line.replace(QLatin1Char(','), QLatin1Char(' '));
+                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() < 3) {
+                    continue;
+                }
+                bool xOk = false;
+                bool yOk = false;
+                bool zOk = false;
+                const float x = parts[0].toFloat(&xOk);
+                const float y = parts[1].toFloat(&yOk);
+                const float z = parts[2].toFloat(&zOk);
+                if (xOk && yOk && zOk) {
+                    points.append(QVector3D(x, y, z));
+                }
+            }
+        } else if (ext == QStringLiteral("ply")) {
+            const LoadedMeshData mesh = loadMeshFromPly(path);
+            points = mesh.vertices;
+        } else if (ext == QStringLiteral("las")) {
+            QFile lasFile(path);
+            if (!lasFile.open(QIODevice::ReadOnly)) {
+                throw std::runtime_error("无法打开 LAS 文件");
+            }
+            const QByteArray lasData = lasFile.readAll();
+            if (lasData.size() < 227) {
+                throw std::runtime_error("LAS 文件头不完整");
+            }
+            const unsigned char *hdr = reinterpret_cast<const unsigned char *>(lasData.constData());
+            if (hdr[0] != 'L' || hdr[1] != 'A' || hdr[2] != 'S' || hdr[3] != 'F') {
+                throw std::runtime_error("无效的 LAS 签名");
+            }
+            const quint32 offset = *reinterpret_cast<const quint32 *>(hdr + 96);
+            const quint16 recLen = *reinterpret_cast<const quint16 *>(hdr + 105);
+            const quint32 ptCount = *reinterpret_cast<const quint32 *>(hdr + 107);
+            const double xScale = *reinterpret_cast<const double *>(hdr + 131);
+            const double yScale = *reinterpret_cast<const double *>(hdr + 139);
+            const double zScale = *reinterpret_cast<const double *>(hdr + 147);
+            const double xOff = *reinterpret_cast<const double *>(hdr + 155);
+            const double yOff = *reinterpret_cast<const double *>(hdr + 163);
+            const double zOff = *reinterpret_cast<const double *>(hdr + 171);
+            if (recLen < 12 || static_cast<quint64>(offset) >= static_cast<quint64>(lasData.size())) {
+                throw std::runtime_error("LAS 记录信息无效");
+            }
+            quint64 totalPoints = ptCount;
+            if (totalPoints == 0 && lasData.size() >= 255) {
+                totalPoints = *reinterpret_cast<const quint64 *>(hdr + 247);
+            }
+            quint64 n = std::min(totalPoints, (static_cast<quint64>(lasData.size()) - offset) / recLen);
+            n = std::min<quint64>(n, 10000000);
+            points.reserve(static_cast<int>(n));
+            for (quint64 i = 0; i < n; ++i) {
+                const char *rec = lasData.constData() + offset + i * recLen;
+                const qint32 ix = *reinterpret_cast<const qint32 *>(rec);
+                const qint32 iy = *reinterpret_cast<const qint32 *>(rec + 4);
+                const qint32 iz = *reinterpret_cast<const qint32 *>(rec + 8);
+                points.append(QVector3D(static_cast<float>(ix * xScale + xOff),
+                                        static_cast<float>(iy * yScale + yOff),
+                                        static_cast<float>(iz * zScale + zOff)));
+            }
+        } else {
+            throw std::runtime_error("不支持的点云格式");
+        }
+
+        if (points.isEmpty()) {
+            throw std::runtime_error("未能读取到任何点数据");
+        }
+        return points;
+    }
+
+    LoadedMeshData loadMeshDataSync(const QString &path) {
+        const QFileInfo info(path);
+        const QString ext = info.suffix().toLower();
+        QVector<QVector3D> vertices;
+        QVector<Face> faces;
+
+        if (ext == QStringLiteral("obj")) {
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                throw std::runtime_error("无法打开 OBJ 文件");
+            }
+            QTextStream in(&file);
+            while (!in.atEnd()) {
+                const QString line = in.readLine().trimmed();
+                if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+                    continue;
+                }
+                const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.isEmpty()) {
+                    continue;
+                }
+                if (parts[0] == QStringLiteral("v") && parts.size() >= 4) {
+                    vertices.append(QVector3D(parts[1].toFloat(), parts[2].toFloat(), parts[3].toFloat()));
+                } else if (parts[0] == QStringLiteral("f") && parts.size() >= 4) {
+                    const auto parseIndex = [](const QString &token) {
+                        return token.section(QLatin1Char('/'), 0, 0).toInt() - 1;
+                    };
+                    const int i0 = parseIndex(parts[1]);
+                    for (int t = 2; t < parts.size() - 1; ++t) {
+                        faces.append(Face{i0, parseIndex(parts[t]), parseIndex(parts[t + 1])});
+                    }
+                }
+            }
+        } else if (ext == QStringLiteral("ply")) {
+            return loadMeshFromPly(path);
+        } else {
+            throw std::runtime_error("不支持的 Mesh 格式");
+        }
+
+        if (vertices.isEmpty()) {
+            throw std::runtime_error("未能读取到任何顶点数据");
+        }
+        return {vertices, faces};
+    }
+
+    QImage loadPanoramaImageSync(const QString &path, QString *detail = nullptr) {
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        reader.setDecideFormatFromContent(true);
+        QImage image = reader.read();
+        if (detail) {
+            *detail = QStringLiteral("Qt ImageReader");
+        }
+        if (!image.isNull()) {
+            return image;
+        }
+
+        const auto raster = io::loadRasterDataset(path);
+        if (raster && raster->bandCount() >= 3) {
+            if (detail) {
+                *detail = QStringLiteral("GDAL RGB fallback");
+            }
+            return io::renderRgbComposite(*raster, 0, 1, 2);
+        }
+        if (raster && raster->bandCount() >= 1) {
+            if (detail) {
+                *detail = QStringLiteral("GDAL gray fallback");
+            }
+            return io::renderSingleBandGray(*raster, 0);
+        }
+        return {};
     }
 
 #ifdef RS_WITH_GDAL
@@ -871,11 +1036,6 @@
         return static_cast<qint32>(value);
     }
 
-    struct LoadedMeshData {
-        QVector<QVector3D> vertices;
-        QVector<Face> faces;
-    };
-
     LoadedMeshData loadMeshFromPly(const QString &path) {
         QFile file(path);
         if (!file.open(QIODevice::ReadOnly)) {
@@ -1022,6 +1182,7 @@
         retranslateUi();
         appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL "
                                 "多波段、参数化算法、DEM/正射流程的工程骨架。"));
+        restoreLastSession();
         updateActionStates();
     }
 
@@ -2240,6 +2401,131 @@
         refreshLayerTree();   // 刷新图层树
         appendLog(QStringLiteral("工程已初始化。"));
         updateActionStates(); // 更新菜单所有操作按钮的状态
+    }
+
+    void MainWindow::closeEvent(QCloseEvent *event) {
+        saveLastSession();
+        QMainWindow::closeEvent(event);
+    }
+
+    void MainWindow::saveLastSession() const {
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("lastSession"));
+        settings.remove(QString());
+        settings.beginWriteArray(QStringLiteral("layers"));
+
+        int writeIndex = 0;
+        for (int i = 0; i < layers_.size(); ++i) {
+            std::shared_ptr<DataObject> layer;
+            try {
+                layer = layers_.at(i);
+            } catch (const std::exception &) {
+                continue;
+            }
+            if (!layer || layer->path().trimmed().isEmpty() || !QFileInfo::exists(layer->path())) {
+                continue;
+            }
+
+            QString type;
+            switch (layer->type()) {
+            case DataType::Raster:
+                type = QStringLiteral("raster");
+                break;
+            case DataType::PointCloud:
+                type = QStringLiteral("pointcloud");
+                break;
+            case DataType::Mesh:
+                type = QStringLiteral("mesh");
+                break;
+            case DataType::Dem:
+                type = QStringLiteral("dem");
+                break;
+            case DataType::Panorama360:
+                type = QStringLiteral("panorama360");
+                break;
+            case DataType::Result:
+                break;
+            }
+            if (type.isEmpty()) {
+                continue;
+            }
+
+            settings.setArrayIndex(writeIndex++);
+            settings.setValue(QStringLiteral("type"), type);
+            settings.setValue(QStringLiteral("path"), layer->path());
+            settings.setValue(QStringLiteral("visible"), layer->visible());
+        }
+
+        settings.endArray();
+        settings.setValue(QStringLiteral("savedAt"), QDateTime::currentDateTime());
+        settings.endGroup();
+        settings.sync();
+    }
+
+    void MainWindow::restoreLastSession() {
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("lastSession"));
+        const int count = settings.beginReadArray(QStringLiteral("layers"));
+        if (count <= 0) {
+            settings.endArray();
+            settings.endGroup();
+            appendLog(QStringLiteral("未发现上次加载的数据。"));
+            return;
+        }
+
+        int restored = 0;
+        int failed = 0;
+        appendLog(QStringLiteral("正在恢复上次加载的数据（%1 项）...").arg(count));
+
+        for (int i = 0; i < count; ++i) {
+            settings.setArrayIndex(i);
+            const QString type = settings.value(QStringLiteral("type")).toString();
+            const QString path = settings.value(QStringLiteral("path")).toString();
+            const bool visible = settings.value(QStringLiteral("visible"), true).toBool();
+            const QFileInfo info(path);
+            if (path.isEmpty() || !info.exists()) {
+                ++failed;
+                appendLog(QStringLiteral("恢复失败：文件不存在 [%1]").arg(path));
+                continue;
+            }
+
+            try {
+                std::shared_ptr<DataObject> layer;
+                if (type == QStringLiteral("raster")) {
+                    layer = io::loadRasterDataset(path);
+                } else if (type == QStringLiteral("dem")) {
+                    layer = io::loadDemDataset(path, info.fileName());
+                } else if (type == QStringLiteral("pointcloud")) {
+                    layer = std::make_shared<PointCloudLayer>(info.fileName(), path, loadPointCloudPoints(path));
+                } else if (type == QStringLiteral("mesh")) {
+                    const LoadedMeshData mesh = loadMeshDataSync(path);
+                    layer = std::make_shared<MeshLayer>(info.fileName(), path, mesh.vertices, mesh.faces);
+                } else if (type == QStringLiteral("panorama360")) {
+                    const QImage image = loadPanoramaImageSync(path);
+                    if (image.isNull()) {
+                        throw std::runtime_error("无法读取 360 街景图");
+                    }
+                    layer = std::make_shared<Panorama360Layer>(info.fileName(), path, image);
+                }
+
+                if (!layer) {
+                    throw std::runtime_error("未知图层类型");
+                }
+                layer->setVisible(visible);
+                layers_.add(layer);
+                ++restored;
+            } catch (const std::exception &e) {
+                ++failed;
+                appendLog(QStringLiteral("恢复失败 [%1]：%2").arg(info.fileName(), QString::fromUtf8(e.what())));
+            }
+        }
+
+        settings.endArray();
+        settings.endGroup();
+
+        refreshLayerTree();
+        updateActionStates();
+        appendLog(QStringLiteral("已恢复上次加载的数据：成功 %1 项，失败 %2 项。").arg(restored).arg(failed));
     }
 
     // 打开波段组合/设色对话框
