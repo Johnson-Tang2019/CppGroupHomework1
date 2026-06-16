@@ -48,6 +48,7 @@
     constexpr int kLayerIndexRole = Qt::UserRole + 1; // 存储图层在 LayerManager 中的索引
     constexpr int kBandIndexRole = Qt::UserRole + 2;  // 存储波段索引（用于波段子节点）
     constexpr int kNodeKindRole = Qt::UserRole + 3;   // 存储节点类型（文件夹/图层/波段）
+    constexpr int kFolderKeyRole = Qt::UserRole + 4;  // 文件夹稳定键（语言切换时不变）
 
     // 图层树节点的类型枚举
     enum class NodeKind {
@@ -807,15 +808,53 @@
         return points;
     }
 
+    QString localizedTreeGroupName(const QString &group) {
+        if (group.isEmpty()) {
+            return group;
+        }
+        static const QHash<QString, QString> keyByGroup = {
+            {QStringLiteral("DEM 重建"), QStringLiteral("tree.group.dem_rebuild")},
+            {QStringLiteral("正射影像校正"), QStringLiteral("tree.group.orthorectify")},
+            {QStringLiteral("灰度直方图"), QStringLiteral("tree.group.histogram")},
+            {QStringLiteral("混淆矩阵精度评价"), QStringLiteral("tree.group.confusion_matrix")},
+            {QStringLiteral("多时相指数对比"), QStringLiteral("tree.group.index_temporal")},
+        };
+        const auto it = keyByGroup.constFind(group);
+        if (it != keyByGroup.constEnd()) {
+            return Translation::instance().tr(it.value());
+        }
+        return group;
+    }
+
+    QString layerTypeLabel(DataType type) {
+        const auto &t = Translation::instance();
+        switch (type) {
+        case DataType::Raster:
+            return t.tr(QStringLiteral("type.raster"));
+        case DataType::PointCloud:
+            return t.tr(QStringLiteral("type.pointcloud"));
+        case DataType::Mesh:
+            return t.tr(QStringLiteral("type.mesh"));
+        case DataType::Dem:
+            return t.tr(QStringLiteral("type.dem"));
+        case DataType::Panorama360:
+            return t.tr(QStringLiteral("type.panorama360"));
+        case DataType::Result:
+            return t.tr(QStringLiteral("type.result"));
+        }
+        return QStringLiteral("Unknown");
+    }
+
     // 生成节点的唯一键（从根到当前节点的路径字符串）
     QString itemKey(const QTreeWidgetItem *item) {
-        QStringList parts;                   // 用于存储从根到当前节点的各层名称
-        const auto *current = item;          // 从当前节点开始向上遍历
-        while (current) {                    // 一直遍历到根节点（parent 为 nullptr）
-            parts.prepend(current->text(0)); // 把当前节点的文本插入到列表最前面
-            current = current->parent();     // 向上移动到父节点
+        QStringList parts;          // 用于存储从根到当前节点的各层名称
+        const auto *current = item; // 从当前节点开始向上遍历
+        while (current) {           // 一直遍历到根节点（parent 为 nullptr）
+            const QString folderKey = current->data(0, kFolderKeyRole).toString();
+            parts.prepend(folderKey.isEmpty() ? current->text(0) : folderKey);
+            current = current->parent(); // 向上移动到父节点
         }
-        return parts.join(QLatin1Char('/')); // 用 "/" 拼接成路径字符串，如 "源数据/遥感影像/xxx.tif"
+        return parts.join(QLatin1Char('/'));
     }
 
     // 递归收集所有展开节点的键
@@ -832,36 +871,38 @@
     }
 
     // 在指定父节点下查找或创建子文件夹
-    QTreeWidgetItem *ensureChildFolder(QTreeWidgetItem *parent, const QString &name) {
-        // 先在现有子节点中查找是否已有同名文件夹
+    QTreeWidgetItem *ensureChildFolder(QTreeWidgetItem *parent, const QString &folderKey,
+                                       const QString &displayName) {
         for (int i = 0; i < parent->childCount(); ++i) {
-            if (parent->child(i)->text(0) == name) { // 找到了同名的
-                return parent->child(i);             // 直接返回已有的节点
+            auto *child = parent->child(i);
+            if (child->data(0, kFolderKeyRole).toString() == folderKey) {
+                child->setText(0, displayName);
+                return child;
             }
         }
-        // 没找到，则创建新的文件夹节点
-        auto *folder = new QTreeWidgetItem(parent); // 创建新节点，parent 为父节点
-        folder->setText(0, name);                   // 设置显示文本为文件夹名
-        folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder)); // 标记为 Folder 类型
-        folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) |
-                        Qt::ItemIsEnabled); // 移除"可选中"标志，保留"启用"标志
+        auto *folder = new QTreeWidgetItem(parent);
+        folder->setText(0, displayName);
+        folder->setData(0, kFolderKeyRole, folderKey);
+        folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
+        folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
         return folder;
     }
 
     // 在顶层节点中查找或创建文件夹
-    QTreeWidgetItem *ensureTopFolder(QTreeWidget *tree, const QString &name) {
-        // 先在所有顶层节点中查找是否已有同名文件夹
+    QTreeWidgetItem *ensureTopFolder(QTreeWidget *tree, const QString &folderKey,
+                                     const QString &displayName) {
         for (int i = 0; i < tree->topLevelItemCount(); ++i) {
-            if (tree->topLevelItem(i)->text(0) == name) { // 找到了同名的
-                return tree->topLevelItem(i);             // 直接返回已有的节点
+            auto *top = tree->topLevelItem(i);
+            if (top->data(0, kFolderKeyRole).toString() == folderKey) {
+                top->setText(0, displayName);
+                return top;
             }
         }
-        // 没找到，则创建新的顶层文件夹节点
-        auto *folder = new QTreeWidgetItem(tree);                              // 创建新节点，tree 为根
-        folder->setText(0, name);                                              // 设置显示文本为文件夹名
-        folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder)); // 标记为 Folder 类型
-        folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) |
-                        Qt::ItemIsEnabled); // 不可选中，仅启用
+        auto *folder = new QTreeWidgetItem(tree);
+        folder->setText(0, displayName);
+        folder->setData(0, kFolderKeyRole, folderKey);
+        folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
+        folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
         return folder;
     }
 
@@ -1383,7 +1424,7 @@
         auto *root = new QSplitter(Qt::Horizontal, this);
         // ---- 左侧：图层树 ----
         layerTree_ = new QTreeWidget(root);                                 // 创建图层树控件
-        layerTree_->setHeaderLabel(QStringLiteral("工程图层"));             // 设置表头文字
+        layerTree_->setHeaderLabel(Translation::instance().tr(QStringLiteral("layer_tree")));
         layerTree_->setAlternatingRowColors(true);                          // 开启交替行颜色
         layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection); // 支持 Ctrl/Shift 多选
         layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);            // 启用自定义右键菜单
@@ -1623,30 +1664,44 @@
 
     // 打开文件对话框选择遥感影像，使用 GDAL 读取并加载到图层管理器
     void MainWindow::openRasterDatasets() {
-        // 弹出文件选择对话框，支持多选，过滤遥感影像格式
+        const auto &t = Translation::instance();
         const QStringList paths = QFileDialog::getOpenFileNames(
-            this,                           // 父窗口
-            QStringLiteral("加载遥感影像"), // 对话框标题
-            QString(),                      // 默认路径（空 = 上次路径）
+            this,
+            t.tr(QStringLiteral("dialog.load_raster")),
+            QString(),
             QStringLiteral("Remote sensing rasters (*.tif *.tiff *.img *.dat *.jp2 *.jpg *.jpeg *.png "
-                        "*.bmp);;All Files (*.*)")); // 文件过滤器
-        if (paths.isEmpty()) {                          // 用户取消选择
-            return;                                     // 不做任何操作
+                        "*.bmp);;All Files (*.*)"));
+        if (paths.isEmpty()) {
+            return;
         }
 
-        // 遍历所有选中的文件路径
         for (const QString &path : paths) {
-            const QFileInfo info(path); // 获取文件信息（文件名、后缀等）
+            const QFileInfo info(path);
             try {
-                // 调用 RasterIO 中的 GDAL 读取函数，读取波段、投影、地理变换和缩略图
                 auto raster = rs::io::loadRasterDataset(path);
                 if (raster) {
                     const QString ext = info.suffix().toLower();
                     if ((ext == QStringLiteral("tif") || ext == QStringLiteral("tiff")) &&
                         hasGeoreference(*raster)) {
-                        appendLog(QStringLiteral("提示：该 GeoTIFF/GeoRaster 包含坐标信息（可用于经纬度显示）。"));
+                        const auto gt = raster->geoTransform();
+                        QString body = t.tr(QStringLiteral("geo.detected"));
+                        body += QStringLiteral("\n\n");
+                        body += t.tr(QStringLiteral("geo.file")) + QStringLiteral(" ") + info.fileName();
+                        body += QStringLiteral("\n\nGeoTransform:\n[%1, %2, %3, %4, %5, %6]")
+                                    .arg(gt[0])
+                                    .arg(gt[1])
+                                    .arg(gt[2])
+                                    .arg(gt[3])
+                                    .arg(gt[4])
+                                    .arg(gt[5]);
+                        const QString projection = raster->projection().trimmed();
+                        if (!projection.isEmpty()) {
+                            body += QStringLiteral("\n\n") + t.tr(QStringLiteral("geo.projection_snippet"));
+                            body += QStringLiteral("\n") + projection.left(480);
+                        }
+                        QMessageBox::information(this, t.tr(QStringLiteral("geo.title")), body);
                     }
-                    layers_.add(raster); // 将图层添加到 LayerManager 中
+                    layers_.add(raster);
                     appendLog(QStringLiteral("已加载影像：%1（%2 波段，%3x%4）")
                                 .arg(info.fileName())
                                 .arg(raster->bandCount())
@@ -1654,19 +1709,19 @@
                                 .arg(raster->bandCount() > 0 ? raster->band(0).height : 0));
                 }
             } catch (const std::exception &e) {
-                // GDAL 读取失败时记录错误信息
                 appendLog(QStringLiteral("加载失败 [%1]：%2")
                             .arg(info.fileName(), QString::fromUtf8(e.what())));
             }
         }
-        refreshLayerTree();   // 刷新图层树显示新添加的图层
-        updateActionStates(); // 更新菜单启用状态
+        refreshLayerTree();
+        updateActionStates();
     }
 
     // 加载点云：支持 PLY、XYZ、LAS 格式
     void MainWindow::openPointCloud() {
+        const auto &t = Translation::instance();
         const QString path = QFileDialog::getOpenFileName(
-            this, QStringLiteral("加载点云"), QString(),
+            this, t.tr(QStringLiteral("dialog.load_pointcloud")), QString(),
             QStringLiteral("Point Cloud (*.ply *.xyz *.las);;All Files (*.*)"));
         if (path.isEmpty())
             return;
@@ -1855,9 +1910,10 @@
     // 在后台线程解析 Mesh 文件（OBJ/PLY），避免阻塞 UI
     // 在后台线程解析 Mesh 文件（OBJ/PLY），避免阻塞 UI
     void MainWindow::openMesh() {
-        const QString path =
-            QFileDialog::getOpenFileName(this, QStringLiteral("加载 Mesh"), QString(),
-                                        QStringLiteral("Mesh (*.obj *.ply);;All Files (*.*)"));
+        const auto &t = Translation::instance();
+        const QString path = QFileDialog::getOpenFileName(
+            this, t.tr(QStringLiteral("dialog.load_mesh")), QString(),
+            QStringLiteral("Mesh (*.obj *.ply);;All Files (*.*)"));
         if (path.isEmpty())
             return;
 
@@ -1970,8 +2026,9 @@
         dialog->exec();
     }
     void MainWindow::openDem() {
+        const auto &t = Translation::instance();
         const QString path = QFileDialog::getOpenFileName(
-            this, QStringLiteral("加载 DEM"), QString(),
+            this, t.tr(QStringLiteral("dialog.load_dem")), QString(),
             QStringLiteral("Digital Elevation Model (*.tif *.tiff *.asc *.dem);;All Files (*.*)"));
         if (path.isEmpty())
             return;
@@ -1998,8 +2055,9 @@
     }
 
     void MainWindow::openPanorama360() {
+        const auto &t = Translation::instance();
         const QString path = QFileDialog::getOpenFileName(
-            this, QStringLiteral("加载 360 街景图"), QString(),
+            this, t.tr(QStringLiteral("dialog.load_panorama")), QString(),
             QStringLiteral("Panorama Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff);;All Files (*.*)"));
         if (path.isEmpty()) {
             return;
@@ -2757,9 +2815,10 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         }
 
         if (!exportableIndices.empty()) {
-            QAction *exportAction = menu.addAction(QStringLiteral("导出该分组..."));
+            QAction *exportAction = menu.addAction(tr.tr(QStringLiteral("action.export_group")));
             connect(exportAction, &QAction::triggered, this, [this, exportableIndices]() {
-                const QString dirPath = QFileDialog::getExistingDirectory(this, QStringLiteral("选择导出文件夹"));
+                const QString dirPath = QFileDialog::getExistingDirectory(
+                    this, Translation::instance().tr(QStringLiteral("dialog.select_export_dir")));
                 if (dirPath.isEmpty()) {
                     return;
                 }
@@ -2855,57 +2914,42 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     // ── 属性对话框 ──
     QAction *propAction = menu.addAction(tr.tr(QStringLiteral("action.properties")));
     connect(propAction, &QAction::triggered, this, [this, layer]() {
-        QString typeName;
-        switch (layer->type()) {
-        case DataType::Raster:
-            typeName = QStringLiteral("遥感影像");
-            break;
-        case DataType::PointCloud:
-            typeName = QStringLiteral("点云");
-            break;
-        case DataType::Mesh:
-            typeName = QStringLiteral("网格模型");
-            break;
-        case DataType::Dem:
-            typeName = QStringLiteral("数字高程模型");
-            break;
-        case DataType::Panorama360:
-            typeName = QStringLiteral("360 街景图");
-            break;
-        case DataType::Result:
-            typeName = QStringLiteral("处理结果");
-            break;
-        }
+        const auto &t = Translation::instance();
+        const QString typeName = layerTypeLabel(layer->type());
 
         QString info;
-        info += QStringLiteral("名称: %1\n").arg(layer->name());
-        info += QStringLiteral("路径: %1\n").arg(layer->path());
-        info += QStringLiteral("类型: %1\n").arg(typeName);
-        info += QStringLiteral("可见: %1\n")
-                    .arg(layer->visible() ? QStringLiteral("是") : QStringLiteral("否"));
+        info += t.tr(QStringLiteral("prop.name")) + QStringLiteral(" %1\n").arg(layer->name());
+        info += t.tr(QStringLiteral("prop.path")) + QStringLiteral(" %1\n").arg(layer->path());
+        info += t.tr(QStringLiteral("prop.type")) + QStringLiteral(" %1\n").arg(typeName);
+        info += t.tr(QStringLiteral("prop.visible")) +
+                QStringLiteral(" %1\n")
+                    .arg(layer->visible() ? t.tr(QStringLiteral("prop.yes"))
+                                          : t.tr(QStringLiteral("prop.no")));
 
         if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
-            info += QStringLiteral("波段数: %1\n").arg(raster->bandCount());
+            info += t.tr(QStringLiteral("prop.bands")) + QStringLiteral(" %1\n").arg(raster->bandCount());
             if (raster->bandCount() > 0) {
                 const auto &b = raster->band(0);
-                info += QStringLiteral("尺寸: %1 x %2像素\n").arg(b.width).arg(b.height);
+                info += t.tr(QStringLiteral("prop.size_pixels")).arg(b.width).arg(b.height) + QStringLiteral("\n");
             }
-            info += QStringLiteral("投影: %1\n")
-                        .arg(raster->projection().isEmpty() ? QStringLiteral("(未知)")
+            info += t.tr(QStringLiteral("prop.projection")) +
+                    QStringLiteral(" %1\n")
+                        .arg(raster->projection().isEmpty() ? t.tr(QStringLiteral("prop.unknown"))
                                                             : raster->projection());
         } else if (const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
-            info += QStringLiteral("点数: %1\n").arg(pc->points().size());
+            info += t.tr(QStringLiteral("prop.point_count")) + QStringLiteral(" %1\n").arg(pc->points().size());
         } else if (const auto mesh = std::dynamic_pointer_cast<MeshLayer>(layer)) {
-            info += QStringLiteral("顶点数: %1\n").arg(mesh->vertices().size());
-            info += QStringLiteral("三角面: %1\n").arg(mesh->faces().size());
+            info += t.tr(QStringLiteral("prop.vertices")) + QStringLiteral(" %1\n").arg(mesh->vertices().size());
+            info += t.tr(QStringLiteral("prop.triangles")) + QStringLiteral(" %1\n").arg(mesh->faces().size());
         } else if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
-            info += QStringLiteral("尺寸: %1 x %2\n").arg(dem->width()).arg(dem->height());
+            info += t.tr(QStringLiteral("prop.size")).arg(dem->width()).arg(dem->height()) + QStringLiteral("\n");
         } else if (const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer)) {
-            info += QStringLiteral("尺寸: %1 x %2像素\n").arg(pano->image().width()).arg(pano->image().height());
+            info += t.tr(QStringLiteral("prop.size_pixels")).arg(pano->image().width()).arg(pano->image().height()) +
+                    QStringLiteral("\n");
         }
 
-        info += QStringLiteral("\n摘要: %1").arg(layer->summary());
-        QMessageBox::information(nullptr, QStringLiteral("图层属性 - %1").arg(layer->name()), info);
+        info += QStringLiteral("\n") + t.tr(QStringLiteral("prop.summary")) + QStringLiteral(" %1").arg(layer->summary());
+        QMessageBox::information(nullptr, t.tr(QStringLiteral("prop.title")).arg(layer->name()), info);
     });
 
     menu.exec(layerTree_->viewport()->mapToGlobal(position));
@@ -2913,6 +2957,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
 
 // 根据 LayerManager 中的数据重建图层树，保持展开/折叠状态
 void MainWindow::refreshLayerTree() {
+    const auto &t = Translation::instance();
     QSet<QString> expandedKeys;
     for (int i = 0; i < layerTree_->topLevelItemCount(); ++i) {
         collectExpandedKeys(layerTree_->topLevelItem(i), expandedKeys);
@@ -2921,19 +2966,25 @@ void MainWindow::refreshLayerTree() {
     rebuildingTree_ = true;
     layerTree_->clear();
 
-    auto *sourceRoot = ensureTopFolder(layerTree_, QStringLiteral("源数据"));
-    auto *resultRoot = ensureTopFolder(layerTree_, QStringLiteral("处理结果"));
-    auto *rasterFolder = ensureChildFolder(sourceRoot, QStringLiteral("遥感影像"));
-    auto *pointFolder = ensureChildFolder(sourceRoot, QStringLiteral("点云"));
-    auto *meshFolder = ensureChildFolder(sourceRoot, QStringLiteral("Mesh"));
-    auto *demFolder = ensureChildFolder(sourceRoot, QStringLiteral("DEM"));
-    auto *panoramaFolder = ensureChildFolder(sourceRoot, QStringLiteral("360街景"));
+    auto *sourceRoot = ensureTopFolder(layerTree_, QStringLiteral("source"),
+                                       t.tr(QStringLiteral("tree.source_data")));
+    auto *resultRoot = ensureTopFolder(layerTree_, QStringLiteral("results"),
+                                       t.tr(QStringLiteral("tree.results")));
+    auto *rasterFolder = ensureChildFolder(sourceRoot, QStringLiteral("source/raster"),
+                                           t.tr(QStringLiteral("tree.raster")));
+    auto *pointFolder = ensureChildFolder(sourceRoot, QStringLiteral("source/pointcloud"),
+                                          t.tr(QStringLiteral("tree.pointcloud")));
+    auto *meshFolder = ensureChildFolder(sourceRoot, QStringLiteral("source/mesh"), QStringLiteral("Mesh"));
+    auto *demFolder = ensureChildFolder(sourceRoot, QStringLiteral("source/dem"), QStringLiteral("DEM"));
+    auto *panoramaFolder = ensureChildFolder(sourceRoot, QStringLiteral("source/panorama360"),
+                                             t.tr(QStringLiteral("tree.panorama360")));
 
     for (int i = 0; i < layers_.size(); ++i) {
         const auto layer = layers_.at(i);
         QTreeWidgetItem *parent = nullptr;
         if (!layer->treeGroup().isEmpty()) {
-            parent = ensureChildFolder(resultRoot, layer->treeGroup());
+            const QString groupKey = QStringLiteral("results/") + layer->treeGroup();
+            parent = ensureChildFolder(resultRoot, groupKey, localizedTreeGroupName(layer->treeGroup()));
         } else {
             switch (layer->type()) {
             case DataType::Raster:
@@ -3010,11 +3061,12 @@ void MainWindow::refreshLayerTree() {
 
 // 在 QGraphicsView 中显示选中的影像（优先显示选中波段）
 void MainWindow::displayRaster(const std::shared_ptr<RasterLayer> &raster, int bandIndex) {
+    const auto &t = Translation::instance();
     imageScene_->clear();
     activeRasterForCoords_ = raster;
     activeDisplaySizeForCoords_ = QSize();
     if (!raster) {
-        imageScene_->addText(QStringLiteral("请选择一个遥感影像图层或波段。"));
+        imageScene_->addText(t.tr(QStringLiteral("view.select_layer")));
         if (coordLabel_) {
             coordLabel_->setText(QString());
         }
@@ -3029,8 +3081,7 @@ void MainWindow::displayRaster(const std::shared_ptr<RasterLayer> &raster, int b
     }
 
     if (image.isNull()) {
-        imageScene_->addText(
-            QStringLiteral("当前影像没有可显示的渲染结果。\n当前图层：%1").arg(raster->name()));
+        imageScene_->addText(t.tr(QStringLiteral("view.no_render")).arg(raster->name()));
         if (coordLabel_) {
             coordLabel_->setText(QString());
         }
@@ -3400,11 +3451,12 @@ void MainWindow::exportLayerImage(int layerIndex) {
         return;
     }
 
-    QString title = QStringLiteral("导出图层");
+    const auto &t = Translation::instance();
+    QString title = t.tr(QStringLiteral("dialog.export_layer"));
     QString defaultPath = layer->name();
     QString filters = QStringLiteral("PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;TIFF (*.tif *.tiff)");
     if (layer->type() == DataType::Dem) {
-        title = QStringLiteral("导出 DEM");
+        title = t.tr(QStringLiteral("dialog.export_dem"));
         defaultPath = safeFileBaseName(layer->name()) + QStringLiteral(".tif");
         filters = QStringLiteral("GeoTIFF (*.tif *.tiff)");
     } else {
@@ -3497,6 +3549,10 @@ void MainWindow::retranslateUi() {
         }
     }
     refreshStartupLog();
+    refreshLayerTree();
+
+    const auto raster = selectedRaster();
+    displayRaster(raster, selectedBandIndex());
 }
 
 } // namespace rs

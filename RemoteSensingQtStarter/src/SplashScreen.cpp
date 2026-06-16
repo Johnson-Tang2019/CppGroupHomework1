@@ -1,5 +1,7 @@
 #include "rs/SplashScreen.h"
 
+#include "rs/Translation.h"
+
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -224,7 +226,8 @@ void SplashScreen::paintEvent(QPaintEvent *event) {
     titleFont.setBold(true);
     p.setFont(titleFont);
     p.drawText(QRectF(card.left(), card.top() + card.height() * 0.66, card.width(), 34),
-               Qt::AlignHCenter | Qt::AlignVCenter, QStringLiteral("遥感影像处理平台"));
+               Qt::AlignHCenter | Qt::AlignVCenter,
+               Translation::instance().tr(QStringLiteral("splash.title")));
 
     QFont subFont = font();
     subFont.setPointSize(10);
@@ -233,7 +236,8 @@ void SplashScreen::paintEvent(QPaintEvent *event) {
     p.drawText(QRectF(card.left(), card.top() + card.height() * 0.72, card.width(), 24),
                Qt::AlignHCenter | Qt::AlignVCenter, QStringLiteral("Remote Sensing Qt Starter"));
 
-    const QString dots = QStringLiteral("正在启动") + QString(dotPhase_, QChar('.'));
+    const QString dots =
+        Translation::instance().tr(QStringLiteral("splash.starting")) + QString(dotPhase_, QChar('.'));
     p.drawText(QRectF(card.left(), card.top() + card.height() * 0.80, card.width(), 22),
                Qt::AlignHCenter | Qt::AlignVCenter, dots);
 
