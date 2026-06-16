@@ -157,7 +157,7 @@ void SettingsDialog::loadProfile() {
 void SettingsDialog::chooseAvatar() {
     const QString path = QFileDialog::getOpenFileName(
         this,
-        QStringLiteral("选择头像"),
+        QStringLiteral("\u9009\u62e9\u5934\u50cf"),
         QString(),
         QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*.*)"));
     if (path.isEmpty()) {

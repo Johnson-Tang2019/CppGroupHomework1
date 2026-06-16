@@ -363,7 +363,7 @@
             layout->setContentsMargins(6, 6, 6, 6);
 
             auto *keyRow = new QHBoxLayout;
-            keyRow->addWidget(new QLabel(QStringLiteral("API Key:"), this));
+            keyRow->addWidget(new QLabel(QStringLiteral("\u56fd\u4ea7\u89c6\u89c9\u5bc6\u94a5:"), this));
             apiKeyEdit_ = new QLineEdit(this);
             apiKeyEdit_->setEchoMode(QLineEdit::Password);
             apiKeyEdit_->setPlaceholderText(QStringLiteral("sk-... or DEEPSEEK_API_KEY"));
@@ -372,28 +372,28 @@
             layout->addLayout(keyRow);
 
             auto *modelRow = new QHBoxLayout;
-            modelRow->addWidget(new QLabel(QStringLiteral("Model:"), this));
+            modelRow->addWidget(new QLabel(QStringLiteral("\u6a21\u578b/\u63a5\u5165\u70b9:"), this));
             modelEdit_ = new QLineEdit(QStringLiteral("deepseek-chat"), this);
             modelRow->addWidget(modelEdit_, 1);
-            contextButton_ = new QPushButton(QStringLiteral("Insert File Info"), this);
+            contextButton_ = new QPushButton(QStringLiteral("\u63d2\u5165\u6587\u4ef6\u4fe1\u606f"), this);
             modelRow->addWidget(contextButton_);
             layout->addLayout(modelRow);
 
             chatEdit_ = new QTextEdit(this);
             chatEdit_->setReadOnly(true);
             chatEdit_->setMinimumHeight(150);
-            chatEdit_->setPlaceholderText(QStringLiteral("Ask DeepSeek about the imported files, land-cover clues, C++, Qt, or processing workflow."));
+            chatEdit_->setPlaceholderText(QStringLiteral("\u53ef\u4ee5\u8ba9\u56fd\u4ea7\u89c6\u89c9\u6a21\u578b\u8bc6\u522b\u5730\u7269\u3001\u5efa\u7b51\u3001\u9053\u8def\u3001\u6c34\u4f53\u3001\u690d\u88ab\uff0c\u6216\u5206\u6790\u5df2\u5bfc\u5165\u6570\u636e\u3002"));
             layout->addWidget(chatEdit_, 8);
 
             inputEdit_ = new QTextEdit(this);
             inputEdit_->setMaximumHeight(110);
-            inputEdit_->setPlaceholderText(QStringLiteral("Type your message here. Imported layer information is attached automatically."));
+            inputEdit_->setPlaceholderText(QStringLiteral("\u5728\u8fd9\u91cc\u8f93\u5165\u95ee\u9898\u3002\u7a0b\u5e8f\u4f1a\u81ea\u52a8\u9644\u5e26\u5bfc\u5165\u56fe\u5c42\u4fe1\u606f\u548c\u5f53\u524d\u663e\u793a\u753b\u9762\u3002"));
             layout->addWidget(inputEdit_, 1);
 
             auto *buttonRow = new QHBoxLayout;
             buttonRow->addStretch(1);
-            clearButton_ = new QPushButton(QStringLiteral("Clear"), this);
-            sendButton_ = new QPushButton(QStringLiteral("Send"), this);
+            clearButton_ = new QPushButton(QStringLiteral("\u6e05\u7a7a"), this);
+            sendButton_ = new QPushButton(QStringLiteral("\u53d1\u9001"), this);
             buttonRow->addWidget(clearButton_);
             buttonRow->addWidget(sendButton_);
             layout->addLayout(buttonRow);
@@ -449,9 +449,9 @@
             }
 
             inputEdit_->clear();
-            appendMessage(QStringLiteral("You"), prompt);
+            appendMessage(QStringLiteral("\u4f60"), prompt + QStringLiteral("\n[\u5df2\u81ea\u52a8\u9644\u5e26\u5f53\u524d\u663e\u793a\u753b\u9762\uff08\u5982\u53ef\u7528\uff09]"));
             sendButton_->setEnabled(false);
-            sendButton_->setText(QStringLiteral("Sending..."));
+            sendButton_->setText(QStringLiteral("\u53d1\u9001\u4e2d..."));
 
             const QString layerContext = currentLayerContext();
             const QString promptWithContext =
@@ -481,7 +481,7 @@
 
         void handleReply(QNetworkReply *reply, const QString &prompt) {
             sendButton_->setEnabled(true);
-            sendButton_->setText(QStringLiteral("Send"));
+            sendButton_->setText(QStringLiteral("\u53d1\u9001"));
 
             const QByteArray responseBody = reply->readAll();
             if (reply->error() != QNetworkReply::NoError) {
@@ -495,7 +495,7 @@
             const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
             if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
                 appendMessage(QStringLiteral("Error"),
-                            QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
+                              QStringLiteral("\u63a5\u53e3\u8fd4\u56de\u7684 JSON \u65e0\u6548\uff1a%1").arg(parseError.errorString()));
                 return;
             }
 
@@ -553,7 +553,7 @@
             layout->setContentsMargins(6, 6, 6, 6);
 
             auto *keyRow = new QHBoxLayout;
-            keyRow->addWidget(new QLabel(QStringLiteral("国产视觉 Key:"), this));
+            keyRow->addWidget(new QLabel(QStringLiteral("\u56fd\u4ea7\u89c6\u89c9\u5bc6\u94a5:"), this));
             apiKeyEdit_ = new QLineEdit(this);
             apiKeyEdit_->setEchoMode(QLineEdit::Password);
             apiKeyEdit_->setPlaceholderText(QStringLiteral("ARK_API_KEY"));
@@ -565,16 +565,16 @@
             layout->addLayout(keyRow);
 
             auto *urlRow = new QHBoxLayout;
-            urlRow->addWidget(new QLabel(QStringLiteral("接口 URL:"), this));
+            urlRow->addWidget(new QLabel(QStringLiteral("\u63a5\u53e3\u5730\u5740:"), this));
             apiUrlEdit_ = new QLineEdit(QStringLiteral("https://ark.cn-beijing.volces.com/api/v3/chat/completions"), this);
             urlRow->addWidget(apiUrlEdit_, 1);
             layout->addLayout(urlRow);
 
             auto *modelRow = new QHBoxLayout;
-            modelRow->addWidget(new QLabel(QStringLiteral("模型/Endpoint:"), this));
+            modelRow->addWidget(new QLabel(QStringLiteral("\u6a21\u578b/\u63a5\u5165\u70b9:"), this));
             modelEdit_ = new QLineEdit(QStringLiteral("ep-20260614191726-976lp"), this);
             modelRow->addWidget(modelEdit_, 1);
-            contextButton_ = new QPushButton(QStringLiteral("Insert File Info"), this);
+            contextButton_ = new QPushButton(QStringLiteral("\u63d2\u5165\u6587\u4ef6\u4fe1\u606f"), this);
             modelRow->addWidget(contextButton_);
             layout->addLayout(modelRow);
 
@@ -585,18 +585,18 @@
             chatEdit_ = new QTextEdit(this);
             chatEdit_->setReadOnly(true);
             chatEdit_->setMinimumHeight(150);
-            chatEdit_->setPlaceholderText(QStringLiteral("Ask the domestic vision model to identify land-cover, buildings, roads, water, vegetation, or imported data."));
+            chatEdit_->setPlaceholderText(QStringLiteral("\u53ef\u4ee5\u8ba9\u56fd\u4ea7\u89c6\u89c9\u6a21\u578b\u8bc6\u522b\u5730\u7269\u3001\u5efa\u7b51\u3001\u9053\u8def\u3001\u6c34\u4f53\u3001\u690d\u88ab\uff0c\u6216\u5206\u6790\u5df2\u5bfc\u5165\u6570\u636e\u3002"));
             layout->addWidget(chatEdit_, 8);
 
             inputEdit_ = new QTextEdit(this);
             inputEdit_->setMaximumHeight(110);
-            inputEdit_->setPlaceholderText(QStringLiteral("Type your message here. Imported layer information and current selected image are attached automatically."));
+            inputEdit_->setPlaceholderText(QStringLiteral("\u5728\u8fd9\u91cc\u8f93\u5165\u95ee\u9898\u3002\u7a0b\u5e8f\u4f1a\u81ea\u52a8\u9644\u5e26\u5bfc\u5165\u56fe\u5c42\u4fe1\u606f\u548c\u5f53\u524d\u663e\u793a\u753b\u9762\u3002"));
             layout->addWidget(inputEdit_, 1);
 
             auto *buttonRow = new QHBoxLayout;
             buttonRow->addStretch(1);
-            clearButton_ = new QPushButton(QStringLiteral("Clear"), this);
-            sendButton_ = new QPushButton(QStringLiteral("Send"), this);
+            clearButton_ = new QPushButton(QStringLiteral("\u6e05\u7a7a"), this);
+            sendButton_ = new QPushButton(QStringLiteral("\u53d1\u9001"), this);
             buttonRow->addWidget(clearButton_);
             buttonRow->addWidget(sendButton_);
             layout->addLayout(buttonRow);
@@ -700,17 +700,17 @@
             }
 
             QDialog dialog(this);
-            dialog.setWindowTitle(QStringLiteral("开通永久 AI 服务"));
+            dialog.setWindowTitle(QStringLiteral("\u5f00\u901a\u6c38\u4e45 AI \u670d\u52a1"));
             dialog.setModal(true);
             dialog.resize(520, 720);
 
             auto *layout = new QVBoxLayout(&dialog);
-            auto *title = new QLabel(QStringLiteral("默认国产视觉模型免费体验 5 次已用完"), &dialog);
+            auto *title = new QLabel(QStringLiteral("\u9ed8\u8ba4\u56fd\u4ea7\u89c6\u89c9\u6a21\u578b\u514d\u8d39\u4f53\u9a8c 5 \u6b21\u5df2\u7528\u5b8c"), &dialog);
             title->setAlignment(Qt::AlignCenter);
             title->setStyleSheet(QStringLiteral("font-size:18px;font-weight:600;"));
             layout->addWidget(title);
 
-            auto *desc = new QLabel(QStringLiteral("请使用微信扫码支付 0.01 元。支付完成后点击下方按钮，即可在本机永久开通后续 AI 服务。"), &dialog);
+            auto *desc = new QLabel(QStringLiteral("\u8bf7\u626b\u63cf\u5fae\u4fe1\u6536\u6b3e\u7801\u652f\u4ed8 0.01 \u5143\u3002\u652f\u4ed8\u540e\u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\uff0c\u5373\u53ef\u5728\u672c\u673a\u6c38\u4e45\u5f00\u901a AI \u670d\u52a1\u3002"), &dialog);
             desc->setWordWrap(true);
             desc->setAlignment(Qt::AlignCenter);
             layout->addWidget(desc);
@@ -721,18 +721,18 @@
             if (!qr.isNull()) {
                 qrLabel->setPixmap(qr.scaled(360, 520, Qt::KeepAspectRatio, Qt::SmoothTransformation));
             } else {
-                qrLabel->setText(QStringLiteral("收款码资源加载失败"));
+                qrLabel->setText(QStringLiteral("\u652f\u4ed8\u4e8c\u7ef4\u7801\u8d44\u6e90\u52a0\u8f7d\u5931\u8d25"));
             }
             layout->addWidget(qrLabel, 1);
 
-            auto *hint = new QLabel(QStringLiteral("说明：当前版本采用本地确认方式保存开通状态。"), &dialog);
+            auto *hint = new QLabel(QStringLiteral("\u63d0\u793a\uff1a\u5f53\u524d\u7248\u672c\u4f1a\u5728\u672c\u673a\u4fdd\u5b58\u5f00\u901a\u786e\u8ba4\u3002"), &dialog);
             hint->setWordWrap(true);
             hint->setAlignment(Qt::AlignCenter);
             layout->addWidget(hint);
 
             auto *buttonRow = new QHBoxLayout;
-            auto *cancelButton = new QPushButton(QStringLiteral("稍后再说"), &dialog);
-            auto *unlockButton = new QPushButton(QStringLiteral("我已支付，永久开通"), &dialog);
+            auto *cancelButton = new QPushButton(QStringLiteral("\u7a0d\u540e\u518d\u8bf4"), &dialog);
+            auto *unlockButton = new QPushButton(QStringLiteral("\u6211\u5df2\u652f\u4ed8\uff0c\u6c38\u4e45\u5f00\u901a"), &dialog);
             unlockButton->setDefault(true);
             buttonRow->addStretch(1);
             buttonRow->addWidget(cancelButton);
@@ -779,22 +779,22 @@
                                       : modelEdit_->text().trimmed();
 
             if (apiKey.isEmpty()) {
-                QMessageBox::warning(this, QStringLiteral("Vision API Key"),
-                                     QStringLiteral("Please enter your Ark API key or set ARK_API_KEY."));
+                QMessageBox::warning(this, QStringLiteral("\u89c6\u89c9\u6a21\u578b API Key"),
+                                     QStringLiteral("\u8bf7\u8f93\u5165 Ark API Key\uff0c\u6216\u8bbe\u7f6e ARK_API_KEY \u73af\u5883\u53d8\u91cf\u3002"));
                 return;
             }
             if (prompt.isEmpty()) {
                 return;
             }
             if (usingDefaultVisionService(apiKey, apiUrl, model) && !ensureDefaultVisionAccess()) {
-                appendMessage(QStringLiteral("AI Assistant"), QStringLiteral("已取消发送。开通后可继续使用默认国产视觉模型。"));
+                appendMessage(QStringLiteral("AI \u52a9\u624b"), QStringLiteral("\u53d1\u9001\u5df2\u53d6\u6d88\u3002\u8bf7\u5f00\u901a\u540e\u7ee7\u7eed\u4f7f\u7528\u9ed8\u8ba4\u56fd\u4ea7\u89c6\u89c9\u6a21\u578b\u3002"));
                 return;
             }
 
             inputEdit_->clear();
-            appendMessage(QStringLiteral("You"), prompt + QStringLiteral("\n[Current selected image attached when available]"));
+            appendMessage(QStringLiteral("\u4f60"), prompt + QStringLiteral("\n[\u5df2\u81ea\u52a8\u9644\u5e26\u5f53\u524d\u663e\u793a\u753b\u9762\uff08\u5982\u53ef\u7528\uff09]"));
             sendButton_->setEnabled(false);
-            sendButton_->setText(QStringLiteral("Sending..."));
+            sendButton_->setText(QStringLiteral("\u53d1\u9001\u4e2d..."));
 
             const QString layerContext = currentLayerContext();
             const QString promptWithContext =
@@ -837,11 +837,11 @@
 
         void handleReply(QNetworkReply *reply, const QString &prompt) {
             sendButton_->setEnabled(true);
-            sendButton_->setText(QStringLiteral("Send"));
+            sendButton_->setText(QStringLiteral("\u53d1\u9001"));
 
             const QByteArray responseBody = reply->readAll();
             if (reply->error() != QNetworkReply::NoError) {
-                appendMessage(QStringLiteral("Vision Error"),
+                appendMessage(QStringLiteral("\u89c6\u89c9\u9519\u8bef"),
                               reply->errorString() + QStringLiteral("\n") + QString::fromUtf8(responseBody));
                 return;
             }
@@ -849,29 +849,29 @@
             QJsonParseError parseError{};
             const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
             if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-                appendMessage(QStringLiteral("Vision Error"),
-                              QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()));
+                appendMessage(QStringLiteral("\u89c6\u89c9\u9519\u8bef"),
+                              QStringLiteral("\u63a5\u53e3\u8fd4\u56de\u7684 JSON \u65e0\u6548\uff1a%1").arg(parseError.errorString()));
                 return;
             }
 
             const QJsonObject root = doc.object();
             if (root.contains(QStringLiteral("error"))) {
                 const QJsonObject error = root.value(QStringLiteral("error")).toObject();
-                appendMessage(QStringLiteral("Vision Error"),
+                appendMessage(QStringLiteral("\u89c6\u89c9\u9519\u8bef"),
                               error.value(QStringLiteral("message")).toString(QString::fromUtf8(responseBody)));
                 return;
             }
 
             const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
             if (choices.isEmpty()) {
-                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("Vision model returned no choices."));
+                appendMessage(QStringLiteral("\u89c6\u89c9\u9519\u8bef"), QStringLiteral("\u89c6\u89c9\u6a21\u578b\u6ca1\u6709\u8fd4\u56de\u5019\u9009\u7ed3\u679c\u3002"));
                 return;
             }
 
             const QJsonObject message = choices.first().toObject().value(QStringLiteral("message")).toObject();
             const QString answer = message.value(QStringLiteral("content")).toString().trimmed();
             if (answer.isEmpty()) {
-                appendMessage(QStringLiteral("Vision Error"), QStringLiteral("Vision model returned an empty answer."));
+                appendMessage(QStringLiteral("\u89c6\u89c9\u9519\u8bef"), QStringLiteral("\u89c6\u89c9\u6a21\u578b\u8fd4\u56de\u4e86\u7a7a\u56de\u7b54\u3002"));
                 return;
             }
 
@@ -879,7 +879,7 @@
                                         {QStringLiteral("content"), prompt}});
             history_.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("assistant")},
                                         {QStringLiteral("content"), answer}});
-            appendMessage(QStringLiteral("国产视觉"), answer);
+            appendMessage(QStringLiteral("\u56fd\u4ea7\u89c6\u89c9"), answer);
         }
 
         QLineEdit *apiKeyEdit_{};
