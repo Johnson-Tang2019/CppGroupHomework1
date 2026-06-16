@@ -36,6 +36,7 @@
 #include <QTextStream>
 #include <QTreeWidget> // Qt 树形控件，显示图层的文件夹层级结构
 #include <QVBoxLayout>
+#include <QVector>
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -101,6 +102,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void createUi();    // 构建界面布局（分割器、图层树、标签页、日志面板）
     void createMenus(); // 构建菜单栏（数据、影像处理、摄影测量/三维）
     void setupSettingsButton(); // 菜单栏右上角设置按钮
+    void applyThemeStyles();    // 应用主题配色
     void retranslateUi(); // 刷新界面语言
 
     // ============ 图层管理 ============
@@ -114,6 +116,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
     // ============ 日志 ============
     void appendLog(const QString &text); // 在日志面板追加带时间戳的消息
+    void refreshStartupLog();            // 刷新启动日志（随语言切换）
 
     // ============ 算法执行辅助 ============
     void executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx = {});
@@ -179,8 +182,12 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *filterAction_{};       // "统计滤波"菜单项
     QAction *pcToDemAction_{};      // "点云转 DEM"菜单项
 
+    QVector<QMenu *> translatableMenus_;
+    QVector<QAction *> translatableActions_;
+
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
+    bool startupLogPresent_{false};   // 是否已写入启动日志（用于语言切换时刷新）
     LayerManager<DataObject> layers_; // 图层管理器，管理所有数据图层（影像、点云、DEM 等）
     std::shared_ptr<RasterLayer> activeRasterForCoords_; // 当前二维视图用于显示坐标的影像
     QSize activeDisplaySizeForCoords_; // 当前二维视图显示图像的像素尺寸（用于坐标映射）

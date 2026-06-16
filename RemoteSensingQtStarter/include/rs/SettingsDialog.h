@@ -16,13 +16,15 @@ public:
     explicit SettingsDialog(QWidget *parent = nullptr);
 
 private slots:
-    void applyLanguage();
+    void applySettings();
     void retranslateUi();
 
 private:
     QTabWidget *tabs_{nullptr};
     QComboBox *languageCombo_{nullptr};
+    QComboBox *themeCombo_{nullptr};
     QLabel *languageLabel_{nullptr};
+    QLabel *themeLabel_{nullptr};
     QTextBrowser *helpBrowser_{nullptr};
 };
 

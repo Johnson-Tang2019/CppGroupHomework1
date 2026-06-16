@@ -8,6 +8,7 @@
     #include "rs/ExtendedAlgorithms.h"
     #include "rs/RemoteSensingIndices.h"
     #include "rs/SettingsDialog.h"
+    #include "rs/AppTheme.h"
     #include "rs/Translation.h"
 
     #include <QApplication>
@@ -1179,6 +1180,7 @@
         createUi();
         setupSettingsButton();
         connect(&Translation::instance(), &Translation::languageChanged, this, &MainWindow::retranslateUi);
+        connect(&AppTheme::instance(), &AppTheme::themeChanged, this, &MainWindow::applyThemeStyles);
         retranslateUi();
         appendLog(QStringLiteral("Starter 已启动：当前版本提供 GDAL "
                                 "多波段、参数化算法、DEM/正射流程的工程骨架。"));
@@ -1188,45 +1190,58 @@
 
     // 构建菜单栏：数据、影像处理、摄影测量/三维
     void MainWindow::createMenus() {
-        // ---- "数据" 菜单 ----
-        auto *dataMenu = menuBar()->addMenu(QString());
-        dataMenu_ = dataMenu;
-        loadRasterAction_ = dataMenu->addAction(QString());
+        translatableMenus_.clear();
+        translatableActions_.clear();
+
+        const auto regTopMenu = [this](const QString &key) {
+            auto *m = menuBar()->addMenu(QString());
+            m->setProperty("trKey", key);
+            translatableMenus_.append(m);
+            return m;
+        };
+        const auto regSubMenu = [this](QMenu *parent, const QString &key) {
+            auto *m = parent->addMenu(QString());
+            m->setProperty("trKey", key);
+            translatableMenus_.append(m);
+            return m;
+        };
+        const auto regAction = [this](QMenu *menu, const QString &key) {
+            auto *a = menu->addAction(QString());
+            a->setProperty("trKey", key);
+            translatableActions_.append(a);
+            return a;
+        };
+
+        dataMenu_ = regTopMenu(QStringLiteral("menu.data"));
+        loadRasterAction_ = regAction(dataMenu_, QStringLiteral("action.load_raster"));
         connect(loadRasterAction_, &QAction::triggered, this, &MainWindow::openRasterDatasets);
-        loadPointCloudAction_ = dataMenu->addAction(QString());
+        loadPointCloudAction_ = regAction(dataMenu_, QStringLiteral("action.load_pointcloud"));
         connect(loadPointCloudAction_, &QAction::triggered, this, &MainWindow::openPointCloud);
-        loadMeshAction_ = dataMenu->addAction(QString());
+        loadMeshAction_ = regAction(dataMenu_, QStringLiteral("action.load_mesh"));
         connect(loadMeshAction_, &QAction::triggered, this, &MainWindow::openMesh);
-        loadDemAction_ = dataMenu->addAction(QString());
+        loadDemAction_ = regAction(dataMenu_, QStringLiteral("action.load_dem"));
         connect(loadDemAction_, &QAction::triggered, this, &MainWindow::openDem);
-        loadPanoramaAction_ = dataMenu->addAction(QStringLiteral("加载 360 街景图..."));
+        loadPanoramaAction_ = regAction(dataMenu_, QStringLiteral("action.load_panorama360"));
         connect(loadPanoramaAction_, &QAction::triggered, this, &MainWindow::openPanorama360);
-        dataMenu->addSeparator();      // 添加分隔线，将加载与删除操作分开
-        deleteLayerAction_ = dataMenu->addAction(
-            QStringLiteral("删除选中图层")); // 添加"删除选中图层"并保存指针以便控制启用/禁用
+        dataMenu_->addSeparator();
+        deleteLayerAction_ = regAction(dataMenu_, QStringLiteral("action.delete_layer"));
         connect(deleteLayerAction_, &QAction::triggered, this, &MainWindow::deleteSelectedLayers);
-        clearProjectAction_ =
-            dataMenu->addAction(QStringLiteral("初始化/清空工程")); // 添加"清空工程"并保存指针
+        clearProjectAction_ = regAction(dataMenu_, QStringLiteral("action.clear_project"));
         connect(clearProjectAction_, &QAction::triggered, this, &MainWindow::clearProject);
 
-        // ---- "影像处理" 菜单 ----
-        auto *rasterMenu = menuBar()->addMenu(QString());
-        rasterMenu_ = rasterMenu;
-        auto *bandMenu = rasterMenu->addMenu(QStringLiteral("波段与设色")); // 创建子菜单"波段与设色"
-        renderAction_ =
-            bandMenu->addAction(QStringLiteral("波段组合/设色...")); // 添加"波段组合/设色"并保存指针
+        rasterMenu_ = regTopMenu(QStringLiteral("menu.raster"));
+        auto *bandMenu = regSubMenu(rasterMenu_, QStringLiteral("menu.raster.band"));
+        renderAction_ = regAction(bandMenu, QStringLiteral("action.render"));
         connect(renderAction_, &QAction::triggered, this, &MainWindow::configureRasterRendering);
 
-        auto *statMenu = rasterMenu->addMenu(QStringLiteral("统计")); // 创建子菜单"统计"
-        histogramAction_ =
-            statMenu->addAction(QStringLiteral("灰度直方图...")); // 添加"灰度直方图"并保存指针
+        auto *statMenu = regSubMenu(rasterMenu_, QStringLiteral("menu.raster.stat"));
+        histogramAction_ = regAction(statMenu, QStringLiteral("action.histogram"));
         connect(histogramAction_, &QAction::triggered, this, &MainWindow::runHistogram);
 
-        auto *enhanceMenu = rasterMenu->addMenu(QStringLiteral("增强")); // 创建子菜单"增强"
-        equalizeAction_ =
-            enhanceMenu->addAction(QStringLiteral("直方图均衡化...")); // 添加"直方图均衡化"并保存指针
+        auto *enhanceMenu = regSubMenu(rasterMenu_, QStringLiteral("menu.raster.enhance"));
+        equalizeAction_ = regAction(enhanceMenu, QStringLiteral("action.equalize"));
         connect(equalizeAction_, &QAction::triggered, this, &MainWindow::runHistogramEqualization);
-        connect(enhanceMenu->addAction(QStringLiteral("线性/百分比拉伸...")), &QAction::triggered, this,
+        connect(regAction(enhanceMenu, QStringLiteral("action.stretch")), &QAction::triggered, this,
                 [this]() {
                     QStringList modes = {QStringLiteral("percent"), QStringLiteral("linear")};
                     bool ok = false;
@@ -1243,7 +1258,7 @@
                                                             : QStringLiteral("percent");
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(enhanceMenu->addAction(QStringLiteral("CLAHE 增强...")), &QAction::triggered, this,
+        connect(regAction(enhanceMenu, QStringLiteral("action.clahe")), &QAction::triggered, this,
                 [this]() {
                     bool ok = false;
                     const double clip =
@@ -1262,7 +1277,7 @@
                     ctx.parameters[QStringLiteral("tileSize")] = tile;
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(enhanceMenu->addAction(QStringLiteral("高斯滤波...")), &QAction::triggered, this,
+        connect(regAction(enhanceMenu, QStringLiteral("action.gaussian_filter")), &QAction::triggered, this,
                 [this]() {
                     DenoiseFilterAlgorithm algo;
                     ProcessingContext ctx;
@@ -1270,7 +1285,7 @@
                     ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("gaussian");
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(enhanceMenu->addAction(QStringLiteral("中值滤波...")), &QAction::triggered, this,
+        connect(regAction(enhanceMenu, QStringLiteral("action.median_filter")), &QAction::triggered, this,
                 [this]() {
                     DenoiseFilterAlgorithm algo;
                     ProcessingContext ctx;
@@ -1278,7 +1293,7 @@
                     ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("median");
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(enhanceMenu->addAction(QStringLiteral("双边滤波...")), &QAction::triggered, this,
+        connect(regAction(enhanceMenu, QStringLiteral("action.bilateral_filter")), &QAction::triggered, this,
                 [this]() {
                     DenoiseFilterAlgorithm algo;
                     ProcessingContext ctx;
@@ -1286,7 +1301,7 @@
                     ctx.parameters[QStringLiteral("filterType")] = QStringLiteral("bilateral");
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(enhanceMenu->addAction(QStringLiteral("Unsharp 锐化...")), &QAction::triggered, this,
+        connect(regAction(enhanceMenu, QStringLiteral("action.unsharp")), &QAction::triggered, this,
                 [this]() {
                     SharpenEnhancementAlgorithm algo;
                     ProcessingContext ctx;
@@ -1294,7 +1309,7 @@
                     ctx.parameters[QStringLiteral("method")] = QStringLiteral("unsharp");
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(enhanceMenu->addAction(QStringLiteral("拉普拉斯锐化...")), &QAction::triggered, this,
+        connect(regAction(enhanceMenu, QStringLiteral("action.laplacian_sharpen")), &QAction::triggered, this,
                 [this]() {
                     SharpenEnhancementAlgorithm algo;
                     ProcessingContext ctx;
@@ -1303,11 +1318,10 @@
                     executeRasterAlgorithm(algo, ctx);
                 });
 
-        auto *featureMenu = rasterMenu->addMenu(QStringLiteral("特征与检测")); // 特征/边缘/检测
-        featureAction_ = featureMenu->addAction(
-            QStringLiteral("ORB/SIFT/AKAZE 特征提取...")); // 添加特征提取并保存指针
+        auto *featureMenu = regSubMenu(rasterMenu_, QStringLiteral("menu.raster.feature"));
+        featureAction_ = regAction(featureMenu, QStringLiteral("action.feature_extract"));
         connect(featureAction_, &QAction::triggered, this, &MainWindow::runFeatureExtraction);
-        connect(featureMenu->addAction(QStringLiteral("Canny 边缘检测...")), &QAction::triggered, this,
+        connect(regAction(featureMenu, QStringLiteral("action.canny")), &QAction::triggered, this,
                 [this]() {
                     bool ok = false;
                     const int t1 = QInputDialog::getInt(this, QStringLiteral("Canny"), QStringLiteral("低阈值:"),
@@ -1326,8 +1340,8 @@
                     executeRasterAlgorithm(algo, ctx);
                 });
 
-        auto *classMenu = rasterMenu->addMenu(QStringLiteral("分类与检测"));
-        connect(classMenu->addAction(QStringLiteral("K-Means 无监督分类...")), &QAction::triggered, this,
+        auto *classMenu = regSubMenu(rasterMenu_, QStringLiteral("menu.raster.classify"));
+        connect(regAction(classMenu, QStringLiteral("action.kmeans")), &QAction::triggered, this,
                 [this]() {
                     bool ok = false;
                     const int k = QInputDialog::getInt(this, QStringLiteral("K-Means"),
@@ -1339,7 +1353,7 @@
                     ctx.parameters[QStringLiteral("k")] = k;
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(classMenu->addAction(QStringLiteral("SVM 地物分类...")), &QAction::triggered, this,
+        connect(regAction(classMenu, QStringLiteral("action.svm")), &QAction::triggered, this,
                 [this]() {
                     bool ok = false;
                     const int classes = QInputDialog::getInt(this, QStringLiteral("SVM"),
@@ -1357,11 +1371,11 @@
                     ctx.parameters[QStringLiteral("trainSamples")] = samples;
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(classMenu->addAction(QStringLiteral("轮廓目标检测...")), &QAction::triggered, this, [this]() {
+        connect(regAction(classMenu, QStringLiteral("action.contour")), &QAction::triggered, this, [this]() {
             ContourDetectionAlgorithm algo;
             executeRasterAlgorithm(algo);
         });
-        connect(classMenu->addAction(QStringLiteral("连通域目标检测...")), &QAction::triggered, this,
+        connect(regAction(classMenu, QStringLiteral("action.connected_components")), &QAction::triggered, this,
                 [this]() {
                     bool ok = false;
                     const int minArea = QInputDialog::getInt(this, QStringLiteral("连通域"),
@@ -1374,7 +1388,7 @@
                     ctx.parameters[QStringLiteral("minArea")] = minArea;
                     executeRasterAlgorithm(algo, ctx);
                 });
-        connect(classMenu->addAction(QStringLiteral("混淆矩阵精度评价...")), &QAction::triggered, this,
+        connect(regAction(classMenu, QStringLiteral("action.confusion_matrix")), &QAction::triggered, this,
                 [this]() {
                     const auto indices = selectedLayerIndices();
                     std::shared_ptr<RasterLayer> pred, ref;
@@ -1406,9 +1420,8 @@
                                         QStringLiteral("_精度"));
                 });
 
-        auto *indexMenu = menuBar()->addMenu(QString());
-        indexMenu_ = indexMenu;
-        connect(indexMenu->addAction(QStringLiteral("计算 NDVI/NDWI/NDBI...")), &QAction::triggered, this,
+        indexMenu_ = regTopMenu(QStringLiteral("menu.index"));
+        connect(regAction(indexMenu_, QStringLiteral("action.index_calc")), &QAction::triggered, this,
                 [this]() {
                     QStringList indices = {QStringLiteral("NDVI"), QStringLiteral("NDWI"),
                                         QStringLiteral("NDBI")};
@@ -1434,7 +1447,7 @@
                     const auto result = algo.execute(*raster, ctx);
                     applyProcessingResult(result, raster, index, QStringLiteral("_") + index);
                 });
-        connect(indexMenu->addAction(QStringLiteral("多时相指数对比...")), &QAction::triggered, this,
+        connect(regAction(indexMenu_, QStringLiteral("action.index_temporal")), &QAction::triggered, this,
                 [this]() {
                     const auto indices = selectedLayerIndices();
                     std::shared_ptr<RasterLayer> t1, t2;
@@ -1462,7 +1475,7 @@
                     applyProcessingResult(result, t1, QStringLiteral("多时相指数对比"),
                                         QStringLiteral("_时相对比"));
                 });
-        connect(indexMenu->addAction(QStringLiteral("导出指数统计 CSV...")), &QAction::triggered, this,
+        connect(regAction(indexMenu_, QStringLiteral("action.index_export_csv")), &QAction::triggered, this,
                 [this]() {
                     const auto raster = selectedRaster();
                     if (!raster) {
@@ -1480,33 +1493,22 @@
                     executeRasterAlgorithm(algo, ctx);
                 });
 
-        // ---- "摄影测量/三维" 菜单 ----
-        auto *photogrammetryMenu = menuBar()->addMenu(QString());
-        photogrammetryMenu_ = photogrammetryMenu;
-        demAction_ =
-            photogrammetryMenu->addAction(QStringLiteral("DEM 重建...")); // 添加"DEM 重建"并保存指针
+        photogrammetryMenu_ = regTopMenu(QStringLiteral("menu.photogrammetry"));
+        demAction_ = regAction(photogrammetryMenu_, QStringLiteral("action.dem_rebuild"));
         connect(demAction_, &QAction::triggered, this, &MainWindow::runDemReconstruction);
-        orthoAction_ = photogrammetryMenu->addAction(
-            QStringLiteral("正射影像校正...")); // 添加"正射影像校正"并保存指针
+        orthoAction_ = regAction(photogrammetryMenu_, QStringLiteral("action.orthorectify"));
         connect(orthoAction_, &QAction::triggered, this, &MainWindow::runOrthorectification);
-        demTextureAction_ = photogrammetryMenu->addAction(
-            QStringLiteral("DEM 三维贴图..."));
+        demTextureAction_ = regAction(photogrammetryMenu_, QStringLiteral("action.dem_texture"));
         connect(demTextureAction_, &QAction::triggered, this, &MainWindow::runDemTextureMapping);
 
-        // ---- "点云处理" 菜单 ----
-        auto *pcMenu = menuBar()->addMenu(QString());
-        pcMenu_ = pcMenu;
-        downsampleAction_ =
-            pcMenu->addAction(QStringLiteral("体素降采样...")); // 添加"体素降采样"并保存指针
+        pcMenu_ = regTopMenu(QStringLiteral("menu.pointcloud"));
+        downsampleAction_ = regAction(pcMenu_, QStringLiteral("action.voxel_downsample"));
         connect(downsampleAction_, &QAction::triggered, this, &MainWindow::runPointCloudDownsample);
-        filterAction_ =
-            pcMenu->addAction(QStringLiteral("统计滤波...")); // 添加"统计滤波"并保存指针
+        filterAction_ = regAction(pcMenu_, QStringLiteral("action.statistical_filter"));
         connect(filterAction_, &QAction::triggered, this, &MainWindow::runPointCloudFilter);
-        pcToDemAction_ =
-            pcMenu->addAction(QStringLiteral("点云转 DEM...")); // 添加"点云转 DEM"并保存指针
+        pcToDemAction_ = regAction(pcMenu_, QStringLiteral("action.pointcloud_to_dem"));
         connect(pcToDemAction_, &QAction::triggered, this, &MainWindow::runPointCloudToDem);
-        exportPlyAction_ =
-            pcMenu->addAction(QStringLiteral("导出 PLY...")); // 添加"导出 PLY"并保存指针
+        exportPlyAction_ = regAction(pcMenu_, QStringLiteral("action.export_ply"));
         connect(exportPlyAction_, &QAction::triggered, this, &MainWindow::exportPly);
     }
 
@@ -1752,7 +1754,11 @@
         bottomTabs_->addTab(aiPanel, QString());
 
         aiMenu_ = menuBar()->addMenu(QString());
+        aiMenu_->setProperty("trKey", QStringLiteral("menu.ai"));
+        translatableMenus_.append(aiMenu_);
         showAiAction_ = aiMenu_->addAction(QString());
+        showAiAction_->setProperty("trKey", QStringLiteral("action.show_ai"));
+        translatableActions_.append(showAiAction_);
         connect(showAiAction_, &QAction::triggered, this, [this, aiPanel]() {
             bottomTabs_->setCurrentWidget(aiPanel);
         });
@@ -1770,148 +1776,11 @@
         coordLabel_->setMinimumWidth(260);
         statusBar()->addPermanentWidget(coordLabel_);
 
-        // ── 全局样式美化 ──
-        setStyleSheet(QStringLiteral(R"(
-            QMainWindow {
-                background-color: #fdf6f0;
-            }
-            QMenuBar {
-                background-color: #ffffff;
-                color: #5a4a4a;
-                font-size: 13px;
-                padding: 2px 0;
-                border-bottom: 2px solid #f4b8c8;
-            }
-            QMenuBar::item {
-                padding: 6px 16px;
-                background: transparent;
-            }
-            QMenuBar::item:selected {
-                background-color: #fce4ec;
-                border-radius: 4px;
-                color: #8b5a6a;
-            }
-            QWidget#menuWrap {
-                background-color: #ffffff;
-                border-bottom: 2px solid #f4b8c8;
-            }
-            QPushButton#settingsButton {
-                background: transparent;
-                color: #5a4a4a;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 16px;
-                font-size: 13px;
-                font-weight: normal;
-            }
-            QPushButton#settingsButton:hover {
-                background-color: #fce4ec;
-                color: #8b5a6a;
-            }
-            QPushButton#settingsButton:pressed {
-                background-color: #fce4ec;
-                color: #8b5a6a;
-            }
-            QMenu {
-                background-color: #ffffff;
-                color: #5a4a4a;
-                border: 1px solid #f4d0d8;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                border-radius: 3px;
-            }
-            QMenu::item:selected {
-                background-color: #fce4ec;
-                color: #8b5a6a;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: #f0d0d8;
-                margin: 4px 8px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #e8d0d8;
-                border-top: 2px solid #f4b8c8;
-                background-color: #ffffff;
-            }
-            QTabBar::tab {
-                background-color: #fdf0f4;
-                color: #8b7a7a;
-                padding: 8px 20px;
-                border: 1px solid #e8d0d8;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-                font-size: 12px;
-            }
-            QTabBar::tab:selected {
-                background-color: #ffffff;
-                color: #5a4a4a;
-                border-bottom: 2px solid #f4b8c8;
-                font-weight: bold;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #fce4ec;
-                color: #5a4a4a;
-            }
-            QTreeWidget {
-                background-color: #fffafa;
-                border: 1px solid #e8d0d8;
-                border-radius: 4px;
-                font-size: 13px;
-                color: #5a4a4a;
-                alternate-background-color: #fdf6f0;
-            }
-            QTreeWidget::item {
-                padding: 4px 0;
-                border-bottom: 1px solid #fdf0f4;
-            }
-            QTreeWidget::item:selected {
-                background-color: #f4b8c8;
-                color: #ffffff;
-            }
-            QTreeWidget::item:hover {
-                background-color: #fce4ec;
-            }
-            QTextEdit {
-                background-color: #fff5f5;
-                color: #5a4a4a;
-                font-family: "Consolas", "Courier New", monospace;
-                font-size: 12px;
-                border: 1px solid #e8d0d8;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QSplitter::handle {
-                background-color: #f0d0d8;
-                width: 3px;
-            }
-            QSplitter::handle:hover {
-                background-color: #f4b8c8;
-            }
-            QScrollBar:vertical {
-                background-color: #fdf6f0;
-                width: 10px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #f0d0d8;
-                min-height: 20px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #e8b8c8;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QSplitter {
-                padding: 4px;
-            }
-        )"));
+        applyThemeStyles();
+    }
+
+    void MainWindow::applyThemeStyles() {
+        setStyleSheet(AppTheme::instance().mainWindowStyleSheet());
     }
 
     // 打开文件对话框选择遥感影像，使用 GDAL 读取并加载到图层管理器
@@ -3156,6 +3025,7 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
 
 // 右键点击图层树时弹出上下文菜单
 void MainWindow::showLayerContextMenu(const QPoint &position) {
+    const auto &tr = Translation::instance();
     QTreeWidgetItem *item = layerTree_->itemAt(position);
     if (!item) {
         return;
@@ -3202,16 +3072,15 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
             menu.addSeparator();
         }
 
-        // 文件夹或波段节点：允许删除当前选中的图层
         const auto indices = selectedLayerIndices();
-        QAction *deleteAction = menu.addAction(QStringLiteral("删除选中图层"));
+        QAction *deleteAction =
+            menu.addAction(tr.tr(QStringLiteral("action.delete_layer")));
         deleteAction->setEnabled(!indices.empty());
         connect(deleteAction, &QAction::triggered, this, &MainWindow::deleteSelectedLayers);
         menu.exec(layerTree_->viewport()->mapToGlobal(position));
         return;
     }
 
-    // 右键点击某个图层，自动选中它
     layerTree_->setCurrentItem(item);
 
     const int layerIndex = layerIndexVar.toInt();
@@ -3222,8 +3091,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         return;
     }
 
-    // ── 删除图层 ──
-    QAction *deleteAction = menu.addAction(QStringLiteral("删除图层"));
+    QAction *deleteAction = menu.addAction(tr.tr(QStringLiteral("action.delete_single_layer")));
     connect(deleteAction, &QAction::triggered, this, [this, layerIndex]() {
         try {
             const auto type = layers_.at(layerIndex)->type();
@@ -3247,14 +3115,13 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     // ── 导出 ──
     if (canExportLayer(layerIndex)) {
         menu.addSeparator();
-        QAction *exportAction = menu.addAction(QStringLiteral("导出..."));
+        QAction *exportAction = menu.addAction(tr.tr(QStringLiteral("action.export_layer")));
         connect(exportAction, &QAction::triggered, this, [this, layerIndex]() {
             exportLayerImage(layerIndex);
         });
     }
 
-    // ── 缩放至范围 ──
-    QAction *zoomAction = menu.addAction(QStringLiteral("缩放至范围"));
+    QAction *zoomAction = menu.addAction(tr.tr(QStringLiteral("action.zoom_to_extent")));
     connect(zoomAction, &QAction::triggered, this, [this, layer]() {
         if (layer->type() == DataType::Raster) {
             appendLog(QStringLiteral("TODO: 缩放至 %1 的影像范围。").arg(layer->name()));
@@ -3273,7 +3140,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     });
 
     // ── 属性对话框 ──
-    QAction *propAction = menu.addAction(QStringLiteral("属性"));
+    QAction *propAction = menu.addAction(tr.tr(QStringLiteral("action.properties")));
     connect(propAction, &QAction::triggered, this, [this, layer]() {
         QString typeName;
         switch (layer->type()) {
@@ -3646,6 +3513,44 @@ void MainWindow::appendLog(const QString &text) {
         QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), text));
 }
 
+void MainWindow::refreshStartupLog() {
+    if (!logEdit_) {
+        return;
+    }
+
+    const QString message = Translation::instance().tr(QStringLiteral("log.startup"));
+    QString text = logEdit_->toPlainText();
+
+    if (!startupLogPresent_ || text.isEmpty()) {
+        logEdit_->setPlainText(
+            QStringLiteral("[%1] %2")
+                .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), message));
+        startupLogPresent_ = true;
+        return;
+    }
+
+    const int newline = text.indexOf(QLatin1Char('\n'));
+    const QString firstLine = newline >= 0 ? text.left(newline) : text;
+    QString timestamp;
+    if (firstLine.startsWith(QLatin1Char('['))) {
+        const int end = firstLine.indexOf(QLatin1Char(']'));
+        if (end > 0) {
+            timestamp = firstLine.left(end + 1);
+        }
+    }
+    if (timestamp.isEmpty()) {
+        timestamp = QStringLiteral("[%1]").arg(
+            QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")));
+    }
+
+    const QString newFirstLine = QStringLiteral("%1 %2").arg(timestamp, message);
+    if (newline >= 0) {
+        logEdit_->setPlainText(newFirstLine + text.mid(newline));
+    } else {
+        logEdit_->setPlainText(newFirstLine);
+    }
+}
+
 void MainWindow::executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx) {
     const auto raster = selectedRaster();
     if (!raster) {
@@ -3844,51 +3749,22 @@ void MainWindow::retranslateUi() {
     const auto &t = Translation::instance();
     setWindowTitle(t.tr(QStringLiteral("window_title")));
 
-    if (dataMenu_) {
-        dataMenu_->setTitle(t.tr(QStringLiteral("menu.data")));
+    for (QMenu *menu : translatableMenus_) {
+        const QString key = menu->property("trKey").toString();
+        if (!key.isEmpty()) {
+            menu->setTitle(t.tr(key));
+        }
     }
-    if (loadRasterAction_) {
-        loadRasterAction_->setText(t.tr(QStringLiteral("action.load_raster")));
+    for (QAction *action : translatableActions_) {
+        const QString key = action->property("trKey").toString();
+        if (!key.isEmpty()) {
+            action->setText(t.tr(key));
+        }
     }
-    if (loadPointCloudAction_) {
-        loadPointCloudAction_->setText(t.tr(QStringLiteral("action.load_pointcloud")));
-    }
-    if (loadMeshAction_) {
-        loadMeshAction_->setText(t.tr(QStringLiteral("action.load_mesh")));
-    }
-    if (loadDemAction_) {
-        loadDemAction_->setText(t.tr(QStringLiteral("action.load_dem")));
-    }
-    if (loadPanoramaAction_) {
-        loadPanoramaAction_->setText(QStringLiteral("加载 360 街景图..."));
-    }
-    if (deleteLayerAction_) {
-        deleteLayerAction_->setText(t.tr(QStringLiteral("action.delete_layer")));
-    }
-    if (clearProjectAction_) {
-        clearProjectAction_->setText(t.tr(QStringLiteral("action.clear_project")));
-    }
-    if (rasterMenu_) {
-        rasterMenu_->setTitle(t.tr(QStringLiteral("menu.raster")));
-    }
-    if (indexMenu_) {
-        indexMenu_->setTitle(t.tr(QStringLiteral("menu.index")));
-    }
-    if (photogrammetryMenu_) {
-        photogrammetryMenu_->setTitle(t.tr(QStringLiteral("menu.photogrammetry")));
-    }
-    if (pcMenu_) {
-        pcMenu_->setTitle(t.tr(QStringLiteral("menu.pointcloud")));
-    }
-    if (aiMenu_) {
-        aiMenu_->setTitle(t.tr(QStringLiteral("menu.ai")));
-    }
+
     if (settingsButton_) {
         settingsButton_->setText(t.tr(QStringLiteral("settings.button")));
         settingsButton_->setToolTip(t.tr(QStringLiteral("settings.title")));
-    }
-    if (showAiAction_) {
-        showAiAction_->setText(t.tr(QStringLiteral("action.show_ai")));
     }
 
     if (layerTree_) {
@@ -3907,6 +3783,7 @@ void MainWindow::retranslateUi() {
             bottomTabs_->setTabText(1, t.tr(QStringLiteral("tab.ai")));
         }
     }
+    refreshStartupLog();
 }
 
 } // namespace rs
