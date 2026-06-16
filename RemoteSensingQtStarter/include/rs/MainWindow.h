@@ -8,6 +8,7 @@
 #include <QAbstractItemView>
 #include <QAction> // Qt 菜单操作类，用于菜单项的启用/禁用控制
 #include <QByteArray>
+#include <QCloseEvent>
 #include <QDataStream>
 #include <QDateTime>
 #include <QEvent>
@@ -56,6 +57,9 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
       public : explicit MainWindow(QWidget *parent = nullptr); // 构造函数，可指定父窗口
 
+  protected:
+    void closeEvent(QCloseEvent *event) override;
+
   private slots:
     // ============ 数据加载（菜单项对应的槽函数） ============
         void openRasterDatasets(); // 打开文件对话框加载遥感影像（GDAL，支持多选）
@@ -103,6 +107,8 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
     // ============ 图层管理 ============
     void refreshLayerTree(); // 根据 LayerManager 数据重建图层树（保持展开状态）
+    void saveLastSession() const;
+    void restoreLastSession();
 
     // ============ 影像显示 ============
     void displayRaster(const std::shared_ptr<RasterLayer> &raster,
