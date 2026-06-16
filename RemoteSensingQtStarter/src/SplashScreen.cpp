@@ -3,6 +3,7 @@
 #include "rs/Translation.h"
 
 #include <QImage>
+#include <QDateTime>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
@@ -20,6 +21,19 @@ SplashScreen::SplashScreen(QWidget *parent) : QWidget(parent) {
     tickTimer_ = new QTimer(this);
     tickTimer_->setInterval(380);
     connect(tickTimer_, &QTimer::timeout, this, &SplashScreen::onTick);
+
+    progressTimer_ = new QTimer(this);
+    progressTimer_->setInterval(16);
+    connect(progressTimer_, &QTimer::timeout, this, [this]() {
+        if (minimumDisplayMs_ <= 0) {
+            progress_ = 1.0;
+        } else {
+            const qint64 elapsed = QDateTime::currentMSecsSinceEpoch() - startTimeMs_;
+            const qreal t = qBound<qreal>(0.0, static_cast<qreal>(elapsed) / minimumDisplayMs_, 1.0);
+            progress_ = 1.0 - qPow(1.0 - t, 2.2);
+        }
+        update();
+    });
 
     finishTimer_ = new QTimer(this);
     finishTimer_->setSingleShot(true);
@@ -63,6 +77,8 @@ void SplashScreen::setMinimumDisplayMs(int ms) {
 void SplashScreen::start(int minimumDisplayMs) {
     minimumDisplayMs_ = qMax(800, minimumDisplayMs);
     dotPhase_ = 0;
+    progress_ = 0.0;
+    startTimeMs_ = QDateTime::currentMSecsSinceEpoch();
     setWindowOpacity(0.0);
     setWindowFlag(Qt::WindowStaysOnTopHint, true);
     show();
@@ -70,6 +86,7 @@ void SplashScreen::start(int minimumDisplayMs) {
     activateWindow();
     fadeIn_->start();
     tickTimer_->start();
+    progressTimer_->start();
     finishTimer_->start(minimumDisplayMs_);
 }
 
@@ -80,6 +97,9 @@ void SplashScreen::onTick() {
 
 void SplashScreen::finishSplash() {
     tickTimer_->stop();
+    progressTimer_->stop();
+    progress_ = 1.0;
+    update();
     fadeOut_->start();
 }
 
@@ -255,9 +275,8 @@ void SplashScreen::paintEvent(QPaintEvent *event) {
     p.setBrush(QColor(255, 255, 255, 120));
     p.drawRoundedRect(barBg, 3, 3);
 
-    const qreal progress = qMin(1.0, static_cast<qreal>(dotPhase_) / 3.0);
     QRectF barFill = barBg;
-    barFill.setWidth(barBg.width() * (0.25 + progress * 0.75));
+    barFill.setWidth(barBg.width() * qBound<qreal>(0.0, progress_, 1.0));
     QLinearGradient barGrad(barFill.topLeft(), barFill.topRight());
     barGrad.setColorAt(0.0, QColor("#ff8fb8"));
     barGrad.setColorAt(1.0, QColor("#ff69b4"));

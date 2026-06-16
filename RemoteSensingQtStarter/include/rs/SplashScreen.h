@@ -40,8 +40,11 @@ private:
     bool hasHeroImage_{false};
     int minimumDisplayMs_{2600};
     int dotPhase_{0};
+    qreal progress_{0.0};
+    qint64 startTimeMs_{0};
 
     QTimer *tickTimer_{nullptr};
+    QTimer *progressTimer_{nullptr};
     QTimer *finishTimer_{nullptr};
     QPropertyAnimation *fadeIn_{nullptr};
     QPropertyAnimation *fadeOut_{nullptr};
