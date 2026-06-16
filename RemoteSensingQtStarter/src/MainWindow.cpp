@@ -1794,16 +1794,6 @@
         }, bottomTabs_);
         bottomTabs_->addTab(aiPanel, QString());
 
-        aiMenu_ = menuBar()->addMenu(QString());
-        aiMenu_->setProperty("trKey", QStringLiteral("menu.ai"));
-        translatableMenus_.append(aiMenu_);
-        showAiAction_ = aiMenu_->addAction(QString());
-        showAiAction_->setProperty("trKey", QStringLiteral("action.show_ai"));
-        translatableActions_.append(showAiAction_);
-        connect(showAiAction_, &QAction::triggered, this, [this, aiPanel]() {
-            bottomTabs_->setCurrentWidget(aiPanel);
-        });
-
         // 设置分割器拉伸比例（控件随窗口缩放时的比例分配）
         root->setStretchFactor(0, 1);  // 第0个（图层树）：拉伸因子 = 1
         root->setStretchFactor(1, 5);  // 第1个（右侧区域）：拉伸因子 = 5

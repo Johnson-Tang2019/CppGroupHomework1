@@ -155,7 +155,6 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QMenu *indexMenu_{};
     QMenu *photogrammetryMenu_{};
     QMenu *pcMenu_{};
-    QMenu *aiMenu_{};
 
     QPushButton *settingsButton_{};
 
@@ -164,7 +163,6 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *loadMeshAction_{};
     QAction *loadDemAction_{};
     QAction *loadPanoramaAction_{};
-    QAction *showAiAction_{};
 
     // ============ 菜单项指针（用于启用/禁用控制） ============
     QAction *deleteLayerAction_{};  // "删除选中图层"菜单项

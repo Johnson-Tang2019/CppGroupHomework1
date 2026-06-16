@@ -445,7 +445,7 @@ QString Translation::helpGuideHtml() const {
 <h3>4. Panorama / Street View</h3>
 <p>Load a 360° panorama image from <b>Street View / Panorama</b> and browse it in the dedicated tab.</p>
 <h3>5. AI Assistant</h3>
-<p>Open <b>AI → Show AI Assistant</b> to attach layer information and ask questions about imported data.</p>
+<p>Open the <b>AI Assistant</b> tab at the bottom of the window to attach layer information and ask questions about imported data.</p>
 <h3>6. Settings</h3>
 <p>Click the <b>Settings</b> button at the top-right corner. Use the <b>General</b> tab to switch language or theme color, and the <b>User Guide</b> tab for this manual.</p>
 <h3>7. Tips</h3>
@@ -482,7 +482,7 @@ QString Translation::helpGuideHtml() const {
 <h3>4. 街景 / 全景</h3>
 <p>在 <b>街景/全景</b> 菜单加载 360° 全景图，并在对应标签页中查看。</p>
 <h3>5. AI 助手</h3>
-<p>通过 <b>AI → 显示 AI 助手</b> 打开面板，可附带图层信息并进行问答。</p>
+<p>在窗口底部的 <b>AI 助手</b> 标签页打开面板，可附带图层信息并进行问答。</p>
 <h3>6. 设置</h3>
 <p>点击窗口右上角的 <b>设置</b> 按钮。在 <b>常规</b> 标签页切换语言或主题颜色，在 <b>使用指南</b> 标签页查看本说明。</p>
 <h3>7. 小技巧</h3>
