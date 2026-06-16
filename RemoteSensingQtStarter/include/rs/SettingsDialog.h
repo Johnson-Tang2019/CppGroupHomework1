@@ -3,6 +3,7 @@
 #include <QDialog>
 #include <QLabel>
 
+class QCheckBox;
 class QComboBox;
 class QDateEdit;
 class QLineEdit;
@@ -30,6 +31,7 @@ private:
     QTabWidget *tabs_{nullptr};
     QComboBox *languageCombo_{nullptr};
     QComboBox *themeCombo_{nullptr};
+    QCheckBox *careModeCheck_{nullptr};
     QLabel *languageLabel_{nullptr};
     QLabel *themeLabel_{nullptr};
     QTextBrowser *helpBrowser_{nullptr};

@@ -40,6 +40,7 @@ add_executable(RemoteSensingQtStarter WIN32
     src/MainWindow.cpp
     src/SplashScreen.cpp
     src/Translation.cpp
+    src/TranslationExtended.cpp
     src/AppTheme.cpp
     src/SettingsDialog.cpp
     src/Algorithms.cpp
@@ -64,6 +65,7 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/MainWindow.h
     include/rs/SplashScreen.h
     include/rs/Translation.h
+    include/rs/TranslationExtended.h
     include/rs/AppTheme.h
     include/rs/SettingsDialog.h
     include/rs/Panorama360Widget.h

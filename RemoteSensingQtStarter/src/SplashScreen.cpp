@@ -238,8 +238,16 @@ void SplashScreen::paintEvent(QPaintEvent *event) {
 
     const QString dots =
         Translation::instance().tr(QStringLiteral("splash.starting")) + QString(dotPhase_, QChar('.'));
-    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.80, card.width(), 22),
+    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.78, card.width(), 22),
                Qt::AlignHCenter | Qt::AlignVCenter, dots);
+
+    QFont teamFont = font();
+    teamFont.setPointSize(9);
+    p.setFont(teamFont);
+    p.setPen(QColor("#b06a84"));
+    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.84, card.width(), 20),
+               Qt::AlignHCenter | Qt::AlignVCenter,
+               Translation::instance().tr(QStringLiteral("splash.team")));
 
     // 底部进度条装饰
     const QRectF barBg(card.left() + 72, card.bottom() - 52, card.width() - 144, 6);
