@@ -32,8 +32,7 @@ void SwipeCompareWidget::clearComparison() {
 
 QRect SwipeCompareWidget::imageTargetRect() const {
     const QRect area = rect().adjusted(20, 18, -20, -20);
-    const int heatHeight = heatmap_.isNull() ? 0 : std::max(110, area.height() / 3);
-    const QRect topArea(area.left(), area.top(), area.width(), area.height() - heatHeight - 18);
+    const QRect topArea = area;
     if (oldImage_.isNull()) {
         return topArea;
     }
@@ -45,16 +44,7 @@ QRect SwipeCompareWidget::imageTargetRect() const {
 }
 
 QRect SwipeCompareWidget::heatmapTargetRect() const {
-    if (heatmap_.isNull()) {
-        return {};
-    }
-    const QRect imageRect = imageTargetRect();
-    const QRect area = rect().adjusted(20, imageRect.bottom() + 18, -20, -28);
-    QSize fitted = heatmap_.size();
-    fitted.scale(area.size(), Qt::KeepAspectRatio);
-    return QRect(QPoint(area.center().x() - fitted.width() / 2,
-                        area.center().y() - fitted.height() / 2),
-                 fitted);
+    return {};
 }
 
 void SwipeCompareWidget::paintEvent(QPaintEvent *) {
@@ -99,32 +89,6 @@ void SwipeCompareWidget::paintEvent(QPaintEvent *) {
                      Qt::AlignVCenter | Qt::AlignRight,
                      QStringLiteral("新影像：%1").arg(newName_));
 
-    const QRect heatRect = heatmapTargetRect();
-    if (!heatRect.isEmpty()) {
-        painter.setPen(QPen(QColor(232, 169, 192), 1));
-        painter.setBrush(QColor(255, 248, 251));
-        painter.drawRoundedRect(heatRect.adjusted(-10, -28, 10, 26), 8, 8);
-        painter.setPen(QColor(72, 32, 48));
-        painter.drawText(QRect(heatRect.left(), heatRect.top() - 25, heatRect.width(), 22),
-                         Qt::AlignLeft | Qt::AlignVCenter,
-                         QStringLiteral("NDVI 差值热力图（新 - 旧）"));
-        painter.drawImage(heatRect, heatmap_);
-
-        const QRect legend(heatRect.right() - 260, heatRect.bottom() + 7, 260, 14);
-        QLinearGradient gradient(legend.topLeft(), legend.topRight());
-        gradient.setColorAt(0.0, QColor(198, 36, 72));
-        gradient.setColorAt(0.5, QColor(250, 250, 250));
-        gradient.setColorAt(1.0, QColor(27, 150, 91));
-        painter.fillRect(legend, gradient);
-        painter.setPen(QColor(110, 70, 86));
-        painter.drawRect(legend);
-        painter.drawText(QRect(legend.left(), legend.bottom() + 2, 90, 18),
-                         Qt::AlignLeft, QStringLiteral("减少"));
-        painter.drawText(QRect(legend.center().x() - 35, legend.bottom() + 2, 70, 18),
-                         Qt::AlignCenter, QStringLiteral("稳定"));
-        painter.drawText(QRect(legend.right() - 90, legend.bottom() + 2, 90, 18),
-                         Qt::AlignRight, QStringLiteral("增加"));
-    }
 }
 
 void SwipeCompareWidget::mousePressEvent(QMouseEvent *event) {

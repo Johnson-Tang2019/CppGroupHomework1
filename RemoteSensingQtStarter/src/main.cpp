@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QIcon>
 #include <QScreen>
+#include <QTimer>
 
 #ifdef RS_WITH_GDAL
 #include <gdal_priv.h>
@@ -74,19 +75,21 @@ int main(int argc, char *argv[]) {
     rs::MainWindow window;
     window.setWindowIcon(app.windowIcon());
     fitMainWindowToScreen(&window);
-    window.setVisible(false);
 
     rs::SplashScreen splash;
     centerOnScreen(&splash);
-
-    // 启动闪屏插画
     splash.setHeroImagePath(QStringLiteral(":/splash_hero.png"));
-    QObject::connect(&splash, &rs::SplashScreen::finished, &window, [&window]() {
-        window.show();
+
+    auto showMainWindow = [&window]() {
+        if (!window.isVisible()) {
+            window.show();
+        }
         window.raise();
         window.activateWindow();
-    });
+    };
+    QObject::connect(&splash, &rs::SplashScreen::finished, &window, showMainWindow);
+    splash.start(2200);
+    QTimer::singleShot(3200, &window, showMainWindow);
 
-    splash.start(2800);
     return app.exec();
 }
