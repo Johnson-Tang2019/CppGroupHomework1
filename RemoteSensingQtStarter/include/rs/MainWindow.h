@@ -145,7 +145,6 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QMenu *rasterMenu_{};
     QMenu *indexMenu_{};
     QMenu *photogrammetryMenu_{};
-    QMenu *streetViewMenu_{};
     QMenu *pcMenu_{};
     QMenu *aiMenu_{};
 
@@ -155,6 +154,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *loadPointCloudAction_{};
     QAction *loadMeshAction_{};
     QAction *loadDemAction_{};
+    QAction *loadPanoramaAction_{};
     QAction *showAiAction_{};
 
     // ============ 菜单项指针（用于启用/禁用控制） ============

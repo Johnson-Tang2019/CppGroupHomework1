@@ -1038,6 +1038,8 @@
         connect(loadMeshAction_, &QAction::triggered, this, &MainWindow::openMesh);
         loadDemAction_ = dataMenu->addAction(QString());
         connect(loadDemAction_, &QAction::triggered, this, &MainWindow::openDem);
+        loadPanoramaAction_ = dataMenu->addAction(QStringLiteral("加载 360 街景图..."));
+        connect(loadPanoramaAction_, &QAction::triggered, this, &MainWindow::openPanorama360);
         dataMenu->addSeparator();      // 添加分隔线，将加载与删除操作分开
         deleteLayerAction_ = dataMenu->addAction(
             QStringLiteral("删除选中图层")); // 添加"删除选中图层"并保存指针以便控制启用/禁用
@@ -1329,11 +1331,6 @@
         demTextureAction_ = photogrammetryMenu->addAction(
             QStringLiteral("DEM 三维贴图..."));
         connect(demTextureAction_, &QAction::triggered, this, &MainWindow::runDemTextureMapping);
-
-        auto *streetViewMenu = menuBar()->addMenu(QString());
-        streetViewMenu_ = streetViewMenu;
-        connect(streetViewMenu->addAction(QStringLiteral("加载 360 街景图...")), &QAction::triggered,
-                this, &MainWindow::openPanorama360);
 
         // ---- "点云处理" 菜单 ----
         auto *pcMenu = menuBar()->addMenu(QString());
@@ -3576,6 +3573,9 @@ void MainWindow::retranslateUi() {
     if (loadDemAction_) {
         loadDemAction_->setText(t.tr(QStringLiteral("action.load_dem")));
     }
+    if (loadPanoramaAction_) {
+        loadPanoramaAction_->setText(QStringLiteral("加载 360 街景图..."));
+    }
     if (deleteLayerAction_) {
         deleteLayerAction_->setText(t.tr(QStringLiteral("action.delete_layer")));
     }
@@ -3590,9 +3590,6 @@ void MainWindow::retranslateUi() {
     }
     if (photogrammetryMenu_) {
         photogrammetryMenu_->setTitle(t.tr(QStringLiteral("menu.photogrammetry")));
-    }
-    if (streetViewMenu_) {
-        streetViewMenu_->setTitle(t.tr(QStringLiteral("menu.streetview")));
     }
     if (pcMenu_) {
         pcMenu_->setTitle(t.tr(QStringLiteral("menu.pointcloud")));
