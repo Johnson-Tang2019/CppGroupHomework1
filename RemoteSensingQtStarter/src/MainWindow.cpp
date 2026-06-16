@@ -1566,27 +1566,46 @@
             }
             return lines.join(QStringLiteral("\n"));
         }, [this]() -> QImage {
-            if (const auto raster = selectedRaster()) {
-                const QImage &display = raster->currentDisplayImage();
-                if (!display.isNull()) {
-                    return display;
+            if (!tabs_) {
+                return {};
+            }
+
+            QWidget *currentView = tabs_->currentWidget();
+            if (!currentView) {
+                return {};
+            }
+
+            if (currentView == imageView_) {
+                if (!imageView_ || !imageView_->viewport() || !imageScene_ || imageScene_->items().isEmpty()) {
+                    return {};
+                }
+
+                QImage visibleImage = imageView_->viewport()->grab().toImage();
+                if (!visibleImage.isNull()) {
+                    return visibleImage;
+                }
+
+                const QRectF visibleSceneRect =
+                    imageView_->mapToScene(imageView_->viewport()->rect()).boundingRect();
+                if (!visibleSceneRect.isValid() || visibleSceneRect.isEmpty()) {
+                    return {};
+                }
+
+                QImage snapshot(imageView_->viewport()->size(), QImage::Format_ARGB32);
+                snapshot.fill(Qt::transparent);
+                QPainter painter(&snapshot);
+                imageScene_->render(&painter, QRectF(snapshot.rect()), visibleSceneRect);
+                return snapshot;
+            }
+
+            if (auto *glWidget = qobject_cast<QOpenGLWidget *>(currentView)) {
+                const QImage frame = glWidget->grabFramebuffer();
+                if (!frame.isNull()) {
+                    return frame;
                 }
             }
 
-            if (!imageScene_ || imageScene_->items().isEmpty()) {
-                return {};
-            }
-
-            const QRectF bounds = imageScene_->itemsBoundingRect();
-            if (!bounds.isValid() || bounds.isEmpty()) {
-                return {};
-            }
-
-            QImage snapshot(bounds.size().toSize(), QImage::Format_ARGB32);
-            snapshot.fill(Qt::transparent);
-            QPainter painter(&snapshot);
-            imageScene_->render(&painter, QRectF(snapshot.rect()), bounds);
-            return snapshot;
+            return currentView->grab().toImage();
         }, bottomTabs_);
         bottomTabs_->addTab(aiPanel, QString());
 
