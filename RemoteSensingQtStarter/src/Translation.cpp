@@ -1,4 +1,5 @@
 #include "rs/Translation.h"
+#include "rs/TranslationExtended.h"
 
 #include <QHash>
 #include <QSettings>
@@ -8,7 +9,19 @@ namespace rs {
 namespace {
 
 QString langSuffix(AppLanguage language) {
-    return language == AppLanguage::English ? QStringLiteral("en") : QStringLiteral("zh");
+    switch (language) {
+    case AppLanguage::English:
+        return QStringLiteral("en");
+    case AppLanguage::Russian:
+        return QStringLiteral("ru");
+    case AppLanguage::French:
+        return QStringLiteral("fr");
+    case AppLanguage::ClassicalChinese:
+        return QStringLiteral("gu");
+    case AppLanguage::Chinese:
+    default:
+        return QStringLiteral("zh");
+    }
 }
 
 const QHash<QString, QHash<QString, QString>> &catalog() {
@@ -94,6 +107,9 @@ const QHash<QString, QHash<QString, QString>> &catalog() {
         {QStringLiteral("settings.theme"),
          {{QStringLiteral("zh"), QStringLiteral("主题颜色")},
           {QStringLiteral("en"), QStringLiteral("Theme Color")}}},
+        {QStringLiteral("settings.care_mode"),
+         {{QStringLiteral("zh"), QStringLiteral("关怀模式（放大字体）")},
+          {QStringLiteral("en"), QStringLiteral("Care Mode (Larger Text)")}}},
         {QStringLiteral("theme.pink"),
          {{QStringLiteral("zh"), QStringLiteral("淡粉色（默认）")},
           {QStringLiteral("en"), QStringLiteral("Light Pink (Default)")}}},
@@ -117,6 +133,15 @@ const QHash<QString, QHash<QString, QString>> &catalog() {
         {QStringLiteral("settings.lang.en"),
          {{QStringLiteral("zh"), QStringLiteral("English")},
           {QStringLiteral("en"), QStringLiteral("English")}}},
+        {QStringLiteral("settings.lang.ru"),
+         {{QStringLiteral("zh"), QStringLiteral("俄语")},
+          {QStringLiteral("en"), QStringLiteral("Russian")}}},
+        {QStringLiteral("settings.lang.fr"),
+         {{QStringLiteral("zh"), QStringLiteral("法语")},
+          {QStringLiteral("en"), QStringLiteral("French")}}},
+        {QStringLiteral("settings.lang.gu"),
+         {{QStringLiteral("zh"), QStringLiteral("古语")},
+          {QStringLiteral("en"), QStringLiteral("Classical Chinese")}}},
         {QStringLiteral("settings.tab.guide"),
          {{QStringLiteral("zh"), QStringLiteral("使用指南")},
           {QStringLiteral("en"), QStringLiteral("User Guide")}}},
@@ -368,6 +393,186 @@ const QHash<QString, QHash<QString, QString>> &catalog() {
         {QStringLiteral("splash.starting"),
          {{QStringLiteral("zh"), QStringLiteral("正在启动")},
           {QStringLiteral("en"), QStringLiteral("Starting")}}},
+        {QStringLiteral("splash.team"),
+         {{QStringLiteral("zh"), QStringLiteral("制作团队：CodeFour")},
+          {QStringLiteral("en"), QStringLiteral("Team: CodeFour")}}},
+        {QStringLiteral("log.no_previous_session"),
+         {{QStringLiteral("zh"), QStringLiteral("未发现上次加载的数据。")},
+          {QStringLiteral("en"), QStringLiteral("No previously loaded data found.")}}},
+        {QStringLiteral("log.restoring_session"),
+         {{QStringLiteral("zh"), QStringLiteral("正在恢复上次加载的数据（%1 项）...")},
+          {QStringLiteral("en"), QStringLiteral("Restoring previously loaded data (%1 items)...")}}},
+        {QStringLiteral("log.restore_file_missing"),
+         {{QStringLiteral("zh"), QStringLiteral("恢复失败：文件不存在 [%1]")},
+          {QStringLiteral("en"), QStringLiteral("Restore failed: file not found [%1]")}}},
+        {QStringLiteral("log.restore_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("恢复失败 [%1]：%2")},
+          {QStringLiteral("en"), QStringLiteral("Restore failed [%1]: %2")}}},
+        {QStringLiteral("log.restore_done"),
+         {{QStringLiteral("zh"), QStringLiteral("已恢复上次加载的数据：成功 %1 项，失败 %2 项。")},
+          {QStringLiteral("en"), QStringLiteral("Restored previous data: %1 succeeded, %2 failed.")}}},
+        {QStringLiteral("log.raster_loaded"),
+         {{QStringLiteral("zh"), QStringLiteral("已加载影像：%1（%2 波段，%3x%4）")},
+          {QStringLiteral("en"), QStringLiteral("Loaded raster: %1 (%2 bands, %3x%4)")}}},
+        {QStringLiteral("log.load_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("加载失败 [%1]：%2")},
+          {QStringLiteral("en"), QStringLiteral("Load failed [%1]: %2")}}},
+        {QStringLiteral("log.pointcloud_loaded"),
+         {{QStringLiteral("zh"), QStringLiteral("已加载点云：%1（%2 个点）")},
+          {QStringLiteral("en"), QStringLiteral("Loaded point cloud: %1 (%2 points)")}}},
+        {QStringLiteral("log.pointcloud_load_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("点云加载失败 [%1]：%2")},
+          {QStringLiteral("en"), QStringLiteral("Point cloud load failed [%1]: %2")}}},
+        {QStringLiteral("log.mesh_loaded_vertices_only"),
+         {{QStringLiteral("zh"), QStringLiteral("已加载 Mesh：%1（%2 个顶点，未读取到三角面，已在三维场景显示顶点）")},
+          {QStringLiteral("en"),
+           QStringLiteral("Loaded mesh: %1 (%2 vertices, no faces; showing vertices in 3D scene)")}}},
+        {QStringLiteral("log.mesh_loaded"),
+         {{QStringLiteral("zh"), QStringLiteral("已加载 Mesh：%1（%2 个顶点，%3 个三角面）")},
+          {QStringLiteral("en"), QStringLiteral("Loaded mesh: %1 (%2 vertices, %3 faces)")}}},
+        {QStringLiteral("log.mesh_vbo_hint"),
+         {{QStringLiteral("zh"), QStringLiteral("三维场景已完整显示 Mesh，使用 VBO/索引缓冲与平滑法线改善性能和细节。")},
+          {QStringLiteral("en"),
+           QStringLiteral("Mesh displayed in 3D scene with VBO/index buffers and smooth normals.")}}},
+        {QStringLiteral("log.mesh_load_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("Mesh 加载失败 [%1]：%2")},
+          {QStringLiteral("en"), QStringLiteral("Mesh load failed [%1]: %2")}}},
+        {QStringLiteral("log.dem_loaded"),
+         {{QStringLiteral("zh"), QStringLiteral("已加载 DEM：%1（%2x%3）")},
+          {QStringLiteral("en"), QStringLiteral("Loaded DEM: %1 (%2x%3)")}}},
+        {QStringLiteral("log.dem_load_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("DEM 加载失败 [%1]：%2")},
+          {QStringLiteral("en"), QStringLiteral("DEM load failed [%1]: %2")}}},
+        {QStringLiteral("log.panorama_qt_failed_gdal"),
+         {{QStringLiteral("zh"), QStringLiteral("Qt 读取 360 街景图失败：%1；尝试使用 GDAL 兜底。")},
+          {QStringLiteral("en"), QStringLiteral("Qt failed to read 360 panorama: %1; trying GDAL fallback.")}}},
+        {QStringLiteral("log.panorama_gdal_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("GDAL 兜底读取也失败：%1")},
+          {QStringLiteral("en"), QStringLiteral("GDAL fallback also failed: %1")}}},
+        {QStringLiteral("log.panorama_ratio_hint"),
+         {{QStringLiteral("zh"), QStringLiteral("提示：当前 360 图片比例为 %1:1，非标准 2:1，仍按全景显示。")},
+          {QStringLiteral("en"), QStringLiteral("Note: 360 image aspect ratio is %1:1 (not standard 2:1); showing as panorama anyway.")}}},
+        {QStringLiteral("log.panorama_loaded"),
+         {{QStringLiteral("zh"), QStringLiteral("已加载 360 街景图：%1（%2x%3）")},
+          {QStringLiteral("en"), QStringLiteral("Loaded 360 panorama: %1 (%2x%3)")}}},
+        {QStringLiteral("log.panorama_load_method"),
+         {{QStringLiteral("zh"), QStringLiteral("360 街景图读取方式：%1")},
+          {QStringLiteral("en"), QStringLiteral("360 panorama load method: %1")}}},
+        {QStringLiteral("log.layers_deleted"),
+         {{QStringLiteral("zh"), QStringLiteral("已删除 %1 个选中图层。")},
+          {QStringLiteral("en"), QStringLiteral("Deleted %1 selected layer(s).")}}},
+        {QStringLiteral("log.project_cleared"),
+         {{QStringLiteral("zh"), QStringLiteral("工程已初始化。")},
+          {QStringLiteral("en"), QStringLiteral("Project cleared.")}}},
+        {QStringLiteral("log.render_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("渲染失败：%1，请确认加载时已读取像素样本且波段索引有效。")},
+          {QStringLiteral("en"),
+           QStringLiteral("Render failed: %1. Confirm pixel samples were read and band indices are valid.")}}},
+        {QStringLiteral("log.render_done"),
+         {{QStringLiteral("zh"), QStringLiteral("已渲染影像：%1，%2。")},
+          {QStringLiteral("en"), QStringLiteral("Rendered image: %1, %2.")}}},
+        {QStringLiteral("log.select_raster"),
+         {{QStringLiteral("zh"), QStringLiteral("请先选择遥感影像图层。")},
+          {QStringLiteral("en"), QStringLiteral("Please select a raster layer first.")}}},
+        {QStringLiteral("log.select_raster_one"),
+         {{QStringLiteral("zh"), QStringLiteral("请先选择一个遥感影像图层。")},
+          {QStringLiteral("en"), QStringLiteral("Please select one raster layer first.")}}},
+        {QStringLiteral("log.select_two_rasters_ref"),
+         {{QStringLiteral("zh"), QStringLiteral("请选中两个栅格图层（预测结果 + 参考分类）。")},
+          {QStringLiteral("en"), QStringLiteral("Select two raster layers (prediction + reference).")}}},
+        {QStringLiteral("log.select_two_temporal"),
+         {{QStringLiteral("zh"), QStringLiteral("请选中两个时相的栅格图层。")},
+          {QStringLiteral("en"), QStringLiteral("Select two temporal raster layers.")}}},
+        {QStringLiteral("log.select_layer"),
+         {{QStringLiteral("zh"), QStringLiteral("请先选择图层。")},
+          {QStringLiteral("en"), QStringLiteral("Please select a layer first.")}}},
+        {QStringLiteral("log.select_stereo_pair"),
+         {{QStringLiteral("zh"), QStringLiteral("请选中两个遥感影像作为立体像对（左影像和右影像）。")},
+          {QStringLiteral("en"), QStringLiteral("Select two rasters as a stereo pair (left and right).")}}},
+        {QStringLiteral("log.select_raster_dem"),
+         {{QStringLiteral("zh"), QStringLiteral("请选中一个遥感影像和一个 DEM 图层。")},
+          {QStringLiteral("en"), QStringLiteral("Select one raster and one DEM layer.")}}},
+        {QStringLiteral("log.orthorectify_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("正射校正失败。")},
+          {QStringLiteral("en"), QStringLiteral("Orthorectification failed.")}}},
+        {QStringLiteral("log.select_raster_dem_texture"),
+         {{QStringLiteral("zh"), QStringLiteral("请同时选中一个遥感影像图层和一个 DEM 图层，再执行 DEM 三维贴图。")},
+          {QStringLiteral("en"), QStringLiteral("Select one raster and one DEM layer before DEM 3D texturing.")}}},
+        {QStringLiteral("log.dem_texture_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("DEM 三维贴图失败：影像 %1 没有可用的渲染图像。")},
+          {QStringLiteral("en"), QStringLiteral("DEM 3D texturing failed: raster %1 has no renderable image.")}}},
+        {QStringLiteral("log.dem_texture_done"),
+         {{QStringLiteral("zh"), QStringLiteral("已完成 DEM 三维贴图：DEM=%1，纹理=%2，来源=%3 %4")},
+          {QStringLiteral("en"), QStringLiteral("DEM 3D texturing done: DEM=%1, texture=%2, source=%3 %4")}}},
+        {QStringLiteral("log.export_ply_hint"),
+         {{QStringLiteral("zh"), QStringLiteral("导出 PLY 提示：请先选中一个点云或 Mesh 图层。")},
+          {QStringLiteral("en"), QStringLiteral("Export PLY: select a point cloud or mesh layer first.")}}},
+        {QStringLiteral("log.cannot_create_file"),
+         {{QStringLiteral("zh"), QStringLiteral("无法创建文件: %1")},
+          {QStringLiteral("en"), QStringLiteral("Cannot create file: %1")}}},
+        {QStringLiteral("log.export_pointcloud_ply"),
+         {{QStringLiteral("zh"), QStringLiteral("已导出点云 PLY：%1（%2 个点）")},
+          {QStringLiteral("en"), QStringLiteral("Exported point cloud PLY: %1 (%2 points)")}}},
+        {QStringLiteral("log.export_mesh_ply"),
+         {{QStringLiteral("zh"), QStringLiteral("已导出 Mesh PLY：%1（%2 顶点，%3 面）")},
+          {QStringLiteral("en"), QStringLiteral("Exported mesh PLY: %1 (%2 vertices, %3 faces)")}}},
+        {QStringLiteral("log.export_not_pointcloud_mesh"),
+         {{QStringLiteral("zh"), QStringLiteral("选中图层不是点云或 Mesh，无法导出。")},
+          {QStringLiteral("en"), QStringLiteral("Selected layer is not a point cloud or mesh; cannot export.")}}},
+        {QStringLiteral("log.export_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("导出失败：%1")},
+          {QStringLiteral("en"), QStringLiteral("Export failed: %1")}}},
+        {QStringLiteral("log.select_pointcloud"),
+         {{QStringLiteral("zh"), QStringLiteral("请先选中一个点云图层。")},
+          {QStringLiteral("en"), QStringLiteral("Please select a point cloud layer first.")}}},
+        {QStringLiteral("log.layer_shown"),
+         {{QStringLiteral("zh"), QStringLiteral("%1：显示")},
+          {QStringLiteral("en"), QStringLiteral("%1: shown")}}},
+        {QStringLiteral("log.layer_hidden"),
+         {{QStringLiteral("zh"), QStringLiteral("%1：隐藏")},
+          {QStringLiteral("en"), QStringLiteral("%1: hidden")}}},
+        {QStringLiteral("log.export_group_done"),
+         {{QStringLiteral("zh"), QStringLiteral("已从树状分组导出 %1/%2 个图层。")},
+          {QStringLiteral("en"), QStringLiteral("Exported %1/%2 layers from tree group.")}}},
+        {QStringLiteral("log.layer_deleted"),
+         {{QStringLiteral("zh"), QStringLiteral("已删除图层。")},
+          {QStringLiteral("en"), QStringLiteral("Layer deleted.")}}},
+        {QStringLiteral("log.zoom_todo_raster"),
+         {{QStringLiteral("zh"), QStringLiteral("TODO: 缩放至 %1 的影像范围。")},
+          {QStringLiteral("en"), QStringLiteral("TODO: zoom to raster extent of %1.")}}},
+        {QStringLiteral("log.zoom_extent"),
+         {{QStringLiteral("zh"), QStringLiteral("缩放至 %1 的范围。")},
+          {QStringLiteral("en"), QStringLiteral("Zoomed to extent of %1.")}}},
+        {QStringLiteral("log.panorama_switched"),
+         {{QStringLiteral("zh"), QStringLiteral("已切换到 360 街景图层：%1。")},
+          {QStringLiteral("en"), QStringLiteral("Switched to 360 panorama layer: %1.")}}},
+        {QStringLiteral("log.zoom_todo"),
+         {{QStringLiteral("zh"), QStringLiteral("TODO: 缩放至 %1 的范围。")},
+          {QStringLiteral("en"), QStringLiteral("TODO: zoom to extent of %1.")}}},
+        {QStringLiteral("log.export_no_raster"),
+         {{QStringLiteral("zh"), QStringLiteral("导出失败 [%1]：没有可导出的影像。")},
+          {QStringLiteral("en"), QStringLiteral("Export failed [%1]: no exportable image.")}}},
+        {QStringLiteral("log.export_write_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("导出失败：无法写入 %1")},
+          {QStringLiteral("en"), QStringLiteral("Export failed: cannot write %1")}}},
+        {QStringLiteral("log.export_raster_done"),
+         {{QStringLiteral("zh"), QStringLiteral("已导出影像：%1 → %2")},
+          {QStringLiteral("en"), QStringLiteral("Exported raster: %1 → %2")}}},
+        {QStringLiteral("log.export_dem_done"),
+         {{QStringLiteral("zh"), QStringLiteral("已导出 DEM：%1 → %2")},
+          {QStringLiteral("en"), QStringLiteral("Exported DEM: %1 → %2")}}},
+        {QStringLiteral("log.export_dem_failed"),
+         {{QStringLiteral("zh"), QStringLiteral("DEM 导出失败：%1")},
+          {QStringLiteral("en"), QStringLiteral("DEM export failed: %1")}}},
+        {QStringLiteral("log.export_no_panorama"),
+         {{QStringLiteral("zh"), QStringLiteral("导出失败 [%1]：没有可导出的街景图。")},
+          {QStringLiteral("en"), QStringLiteral("Export failed [%1]: no exportable panorama.")}}},
+        {QStringLiteral("log.export_panorama_done"),
+         {{QStringLiteral("zh"), QStringLiteral("已导出 360 街景图：%1 → %2")},
+          {QStringLiteral("en"), QStringLiteral("Exported 360 panorama: %1 → %2")}}},
+        {QStringLiteral("log.export_unsupported"),
+         {{QStringLiteral("zh"), QStringLiteral("导出失败 [%1]：该图层类型暂不支持导出。")},
+          {QStringLiteral("en"), QStringLiteral("Export failed [%1]: layer type not supported.")}}},
         {QStringLiteral("help.title"),
          {{QStringLiteral("zh"), QStringLiteral("使用指南")},
           {QStringLiteral("en"), QStringLiteral("User Guide")}}},
@@ -391,7 +596,19 @@ AppLanguage Translation::language() const {
 void Translation::loadSavedLanguage() {
     QSettings settings;
     const QString saved = settings.value(QStringLiteral("ui/language"), QStringLiteral("zh")).toString();
-    language_ = saved == QStringLiteral("en") ? AppLanguage::English : AppLanguage::Chinese;
+    if (saved == QStringLiteral("en")) {
+        language_ = AppLanguage::English;
+    } else if (saved == QStringLiteral("ru")) {
+        language_ = AppLanguage::Russian;
+    } else if (saved == QStringLiteral("fr")) {
+        language_ = AppLanguage::French;
+    } else if (saved == QStringLiteral("gu")) {
+        language_ = AppLanguage::ClassicalChinese;
+    } else if (saved == QStringLiteral("ja")) {
+        language_ = AppLanguage::English;
+    } else {
+        language_ = AppLanguage::Chinese;
+    }
 }
 
 void Translation::setLanguage(AppLanguage language) {
@@ -405,17 +622,58 @@ void Translation::setLanguage(AppLanguage language) {
 
 void Translation::saveLanguage() const {
     QSettings settings;
-    settings.setValue(QStringLiteral("ui/language"),
-                      language_ == AppLanguage::English ? QStringLiteral("en") : QStringLiteral("zh"));
+    QString code = QStringLiteral("zh");
+    switch (language_) {
+    case AppLanguage::English:
+        code = QStringLiteral("en");
+        break;
+    case AppLanguage::Russian:
+        code = QStringLiteral("ru");
+        break;
+    case AppLanguage::French:
+        code = QStringLiteral("fr");
+        break;
+    case AppLanguage::ClassicalChinese:
+        code = QStringLiteral("gu");
+        break;
+    case AppLanguage::Chinese:
+    default:
+        break;
+    }
+    settings.setValue(QStringLiteral("ui/language"), code);
 }
 
 QString Translation::tr(const QString &key) const {
+    if (language_ == AppLanguage::Russian) {
+        const auto &ru = russianCatalog();
+        if (ru.contains(key)) {
+            return ru.value(key);
+        }
+    } else if (language_ == AppLanguage::French) {
+        const auto &fr = frenchCatalog();
+        if (fr.contains(key)) {
+            return fr.value(key);
+        }
+    } else if (language_ == AppLanguage::ClassicalChinese) {
+        const auto &gu = classicalChineseCatalog();
+        if (gu.contains(key)) {
+            return gu.value(key);
+        }
+    }
+
     const auto &table = catalog();
     if (!table.contains(key)) {
         return key;
     }
     const auto suffix = langSuffix(language_);
-    return table.value(key).value(suffix, key);
+    const auto &entry = table.value(key);
+    if (entry.contains(suffix)) {
+        return entry.value(suffix);
+    }
+    if (entry.contains(QStringLiteral("en"))) {
+        return entry.value(QStringLiteral("en"));
+    }
+    return entry.value(QStringLiteral("zh"), key);
 }
 
 QString Translation::helpGuideHtml() const {
@@ -455,6 +713,18 @@ QString Translation::helpGuideHtml() const {
 <li>Results are added as new layers under the project tree.</li>
 </ul>
 )");
+    }
+
+    if (language_ == AppLanguage::Russian) {
+        return russianHelpGuideHtml();
+    }
+
+    if (language_ == AppLanguage::French) {
+        return frenchHelpGuideHtml();
+    }
+
+    if (language_ == AppLanguage::ClassicalChinese) {
+        return classicalChineseHelpGuideHtml();
     }
 
     return QStringLiteral(R"(

@@ -5,7 +5,7 @@
 
 namespace rs {
 
-enum class AppLanguage { Chinese, English };
+enum class AppLanguage { Chinese, English, Russian, French, ClassicalChinese };
 
 class Translation final : public QObject {
     Q_OBJECT

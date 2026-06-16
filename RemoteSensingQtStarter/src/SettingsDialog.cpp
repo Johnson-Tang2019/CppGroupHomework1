@@ -2,6 +2,7 @@
 #include "rs/AppTheme.h"
 #include "rs/Translation.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDate>
 #include <QDateEdit>
@@ -36,6 +37,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
     languageCombo_ = new QComboBox(generalPage);
     languageCombo_->addItem(QString(), static_cast<int>(AppLanguage::Chinese));
     languageCombo_->addItem(QString(), static_cast<int>(AppLanguage::English));
+    languageCombo_->addItem(QString(), static_cast<int>(AppLanguage::Russian));
+    languageCombo_->addItem(QString(), static_cast<int>(AppLanguage::French));
+    languageCombo_->addItem(QString(), static_cast<int>(AppLanguage::ClassicalChinese));
     form->addRow(languageLabel_, languageCombo_);
 
     themeLabel_ = new QLabel(generalPage);
@@ -44,6 +48,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
         themeCombo_->addItem(QString(), static_cast<int>(themeId));
     }
     form->addRow(themeLabel_, themeCombo_);
+
+    careModeCheck_ = new QCheckBox(generalPage);
+    form->addRow(careModeCheck_);
 
     generalLayout->addLayout(form);
     generalLayout->addStretch();
@@ -113,6 +120,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
         languageCombo_->findData(static_cast<int>(Translation::instance().language())));
     themeCombo_->setCurrentIndex(
         themeCombo_->findData(static_cast<int>(AppTheme::instance().theme())));
+    careModeCheck_->setChecked(AppTheme::instance().careMode());
     loadProfile();
     retranslateUi();
 }
@@ -121,6 +129,7 @@ void SettingsDialog::applySettings() {
     Translation::instance().setLanguage(
         static_cast<AppLanguage>(languageCombo_->currentData().toInt()));
     AppTheme::instance().setTheme(static_cast<AppThemeId>(themeCombo_->currentData().toInt()));
+    AppTheme::instance().setCareMode(careModeCheck_->isChecked());
 
     QSettings settings;
     settings.beginGroup(QStringLiteral("profile"));
@@ -187,11 +196,15 @@ void SettingsDialog::retranslateUi() {
     languageLabel_->setText(t.tr(QStringLiteral("settings.language")));
     languageCombo_->setItemText(0, t.tr(QStringLiteral("settings.lang.zh")));
     languageCombo_->setItemText(1, t.tr(QStringLiteral("settings.lang.en")));
+    languageCombo_->setItemText(2, t.tr(QStringLiteral("settings.lang.ru")));
+    languageCombo_->setItemText(3, t.tr(QStringLiteral("settings.lang.fr")));
+    languageCombo_->setItemText(4, t.tr(QStringLiteral("settings.lang.gu")));
     themeLabel_->setText(t.tr(QStringLiteral("settings.theme")));
     for (int i = 0; i < themeCombo_->count(); ++i) {
         const auto themeId = static_cast<AppThemeId>(themeCombo_->itemData(i).toInt());
         themeCombo_->setItemText(i, t.tr(AppTheme::instance().themeKey(themeId)));
     }
+    careModeCheck_->setText(t.tr(QStringLiteral("settings.care_mode")));
     tabs_->setTabText(0, t.tr(QStringLiteral("settings.tab.general")));
     tabs_->setTabText(1, QStringLiteral("个人资料"));
     tabs_->setTabText(2, t.tr(QStringLiteral("settings.tab.guide")));

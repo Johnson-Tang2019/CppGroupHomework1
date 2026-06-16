@@ -24,6 +24,9 @@ public:
     QString applicationStyleSheet() const;
     QString mainWindowStyleSheet() const;
 
+    bool careMode() const;
+    void setCareMode(bool enabled);
+
     QVector<AppThemeId> availableThemes() const;
     QString themeKey(AppThemeId theme) const;
 
@@ -33,8 +36,10 @@ signals:
 private:
     explicit AppTheme(QObject *parent = nullptr);
     void saveTheme() const;
+    void saveCareMode() const;
 
     AppThemeId theme_{AppThemeId::Pink};
+    bool careMode_{false};
 };
 
 } // namespace rs
