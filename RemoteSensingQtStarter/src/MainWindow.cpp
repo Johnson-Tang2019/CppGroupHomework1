@@ -8,6 +8,7 @@
     #include "rs/ExtendedAlgorithms.h"
     #include "rs/RemoteSensingIndices.h"
     #include "rs/SettingsDialog.h"
+    #include "rs/AppTheme.h"
     #include "rs/Translation.h"
 
     #include <QApplication>
@@ -1019,8 +1020,9 @@
         createUi();
         setupSettingsButton();
         connect(&Translation::instance(), &Translation::languageChanged, this, &MainWindow::retranslateUi);
+        connect(&AppTheme::instance(), &AppTheme::themeChanged, this, &MainWindow::applyThemeStyles);
         retranslateUi();
-        appendLog(Translation::instance().tr(QStringLiteral("log.startup")));
+        refreshStartupLog();
         updateActionStates();
     }
 
@@ -1612,148 +1614,11 @@
         coordLabel_->setMinimumWidth(260);
         statusBar()->addPermanentWidget(coordLabel_);
 
-        // ── 全局样式美化 ──
-        setStyleSheet(QStringLiteral(R"(
-            QMainWindow {
-                background-color: #fdf6f0;
-            }
-            QMenuBar {
-                background-color: #ffffff;
-                color: #5a4a4a;
-                font-size: 13px;
-                padding: 2px 0;
-                border-bottom: 2px solid #f4b8c8;
-            }
-            QMenuBar::item {
-                padding: 6px 16px;
-                background: transparent;
-            }
-            QMenuBar::item:selected {
-                background-color: #fce4ec;
-                border-radius: 4px;
-                color: #8b5a6a;
-            }
-            QWidget#menuWrap {
-                background-color: #ffffff;
-                border-bottom: 2px solid #f4b8c8;
-            }
-            QPushButton#settingsButton {
-                background: transparent;
-                color: #5a4a4a;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 16px;
-                font-size: 13px;
-                font-weight: normal;
-            }
-            QPushButton#settingsButton:hover {
-                background-color: #fce4ec;
-                color: #8b5a6a;
-            }
-            QPushButton#settingsButton:pressed {
-                background-color: #fce4ec;
-                color: #8b5a6a;
-            }
-            QMenu {
-                background-color: #ffffff;
-                color: #5a4a4a;
-                border: 1px solid #f4d0d8;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                border-radius: 3px;
-            }
-            QMenu::item:selected {
-                background-color: #fce4ec;
-                color: #8b5a6a;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: #f0d0d8;
-                margin: 4px 8px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #e8d0d8;
-                border-top: 2px solid #f4b8c8;
-                background-color: #ffffff;
-            }
-            QTabBar::tab {
-                background-color: #fdf0f4;
-                color: #8b7a7a;
-                padding: 8px 20px;
-                border: 1px solid #e8d0d8;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-                font-size: 12px;
-            }
-            QTabBar::tab:selected {
-                background-color: #ffffff;
-                color: #5a4a4a;
-                border-bottom: 2px solid #f4b8c8;
-                font-weight: bold;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #fce4ec;
-                color: #5a4a4a;
-            }
-            QTreeWidget {
-                background-color: #fffafa;
-                border: 1px solid #e8d0d8;
-                border-radius: 4px;
-                font-size: 13px;
-                color: #5a4a4a;
-                alternate-background-color: #fdf6f0;
-            }
-            QTreeWidget::item {
-                padding: 4px 0;
-                border-bottom: 1px solid #fdf0f4;
-            }
-            QTreeWidget::item:selected {
-                background-color: #f4b8c8;
-                color: #ffffff;
-            }
-            QTreeWidget::item:hover {
-                background-color: #fce4ec;
-            }
-            QTextEdit {
-                background-color: #fff5f5;
-                color: #5a4a4a;
-                font-family: "Consolas", "Courier New", monospace;
-                font-size: 12px;
-                border: 1px solid #e8d0d8;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QSplitter::handle {
-                background-color: #f0d0d8;
-                width: 3px;
-            }
-            QSplitter::handle:hover {
-                background-color: #f4b8c8;
-            }
-            QScrollBar:vertical {
-                background-color: #fdf6f0;
-                width: 10px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #f0d0d8;
-                min-height: 20px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #e8b8c8;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QSplitter {
-                padding: 4px;
-            }
-        )"));
+        applyThemeStyles();
+    }
+
+    void MainWindow::applyThemeStyles() {
+        setStyleSheet(AppTheme::instance().mainWindowStyleSheet());
     }
 
     // 打开文件对话框选择遥感影像，使用 GDAL 读取并加载到图层管理器
@@ -3361,6 +3226,44 @@ void MainWindow::appendLog(const QString &text) {
         QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), text));
 }
 
+void MainWindow::refreshStartupLog() {
+    if (!logEdit_) {
+        return;
+    }
+
+    const QString message = Translation::instance().tr(QStringLiteral("log.startup"));
+    QString text = logEdit_->toPlainText();
+
+    if (!startupLogPresent_ || text.isEmpty()) {
+        logEdit_->setPlainText(
+            QStringLiteral("[%1] %2")
+                .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), message));
+        startupLogPresent_ = true;
+        return;
+    }
+
+    const int newline = text.indexOf(QLatin1Char('\n'));
+    const QString firstLine = newline >= 0 ? text.left(newline) : text;
+    QString timestamp;
+    if (firstLine.startsWith(QLatin1Char('['))) {
+        const int end = firstLine.indexOf(QLatin1Char(']'));
+        if (end > 0) {
+            timestamp = firstLine.left(end + 1);
+        }
+    }
+    if (timestamp.isEmpty()) {
+        timestamp = QStringLiteral("[%1]").arg(
+            QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")));
+    }
+
+    const QString newFirstLine = QStringLiteral("%1 %2").arg(timestamp, message);
+    if (newline >= 0) {
+        logEdit_->setPlainText(newFirstLine + text.mid(newline));
+    } else {
+        logEdit_->setPlainText(newFirstLine);
+    }
+}
+
 void MainWindow::executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx) {
     const auto raster = selectedRaster();
     if (!raster) {
@@ -3593,6 +3496,7 @@ void MainWindow::retranslateUi() {
             bottomTabs_->setTabText(1, t.tr(QStringLiteral("tab.ai")));
         }
     }
+    refreshStartupLog();
 }
 
 } // namespace rs

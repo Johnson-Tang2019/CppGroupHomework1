@@ -91,6 +91,27 @@ const QHash<QString, QHash<QString, QString>> &catalog() {
         {QStringLiteral("settings.language"),
          {{QStringLiteral("zh"), QStringLiteral("界面语言")},
           {QStringLiteral("en"), QStringLiteral("Interface Language")}}},
+        {QStringLiteral("settings.theme"),
+         {{QStringLiteral("zh"), QStringLiteral("主题颜色")},
+          {QStringLiteral("en"), QStringLiteral("Theme Color")}}},
+        {QStringLiteral("theme.pink"),
+         {{QStringLiteral("zh"), QStringLiteral("淡粉色（默认）")},
+          {QStringLiteral("en"), QStringLiteral("Light Pink (Default)")}}},
+        {QStringLiteral("theme.light_blue"),
+         {{QStringLiteral("zh"), QStringLiteral("淡蓝色")},
+          {QStringLiteral("en"), QStringLiteral("Light Blue")}}},
+        {QStringLiteral("theme.light_green"),
+         {{QStringLiteral("zh"), QStringLiteral("淡绿色")},
+          {QStringLiteral("en"), QStringLiteral("Light Green")}}},
+        {QStringLiteral("theme.lavender"),
+         {{QStringLiteral("zh"), QStringLiteral("淡紫色")},
+          {QStringLiteral("en"), QStringLiteral("Lavender")}}},
+        {QStringLiteral("theme.warm_sand"),
+         {{QStringLiteral("zh"), QStringLiteral("暖沙色")},
+          {QStringLiteral("en"), QStringLiteral("Warm Sand")}}},
+        {QStringLiteral("theme.mint"),
+         {{QStringLiteral("zh"), QStringLiteral("薄荷绿")},
+          {QStringLiteral("en"), QStringLiteral("Mint")}}},
         {QStringLiteral("settings.lang.zh"),
          {{QStringLiteral("zh"), QStringLiteral("中文")}, {QStringLiteral("en"), QStringLiteral("Chinese")}}},
         {QStringLiteral("settings.lang.en"),
@@ -295,7 +316,7 @@ QString Translation::helpGuideHtml() const {
 <h3>5. AI Assistant</h3>
 <p>Open <b>AI → Show AI Assistant</b> to attach layer information and ask questions about imported data.</p>
 <h3>6. Settings</h3>
-<p>Click the <b>Settings</b> button at the top-right corner. Use the <b>General</b> tab to switch language, and the <b>User Guide</b> tab for this manual.</p>
+<p>Click the <b>Settings</b> button at the top-right corner. Use the <b>General</b> tab to switch language or theme color, and the <b>User Guide</b> tab for this manual.</p>
 <h3>7. Tips</h3>
 <ul>
 <li>Ctrl + mouse wheel on the 2D view zooms the image.</li>
@@ -332,7 +353,7 @@ QString Translation::helpGuideHtml() const {
 <h3>5. AI 助手</h3>
 <p>通过 <b>AI → 显示 AI 助手</b> 打开面板，可附带图层信息并进行问答。</p>
 <h3>6. 设置</h3>
-<p>点击窗口右上角的 <b>设置</b> 按钮。在 <b>常规</b> 标签页切换语言，在 <b>使用指南</b> 标签页查看本说明。</p>
+<p>点击窗口右上角的 <b>设置</b> 按钮。在 <b>常规</b> 标签页切换语言或主题颜色，在 <b>使用指南</b> 标签页查看本说明。</p>
 <h3>7. 小技巧</h3>
 <ul>
 <li>二维视图中按住 Ctrl 并滚动鼠标滚轮可缩放影像。</li>
