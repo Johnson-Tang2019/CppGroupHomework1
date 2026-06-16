@@ -35,6 +35,7 @@
 #include <QTextStream>
 #include <QTreeWidget> // Qt 树形控件，显示图层的文件夹层级结构
 #include <QVBoxLayout>
+#include <QVector>
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -172,6 +173,9 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *downsampleAction_{};   // "体素降采样"菜单项
     QAction *filterAction_{};       // "统计滤波"菜单项
     QAction *pcToDemAction_{};      // "点云转 DEM"菜单项
+
+    QVector<QMenu *> translatableMenus_;
+    QVector<QAction *> translatableActions_;
 
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
