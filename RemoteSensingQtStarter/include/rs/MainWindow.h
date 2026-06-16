@@ -50,6 +50,13 @@ class SwipeCompareWidget; // 前后影像滑动对比控件
 
 namespace rs { // 遥感（Remote Sensing）命名空间
 
+struct StoredLogEntry {
+    QString timestamp;
+    QString trKey;
+    QStringList args;
+    QString fixedText;
+};
+
 // MainWindow：应用程序的主窗口
 // 继承 QMainWindow，包含完整的 UI 界面：菜单栏、图层树、影像显示区、日志面板
 // 使用 Q_OBJECT 宏启用 Qt 信号/槽机制
@@ -78,7 +85,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void runHistogram();             // 执行灰度直方图统计
     void runHistogramEqualization(); // 执行直方图均衡化
     void runFeatureExtraction();     // 执行 ORB/SIFT 特征提取
-    void runSwipeCompare();          // 前后影像滑动对比 + NDVI 差值热力图
+    void runSwipeCompare();          // 前后影像滑动对比
 
     // ============ 摄影测量/三维处理 ============
     void runDemReconstruction();  // 执行 DEM 重建（立体像对）
@@ -115,11 +122,13 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     // ============ 影像显示 ============
     void displayRaster(const std::shared_ptr<RasterLayer> &raster,
                        int bandIndex); // 在 QGraphicsView 中显示影像
+    void showImagePlaceholder(const QString &text);
     bool updateSwipeComparePreview();   // 根据当前选择/勾选的两期影像刷新滑动对比页
 
     // ============ 日志 ============
-    void appendLog(const QString &text); // 在日志面板追加带时间戳的消息
-    void refreshStartupLog();            // 刷新启动日志（随语言切换）
+    void appendLog(const QString &text); // 在日志面板追加带时间戳的消息（固定文本，不随语言切换）
+    void appendLogTr(const QString &key, const QStringList &args = {}); // 可翻译日志
+    void refreshLogDisplay();            // 按当前语言重绘日志面板
 
     // ============ 算法执行辅助 ============
     void executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx = {});
@@ -159,7 +168,6 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QMenu *indexMenu_{};
     QMenu *photogrammetryMenu_{};
     QMenu *pcMenu_{};
-    QMenu *aiMenu_{};
 
     QPushButton *settingsButton_{};
 
@@ -168,7 +176,6 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *loadMeshAction_{};
     QAction *loadDemAction_{};
     QAction *loadPanoramaAction_{};
-    QAction *showAiAction_{};
 
     // ============ 菜单项指针（用于启用/禁用控制） ============
     QAction *deleteLayerAction_{};  // "删除选中图层"菜单项
@@ -192,7 +199,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
-    bool startupLogPresent_{false};   // 是否已写入启动日志（用于语言切换时刷新）
+    QVector<StoredLogEntry> logHistory_;
     LayerManager<DataObject> layers_; // 图层管理器，管理所有数据图层（影像、点云、DEM 等）
     std::shared_ptr<RasterLayer> activeRasterForCoords_; // 当前二维视图用于显示坐标的影像
     QSize activeDisplaySizeForCoords_; // 当前二维视图显示图像的像素尺寸（用于坐标映射）
