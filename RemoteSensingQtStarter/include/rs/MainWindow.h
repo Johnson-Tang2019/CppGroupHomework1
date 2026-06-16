@@ -117,6 +117,9 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
                                const QString &suffix = QStringLiteral("_结果"));
     void revealLayerInTree(int layerIndex);
     void exportLayerImage(int layerIndex);
+    bool canExportLayer(int layerIndex) const;
+    bool exportLayerToPath(int layerIndex, const QString &path);
+    std::vector<int> collectLayerIndicesUnder(QTreeWidgetItem *item) const;
 
     // ============ 状态管理 ============
     void updateActionStates(); // 根据选中图层类型更新菜单项的启用/禁用状态

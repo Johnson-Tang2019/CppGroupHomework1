@@ -13,6 +13,7 @@
     #include <QApplication>
     #include <QBuffer>
     #include <QDialog>
+    #include <QDir>
     #include <QFutureWatcher>
     #include <QHBoxLayout>
     #include <QJsonArray>
@@ -26,6 +27,7 @@
     #include <QMouseEvent>
     #include <QProgressDialog>
     #include <QPushButton>
+    #include <QRegularExpression>
     #include <QSettings>
     #include <QStatusBar>
     #include <QUrl>
@@ -60,6 +62,13 @@
                                   std::abs(gt[2] - 0.0) < eps && std::abs(gt[3] - 0.0) < eps &&
                                   std::abs(gt[4] - 0.0) < eps && std::abs(gt[5] + 1.0) < eps;
         return !raster.projection().trimmed().isEmpty() || !hasDefaultGt;
+    }
+
+    QString safeFileBaseName(QString name) {
+        static const QRegularExpression invalidChars(QStringLiteral(R"([<>:"/\\|?*\x00-\x1F])"));
+        name.replace(invalidChars, QStringLiteral("_"));
+        name = name.trimmed();
+        return name.isEmpty() ? QStringLiteral("layer") : name;
     }
 
 #ifdef RS_WITH_GDAL
@@ -1448,6 +1457,9 @@
                 case DataType::Dem:
                     typeName = QStringLiteral("DEM");
                     break;
+                case DataType::Panorama360:
+                    typeName = QStringLiteral("360 panorama");
+                    break;
                 case DataType::Result:
                     typeName = QStringLiteral("Processing result");
                     break;
@@ -1504,6 +1516,11 @@
                                     .arg(minZ)
                                     .arg(maxZ)
                                     .arg(sumZ / elevations.size());
+                    }
+                } else if (const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer)) {
+                    const QImage &image = pano->image();
+                    if (!image.isNull()) {
+                        lines << QStringLiteral("- Panorama image: %1 x %2").arg(image.width()).arg(image.height());
                     }
                 } else if (const auto pc = std::dynamic_pointer_cast<PointCloudLayer>(layer)) {
                     const auto &points = pc->points();
@@ -1762,19 +1779,7 @@
                     const QString ext = info.suffix().toLower();
                     if ((ext == QStringLiteral("tif") || ext == QStringLiteral("tiff")) &&
                         hasGeoreference(*raster)) {
-                        const auto gt = raster->geoTransform();
                         appendLog(QStringLiteral("提示：该 GeoTIFF/GeoRaster 包含坐标信息（可用于经纬度显示）。"));
-                        QMessageBox::information(
-                            this, QStringLiteral("坐标信息已读取"),
-                            QStringLiteral("已检测到影像包含坐标信息。\n\n文件：%1\n\nGeoTransform:\n[%2, %3, %4, %5, %6, %7]\n\nProjection(WKT) 片段：\n%8")
-                                .arg(info.fileName())
-                                .arg(gt[0])
-                                .arg(gt[1])
-                                .arg(gt[2])
-                                .arg(gt[3])
-                                .arg(gt[4])
-                                .arg(gt[5])
-                                .arg(raster->projection().left(240)));
                     }
                     layers_.add(raster); // 将图层添加到 LayerManager 中
                     appendLog(QStringLiteral("已加载影像：%1（%2 波段，%3x%4）")
@@ -2177,14 +2182,14 @@
         if (image.height() > 0) {
             const double ratio = static_cast<double>(image.width()) / static_cast<double>(image.height());
             if (std::abs(ratio - 2.0) > 0.25) {
-                QMessageBox::information(
-                    this, QStringLiteral("图片比例提示"),
-                    QStringLiteral("常见 360° 等距柱状全景图比例约为 2:1。\n"
-                                   "当前图片比例为 %1:1，仍会按 360° 全景方式显示。")
-                        .arg(ratio, 0, 'f', 2));
+                appendLog(QStringLiteral("提示：当前 360 图片比例为 %1:1，非标准 2:1，仍按全景显示。")
+                              .arg(ratio, 0, 'f', 2));
             }
         }
 
+        const int layerIndex = layers_.add(std::make_shared<Panorama360Layer>(info.fileName(), path, image));
+        refreshLayerTree();
+        revealLayerInTree(layerIndex);
         panorama360Widget_->setPanorama(image, info.fileName());
         tabs_->setCurrentWidget(panorama360Widget_);
         appendLog(QStringLiteral("已加载 360 街景图：%1（%2x%3）")
@@ -2203,12 +2208,14 @@
 
         // 检查是否有被删除的三维图层，如有则清空三维场景
         bool has3DLayer = false;
+        bool hasPanoramaLayer = false;
         for (const int idx : indices) {
             try {
                 const auto type = layers_.at(idx)->type();
                 if (type == DataType::PointCloud || type == DataType::Mesh || type == DataType::Dem) {
                     has3DLayer = true;
-                    break;
+                } else if (type == DataType::Panorama360) {
+                    hasPanoramaLayer = true;
                 }
             } catch (...) {
             }
@@ -2218,6 +2225,9 @@
         imageScene_->clear();
         if (has3DLayer) {
             scene3DWidget_->clearData();
+        }
+        if (hasPanoramaLayer) {
+            panorama360Widget_->clearPanorama();
         }
         refreshLayerTree();
         appendLog(QStringLiteral("已删除 %1 个选中图层。").arg(indices.size()));
@@ -2229,6 +2239,7 @@
         layers_.clear();      // 清空所有图层
         imageScene_->clear(); // 清空图像场景
         scene3DWidget_->clearData();
+        panorama360Widget_->clearPanorama();
         refreshLayerTree();   // 刷新图层树
         appendLog(QStringLiteral("工程已初始化。"));
         updateActionStates(); // 更新菜单所有操作按钮的状态
@@ -2772,6 +2783,12 @@ void MainWindow::onSelectionChanged() {
                         scene3DWidget_->fitToBounds();
                         tabs_->setCurrentWidget(scene3DWidget_);
                     }
+                } else if (layer->type() == DataType::Panorama360) {
+                    const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer);
+                    if (pano && !pano->image().isNull()) {
+                        panorama360Widget_->setPanorama(pano->image(), pano->name());
+                        tabs_->setCurrentWidget(panorama360Widget_);
+                    }
                 }
             } catch (...) {
             }
@@ -2839,6 +2856,14 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
                     displayRaster(nullptr, -1);
                 }
             }
+        } else if (layer->type() == DataType::Panorama360) {
+            const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer);
+            if (visible && pano && !pano->image().isNull()) {
+                panorama360Widget_->setPanorama(pano->image(), pano->name());
+                tabs_->setCurrentWidget(panorama360Widget_);
+            } else {
+                panorama360Widget_->clearPanorama();
+            }
         }
         appendLog(QStringLiteral("%1：%2").arg(item->text(0), visible ? QStringLiteral("显示")
                                                                       : QStringLiteral("隐藏")));
@@ -2857,7 +2882,44 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     QMenu menu(this);
 
     if (!layerIndexVar.isValid() || nodeKind != static_cast<int>(NodeKind::Layer)) {
-        // 文件夹或波段节点：只允许删除选中图层
+        const auto folderIndices = collectLayerIndicesUnder(item);
+        std::vector<int> exportableIndices;
+        for (const int idx : folderIndices) {
+            if (canExportLayer(idx)) {
+                exportableIndices.push_back(idx);
+            }
+        }
+
+        if (!exportableIndices.empty()) {
+            QAction *exportAction = menu.addAction(QStringLiteral("导出该分组..."));
+            connect(exportAction, &QAction::triggered, this, [this, exportableIndices]() {
+                const QString dirPath = QFileDialog::getExistingDirectory(this, QStringLiteral("选择导出文件夹"));
+                if (dirPath.isEmpty()) {
+                    return;
+                }
+
+                QDir dir(dirPath);
+                int okCount = 0;
+                for (const int idx : exportableIndices) {
+                    try {
+                        const auto layer = layers_.at(idx);
+                        const QString suffix = layer->type() == DataType::Dem ? QStringLiteral(".tif")
+                                             : QStringLiteral(".png");
+                        const QString path = dir.filePath(safeFileBaseName(layer->name()) + suffix);
+                        if (exportLayerToPath(idx, path)) {
+                            ++okCount;
+                        }
+                    } catch (const std::exception &) {
+                    }
+                }
+                appendLog(QStringLiteral("已从树状分组导出 %1/%2 个图层。")
+                              .arg(okCount)
+                              .arg(exportableIndices.size()));
+            });
+            menu.addSeparator();
+        }
+
+        // 文件夹或波段节点：允许删除当前选中的图层
         const auto indices = selectedLayerIndices();
         QAction *deleteAction = menu.addAction(QStringLiteral("删除选中图层"));
         deleteAction->setEnabled(!indices.empty());
@@ -2888,6 +2950,9 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
             if (type == DataType::Raster) {
                 imageScene_->clear();
             }
+            if (type == DataType::Panorama360) {
+                panorama360Widget_->clearPanorama();
+            }
         } catch (...) {
         }
         layers_.removeMany({layerIndex});
@@ -2897,7 +2962,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     });
 
     // ── 导出 ──
-    if (layer->type() == DataType::Raster || layer->type() == DataType::Dem) {
+    if (canExportLayer(layerIndex)) {
         menu.addSeparator();
         QAction *exportAction = menu.addAction(QStringLiteral("导出..."));
         connect(exportAction, &QAction::triggered, this, [this, layerIndex]() {
@@ -2913,6 +2978,12 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         } else if (layer->type() == DataType::PointCloud || layer->type() == DataType::Mesh) {
             scene3DWidget_->fitToBounds();
             appendLog(QStringLiteral("缩放至 %1 的范围。").arg(layer->name()));
+        } else if (layer->type() == DataType::Panorama360) {
+            if (const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer)) {
+                panorama360Widget_->setPanorama(pano->image(), pano->name());
+                tabs_->setCurrentWidget(panorama360Widget_);
+            }
+            appendLog(QStringLiteral("已切换到 360 街景图层：%1。").arg(layer->name()));
         } else {
             appendLog(QStringLiteral("TODO: 缩放至 %1 的范围。").arg(layer->name()));
         }
@@ -2934,6 +3005,9 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
             break;
         case DataType::Dem:
             typeName = QStringLiteral("数字高程模型");
+            break;
+        case DataType::Panorama360:
+            typeName = QStringLiteral("360 街景图");
             break;
         case DataType::Result:
             typeName = QStringLiteral("处理结果");
@@ -2963,6 +3037,8 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
             info += QStringLiteral("三角面: %1\n").arg(mesh->faces().size());
         } else if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
             info += QStringLiteral("尺寸: %1 x %2\n").arg(dem->width()).arg(dem->height());
+        } else if (const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer)) {
+            info += QStringLiteral("尺寸: %1 x %2像素\n").arg(pano->image().width()).arg(pano->image().height());
         }
 
         info += QStringLiteral("\n摘要: %1").arg(layer->summary());
@@ -2988,6 +3064,7 @@ void MainWindow::refreshLayerTree() {
     auto *pointFolder = ensureChildFolder(sourceRoot, QStringLiteral("点云"));
     auto *meshFolder = ensureChildFolder(sourceRoot, QStringLiteral("Mesh"));
     auto *demFolder = ensureChildFolder(sourceRoot, QStringLiteral("DEM"));
+    auto *panoramaFolder = ensureChildFolder(sourceRoot, QStringLiteral("360街景"));
 
     for (int i = 0; i < layers_.size(); ++i) {
         const auto layer = layers_.at(i);
@@ -3007,6 +3084,9 @@ void MainWindow::refreshLayerTree() {
                 break;
             case DataType::Dem:
                 parent = demFolder;
+                break;
+            case DataType::Panorama360:
+                parent = panoramaFolder;
                 break;
             case DataType::Result:
                 parent = resultRoot;
@@ -3310,12 +3390,28 @@ void MainWindow::revealLayerInTree(int layerIndex) {
     }
 }
 
-void MainWindow::exportLayerImage(int layerIndex) {
+bool MainWindow::canExportLayer(int layerIndex) const {
     std::shared_ptr<DataObject> layer;
     try {
         layer = layers_.at(layerIndex);
     } catch (const std::exception &) {
-        return;
+        return false;
+    }
+
+    return layer->type() == DataType::Raster || layer->type() == DataType::Dem ||
+           layer->type() == DataType::Panorama360;
+}
+
+bool MainWindow::exportLayerToPath(int layerIndex, const QString &path) {
+    std::shared_ptr<DataObject> layer;
+    try {
+        layer = layers_.at(layerIndex);
+    } catch (const std::exception &) {
+        return false;
+    }
+
+    if (path.isEmpty()) {
+        return false;
     }
 
     if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
@@ -3329,37 +3425,96 @@ void MainWindow::exportLayerImage(int layerIndex) {
         }
         if (image.isNull()) {
             appendLog(QStringLiteral("导出失败 [%1]：没有可导出的影像。").arg(raster->name()));
-            return;
-        }
-
-        const QString path = QFileDialog::getSaveFileName(
-            this, QStringLiteral("导出影像"), raster->name(),
-            QStringLiteral("PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;TIFF (*.tif *.tiff)"));
-        if (path.isEmpty()) {
-            return;
+            return false;
         }
         if (!image.save(path)) {
             appendLog(QStringLiteral("导出失败：无法写入 %1").arg(path));
-            return;
+            return false;
         }
         appendLog(QStringLiteral("已导出影像：%1 → %2").arg(raster->name(), path));
-        return;
+        return true;
     }
 
     if (const auto dem = std::dynamic_pointer_cast<DemLayer>(layer)) {
-        const QString path = QFileDialog::getSaveFileName(
-            this, QStringLiteral("导出 DEM"), dem->name() + QStringLiteral(".tif"),
-            QStringLiteral("GeoTIFF (*.tif *.tiff)"));
-        if (path.isEmpty()) {
-            return;
-        }
         try {
             io::exportDemAsGeoTiff(*dem, path);
             appendLog(QStringLiteral("已导出 DEM：%1 → %2").arg(dem->name(), path));
+            return true;
         } catch (const std::exception &e) {
             appendLog(QStringLiteral("DEM 导出失败：%1").arg(QString::fromUtf8(e.what())));
+            return false;
         }
     }
+
+    if (const auto pano = std::dynamic_pointer_cast<Panorama360Layer>(layer)) {
+        if (pano->image().isNull()) {
+            appendLog(QStringLiteral("导出失败 [%1]：没有可导出的街景图。").arg(pano->name()));
+            return false;
+        }
+        if (!pano->image().save(path)) {
+            appendLog(QStringLiteral("导出失败：无法写入 %1").arg(path));
+            return false;
+        }
+        appendLog(QStringLiteral("已导出 360 街景图：%1 → %2").arg(pano->name(), path));
+        return true;
+    }
+
+    appendLog(QStringLiteral("导出失败 [%1]：该图层类型暂不支持导出。").arg(layer->name()));
+    return false;
+}
+
+std::vector<int> MainWindow::collectLayerIndicesUnder(QTreeWidgetItem *item) const {
+    std::vector<int> indices;
+    if (!item) {
+        return indices;
+    }
+
+    const auto collect = [&indices](QTreeWidgetItem *node, const auto &self) -> void {
+        if (!node) {
+            return;
+        }
+        if (static_cast<NodeKind>(node->data(0, kNodeKindRole).toInt()) == NodeKind::Layer) {
+            const QVariant value = node->data(0, kLayerIndexRole);
+            if (value.isValid()) {
+                const int idx = value.toInt();
+                if (std::find(indices.begin(), indices.end(), idx) == indices.end()) {
+                    indices.push_back(idx);
+                }
+            }
+        }
+        for (int i = 0; i < node->childCount(); ++i) {
+            self(node->child(i), self);
+        }
+    };
+
+    collect(item, collect);
+    return indices;
+}
+
+void MainWindow::exportLayerImage(int layerIndex) {
+    std::shared_ptr<DataObject> layer;
+    try {
+        layer = layers_.at(layerIndex);
+    } catch (const std::exception &) {
+        return;
+    }
+
+    QString title = QStringLiteral("导出图层");
+    QString defaultPath = layer->name();
+    QString filters = QStringLiteral("PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;TIFF (*.tif *.tiff)");
+    if (layer->type() == DataType::Dem) {
+        title = QStringLiteral("导出 DEM");
+        defaultPath = safeFileBaseName(layer->name()) + QStringLiteral(".tif");
+        filters = QStringLiteral("GeoTIFF (*.tif *.tiff)");
+    } else {
+        defaultPath = safeFileBaseName(layer->name()) + QStringLiteral(".png");
+    }
+
+    const QString path = QFileDialog::getSaveFileName(this, title, defaultPath, filters);
+    if (path.isEmpty()) {
+        return;
+    }
+    exportLayerToPath(layerIndex, path);
 }
 
 void MainWindow::applyProcessingResult(const ProcessingResult &result,

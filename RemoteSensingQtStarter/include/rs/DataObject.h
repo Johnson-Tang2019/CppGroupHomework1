@@ -12,6 +12,7 @@ enum class DataType {
     PointCloud,  // 点云数据（PLY/LAS/XYZ 等格式的三维点集）
     Mesh,        // 点云重建网格 M=(V,E,F)，仅作为处理结果存在
     Dem,         // 数字高程模型（GeoTIFF/ASCII Grid 等格式）
+    Panorama360, // 360 全景/街景图
     Result       // 算法处理结果（直方图、均衡化影像等）
 };
 

@@ -184,4 +184,27 @@ private:
     std::array<double, 6> geoTransform_ {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};  // 地理变换（默认单位矩阵）
 };
 
+// ============================================================================
+// Panorama360Layer：360 全景/街景图层
+// 作为独立图层显示在左侧工程树中，选中后切换到 360 街景视图。
+// ============================================================================
+class Panorama360Layer final : public DataObject {
+public:
+    Panorama360Layer(QString name, QString path, QImage image)
+        : DataObject(std::move(name), std::move(path), DataType::Panorama360),
+          image_(std::move(image)) {}
+
+    const QImage &image() const { return image_; }
+
+    QString summary() const override {
+        if (image_.isNull()) {
+            return QStringLiteral("360 panorama");
+        }
+        return QStringLiteral("%1 x %2, 360").arg(image_.width()).arg(image_.height());
+    }
+
+private:
+    QImage image_;
+};
+
 } // namespace rs
