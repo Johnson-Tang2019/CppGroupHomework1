@@ -34,6 +34,7 @@
     #include <QSettings>
     #include <QStatusBar>
     #include <QTimer>
+    #include <QToolBar>
     #include <QUrl>
     #include <QWheelEvent>
     #include <QTreeWidgetItemIterator>
@@ -60,6 +61,44 @@
         Layer,  // 图层节点，可选中/勾选
         Band    // 波段子节点，仅信息展示
     };
+
+    QIcon colorIcon(const QColor &color, const QString &mark) {
+        constexpr int size = 32;
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        painter.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPointSize(mark.size() > 1 ? 10 : 15);
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(pixmap.rect(), Qt::AlignCenter, mark);
+        return QIcon(pixmap);
+    }
+
+    QIcon iconForKey(const QString &key) {
+        if (key == QStringLiteral("menu.data")) return colorIcon(QColor(QStringLiteral("#2f80ed")), QStringLiteral("D"));
+        if (key == QStringLiteral("menu.raster")) return colorIcon(QColor(QStringLiteral("#eb5757")), QStringLiteral("R"));
+        if (key == QStringLiteral("menu.index")) return colorIcon(QColor(QStringLiteral("#219653")), QStringLiteral("ND"));
+        if (key == QStringLiteral("menu.photogrammetry")) return colorIcon(QColor(QStringLiteral("#bb6bd9")), QStringLiteral("3D"));
+        if (key == QStringLiteral("menu.pointcloud")) return colorIcon(QColor(QStringLiteral("#00a884")), QStringLiteral("PC"));
+        if (key.contains(QStringLiteral("load_raster"))) return colorIcon(QColor(QStringLiteral("#2f80ed")), QStringLiteral("RS"));
+        if (key.contains(QStringLiteral("load_pointcloud"))) return colorIcon(QColor(QStringLiteral("#00a884")), QStringLiteral("PC"));
+        if (key.contains(QStringLiteral("load_mesh"))) return colorIcon(QColor(QStringLiteral("#8e44ad")), QStringLiteral("M"));
+        if (key.contains(QStringLiteral("load_dem"))) return colorIcon(QColor(QStringLiteral("#7b8a18")), QStringLiteral("DEM"));
+        if (key.contains(QStringLiteral("panorama"))) return colorIcon(QColor(QStringLiteral("#f2994a")), QStringLiteral("360"));
+        if (key.contains(QStringLiteral("delete"))) return colorIcon(QColor(QStringLiteral("#eb5757")), QStringLiteral("X"));
+        if (key.contains(QStringLiteral("clear"))) return colorIcon(QColor(QStringLiteral("#828282")), QStringLiteral("C"));
+        if (key.contains(QStringLiteral("render"))) return colorIcon(QColor(QStringLiteral("#f2c94c")), QStringLiteral("RGB"));
+        if (key.contains(QStringLiteral("export"))) return colorIcon(QColor(QStringLiteral("#27ae60")), QStringLiteral("EX"));
+        return colorIcon(QColor(QStringLiteral("#ff5ba6")), QStringLiteral("*"));
+    }
 
     struct LoadedMeshData {
         QVector<QVector3D> vertices;
@@ -1861,6 +1900,97 @@
             return currentView->grab().toImage();
         }, bottomTabs_);
         bottomTabs_->addTab(aiPanel, QString());
+
+        auto *toolBar = new QToolBar(QStringLiteral("Tools"), this);
+        toolBar->setObjectName(QStringLiteral("mainToolBar"));
+        toolBar->setMovable(false);
+        toolBar->setFloatable(false);
+        toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        addToolBar(Qt::TopToolBarArea, toolBar);
+
+        if (loadRasterAction_) {
+            loadRasterAction_->setIcon(iconForKey(QStringLiteral("action.load_raster")));
+            toolBar->addAction(loadRasterAction_);
+        }
+        if (loadPointCloudAction_) {
+            loadPointCloudAction_->setIcon(iconForKey(QStringLiteral("action.load_pointcloud")));
+            toolBar->addAction(loadPointCloudAction_);
+        }
+        if (loadMeshAction_) {
+            loadMeshAction_->setIcon(iconForKey(QStringLiteral("action.load_mesh")));
+            toolBar->addAction(loadMeshAction_);
+        }
+        if (loadDemAction_) {
+            loadDemAction_->setIcon(iconForKey(QStringLiteral("action.load_dem")));
+            toolBar->addAction(loadDemAction_);
+        }
+        if (loadPanoramaAction_) {
+            loadPanoramaAction_->setIcon(iconForKey(QStringLiteral("action.load_panorama360")));
+            toolBar->addAction(loadPanoramaAction_);
+        }
+
+        toolBar->addSeparator();
+        auto *exportSelectedAction =
+            toolBar->addAction(iconForKey(QStringLiteral("action.export")), QStringLiteral("导出图层"));
+        exportSelectedAction->setToolTip(QStringLiteral("导出左侧当前选中的第一个可导出图层。"));
+        connect(exportSelectedAction, &QAction::triggered, this, [this]() {
+            const auto indices = selectedLayerIndices();
+            for (int index : indices) {
+                if (canExportLayer(index)) {
+                    exportLayerImage(index);
+                    return;
+                }
+            }
+            appendLog(QStringLiteral("请先在左侧选择一个可导出的图层。"));
+        });
+        if (deleteLayerAction_) {
+            deleteLayerAction_->setIcon(iconForKey(QStringLiteral("action.delete_layer")));
+            toolBar->addAction(deleteLayerAction_);
+        }
+        if (clearProjectAction_) {
+            clearProjectAction_->setIcon(iconForKey(QStringLiteral("action.clear_project")));
+            toolBar->addAction(clearProjectAction_);
+        }
+
+        toolBar->addSeparator();
+        if (renderAction_) {
+            renderAction_->setIcon(iconForKey(QStringLiteral("action.render")));
+            toolBar->addAction(renderAction_);
+        }
+        auto *zoomInAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#2f80ed")), QStringLiteral("+")), QStringLiteral("放大"));
+        connect(zoomInAction, &QAction::triggered, this, [this]() {
+            if (!imageView_) {
+                return;
+            }
+            tabs_->setCurrentWidget(imageView_);
+            imageView_->scale(1.25, 1.25);
+        });
+        auto *zoomOutAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#56ccf2")), QStringLiteral("-")), QStringLiteral("缩小"));
+        connect(zoomOutAction, &QAction::triggered, this, [this]() {
+            if (!imageView_) {
+                return;
+            }
+            tabs_->setCurrentWidget(imageView_);
+            imageView_->scale(0.8, 0.8);
+        });
+        auto *fitViewAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#27ae60")), QStringLiteral("FIT")), QStringLiteral("适应视图"));
+        connect(fitViewAction, &QAction::triggered, this, [this]() {
+            if (!imageView_ || !imageScene_ || imageScene_->sceneRect().isEmpty()) {
+                return;
+            }
+            tabs_->setCurrentWidget(imageView_);
+            imageView_->fitInView(imageScene_->sceneRect(), Qt::KeepAspectRatio);
+        });
+
+        toolBar->addSeparator();
+        auto *aiAction =
+            toolBar->addAction(colorIcon(QColor(QStringLiteral("#9b51e0")), QStringLiteral("AI")), QStringLiteral("AI 助手"));
+        connect(aiAction, &QAction::triggered, this, [this, aiPanel]() {
+            bottomTabs_->setCurrentWidget(aiPanel);
+        });
 
         // 设置分割器拉伸比例（控件随窗口缩放时的比例分配）
         root->setStretchFactor(0, 1);  // 第0个（图层树）：拉伸因子 = 1
