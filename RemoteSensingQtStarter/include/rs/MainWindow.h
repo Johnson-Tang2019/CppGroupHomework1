@@ -46,6 +46,7 @@
 
 class Scene3DWidget; // 前向声明 3D 点云预览控件
 class Panorama360Widget; // 前向声明 360 全景/街景查看控件
+class SwipeCompareWidget; // 前后影像滑动对比控件
 
 namespace rs { // 遥感（Remote Sensing）命名空间
 
@@ -77,6 +78,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void runHistogram();             // 执行灰度直方图统计
     void runHistogramEqualization(); // 执行直方图均衡化
     void runFeatureExtraction();     // 执行 ORB/SIFT 特征提取
+    void runSwipeCompare();          // 前后影像滑动对比 + NDVI 差值热力图
 
     // ============ 摄影测量/三维处理 ============
     void runDemReconstruction();  // 执行 DEM 重建（立体像对）
@@ -113,6 +115,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     // ============ 影像显示 ============
     void displayRaster(const std::shared_ptr<RasterLayer> &raster,
                        int bandIndex); // 在 QGraphicsView 中显示影像
+    bool updateSwipeComparePreview();   // 根据当前选择/勾选的两期影像刷新滑动对比页
 
     // ============ 日志 ============
     void appendLog(const QString &text); // 在日志面板追加带时间戳的消息
@@ -145,6 +148,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QGraphicsScene *imageScene_{};   // 图形场景（管理所有图形项）
     Scene3DWidget *scene3DWidget_{}; // 三维点云预览控件（基于 QOpenGLWidget）
     Panorama360Widget *panorama360Widget_{}; // 360 全景/街景查看控件
+    SwipeCompareWidget *swipeCompareWidget_{}; // 前后影像滑动对比
     QTabWidget *tabs_{};             // 标签页控件（切换"二维影像"和"三维场景"）
     QTabWidget *bottomTabs_{};       // 底部日志 / AI 标签页
     QTextEdit *logEdit_{};           // 日志输出面板（底部）
@@ -173,6 +177,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QAction *histogramAction_{};    // "灰度直方图"菜单项
     QAction *equalizeAction_{};     // "直方图均衡化"菜单项
     QAction *featureAction_{};      // "ORB/SIFT 特征提取"菜单项
+    QAction *swipeCompareAction_{}; // "前后影像滑动对比"菜单项
     QAction *demAction_{};          // "DEM 重建"菜单项
     QAction *orthoAction_{};        // "正射影像校正"菜单项
     QAction *demTextureAction_{};   // "DEM 三维贴图"菜单项

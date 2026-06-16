@@ -48,6 +48,7 @@ add_executable(RemoteSensingQtStarter WIN32
     src/RasterIO.cpp
     src/RasterRenderDialog.cpp
     src/Panorama360Widget.cpp
+    src/SwipeCompareWidget.cpp
     src/Scene3DWidget.cpp
     src/pcmesh/PcMeshReconstruction.cpp
     include/rs/DataObject.h
@@ -67,6 +68,7 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/AppTheme.h
     include/rs/SettingsDialog.h
     include/rs/Panorama360Widget.h
+    include/rs/SwipeCompareWidget.h
     include/rs/Scene3DWidget.h    #增加
     include/rs/pcmesh/PcMeshReconstruction.h
 )

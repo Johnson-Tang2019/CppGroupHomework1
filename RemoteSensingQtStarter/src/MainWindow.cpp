@@ -5,6 +5,7 @@
     #include "rs/RasterRenderDialog.h"
     #include "rs/Scene3DWidget.h"
     #include "rs/Panorama360Widget.h"
+    #include "rs/SwipeCompareWidget.h"
     #include "rs/ExtendedAlgorithms.h"
     #include "rs/RemoteSensingIndices.h"
     #include "rs/SettingsDialog.h"
@@ -13,8 +14,11 @@
 
     #include <QApplication>
     #include <QBuffer>
+    #include <QColor>
     #include <QDialog>
+    #include <QDialogButtonBox>
     #include <QDir>
+    #include <QFormLayout>
     #include <QFutureWatcher>
     #include <QHBoxLayout>
     #include <QJsonArray>
@@ -22,6 +26,7 @@
     #include <QJsonObject>
     #include <QImageReader>
     #include <QLineEdit>
+    #include <QComboBox>
     #include <QNetworkAccessManager>
     #include <QNetworkReply>
     #include <QNetworkRequest>
@@ -37,6 +42,7 @@
     #include <QtConcurrent/QtConcurrent>
     #include <cmath>
     #include <functional>
+    #include <utility>
 #ifdef RS_WITH_GDAL
     #include <ogr_spatialref.h>
 #endif
@@ -235,6 +241,104 @@
             return io::renderSingleBandGray(*raster, 0);
         }
         return {};
+    }
+
+    QImage displayImageForRaster(const RasterLayer &raster) {
+        QImage image = raster.currentDisplayImage();
+        if (!image.isNull()) {
+            return image;
+        }
+        if (raster.bandCount() >= 3) {
+            return io::renderRgbComposite(raster, 0, 1, 2);
+        }
+        if (raster.bandCount() >= 1) {
+            return io::renderSingleBandGray(raster, 0);
+        }
+        return {};
+    }
+
+    float validBandValue(const RasterBand &band, int x, int y, bool &valid) {
+        valid = false;
+        if (!band.hasSamples() || x < 0 || y < 0 || x >= band.width || y >= band.height) {
+            return 0.0f;
+        }
+        const float value = band.samples[y * band.width + x];
+        if (band.hasNoDataValue && std::abs(value - band.noDataValue) < 1e-6f) {
+            return 0.0f;
+        }
+        valid = std::isfinite(value);
+        return valid ? value : 0.0f;
+    }
+
+    float ndviAt(const RasterLayer &raster, int x, int y, int redBand, int nirBand, bool &valid) {
+        bool redValid = false;
+        bool nirValid = false;
+        const float red = validBandValue(raster.band(redBand), x, y, redValid);
+        const float nir = validBandValue(raster.band(nirBand), x, y, nirValid);
+        const float denom = nir + red;
+        valid = redValid && nirValid && std::abs(denom) > 1e-6f;
+        return valid ? (nir - red) / denom : 0.0f;
+    }
+
+    QColor ndviDiffColor(float value, float maxAbs) {
+        const float t = std::clamp(std::abs(value) / std::max(maxAbs, 1e-6f), 0.0f, 1.0f);
+        const QColor neutral(252, 248, 250);
+        const QColor target = value < 0.0f ? QColor(198, 36, 72) : QColor(27, 150, 91);
+        return QColor(static_cast<int>(neutral.red() + (target.red() - neutral.red()) * t),
+                      static_cast<int>(neutral.green() + (target.green() - neutral.green()) * t),
+                      static_cast<int>(neutral.blue() + (target.blue() - neutral.blue()) * t));
+    }
+
+    QImage buildNdviDiffHeatmap(const RasterLayer &oldRaster, const RasterLayer &newRaster,
+                                QString *message = nullptr) {
+        if (oldRaster.bandCount() < 2 || newRaster.bandCount() < 2) {
+            if (message) {
+                *message = QStringLiteral("NDVI 差值热力图需要每期影像至少 2 个波段。");
+            }
+            return {};
+        }
+
+        const int oldRed = 0;
+        const int newRed = 0;
+        const int oldNir = oldRaster.bandCount() >= 3 ? 2 : 1;
+        const int newNir = newRaster.bandCount() >= 3 ? 2 : 1;
+        const int w = std::min(oldRaster.band(0).width, newRaster.band(0).width);
+        const int h = std::min(oldRaster.band(0).height, newRaster.band(0).height);
+        if (w <= 0 || h <= 0) {
+            if (message) {
+                *message = QStringLiteral("NDVI 差值热力图失败：影像尺寸无效。");
+            }
+            return {};
+        }
+
+        QVector<float> diff(w * h, 0.0f);
+        float maxAbs = 0.15f;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                bool oldValid = false;
+                bool newValid = false;
+                const float oldNdvi = ndviAt(oldRaster, x, y, oldRed, oldNir, oldValid);
+                const float newNdvi = ndviAt(newRaster, x, y, newRed, newNir, newValid);
+                const float value = (oldValid && newValid) ? (newNdvi - oldNdvi) : 0.0f;
+                diff[y * w + x] = value;
+                maxAbs = std::max(maxAbs, std::abs(value));
+            }
+        }
+
+        QImage image(w, h, QImage::Format_RGB32);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                image.setPixelColor(x, y, ndviDiffColor(diff[y * w + x], maxAbs));
+            }
+        }
+        if (message) {
+            *message = QStringLiteral("NDVI 差值热力图完成：Band %1(旧)/Band %2(新) 为红光，Band %3(旧)/Band %4(新) 为近红外。")
+                           .arg(oldRed + 1)
+                           .arg(newRed + 1)
+                           .arg(oldNir + 1)
+                           .arg(newNir + 1);
+        }
+        return image;
     }
 
 #ifdef RS_WITH_GDAL
@@ -1475,6 +1579,8 @@
                     applyProcessingResult(result, t1, QStringLiteral("多时相指数对比"),
                                         QStringLiteral("_时相对比"));
                 });
+        swipeCompareAction_ = regAction(indexMenu_, QStringLiteral("action.swipe_compare"));
+        connect(swipeCompareAction_, &QAction::triggered, this, &MainWindow::runSwipeCompare);
         connect(regAction(indexMenu_, QStringLiteral("action.index_export_csv")), &QAction::triggered, this,
                 [this]() {
                     const auto raster = selectedRaster();
@@ -1577,10 +1683,17 @@
         // 三维场景页：QOpenGLWidget 点云预览
         scene3DWidget_ = new Scene3DWidget(tabs_);
         panorama360Widget_ = new Panorama360Widget(tabs_);
+        swipeCompareWidget_ = new SwipeCompareWidget(tabs_);
 
         tabs_->addTab(imageView_, QString());
         tabs_->addTab(scene3DWidget_, QString());
         tabs_->addTab(panorama360Widget_, QString());
+        tabs_->addTab(swipeCompareWidget_, QString());
+        connect(tabs_, &QTabWidget::currentChanged, this, [this]() {
+            if (tabs_->currentWidget() == swipeCompareWidget_) {
+                updateSwipeComparePreview();
+            }
+        });
 
         bottomTabs_ = new QTabWidget(right);
         bottomTabs_->setMinimumHeight(180);
@@ -2267,6 +2380,7 @@
         imageScene_->clear(); // 清空图像场景
         scene3DWidget_->clearData();
         panorama360Widget_->clearPanorama();
+        swipeCompareWidget_->clearComparison();
         refreshLayerTree();   // 刷新图层树
         appendLog(QStringLiteral("工程已初始化。"));
         updateActionStates(); // 更新菜单所有操作按钮的状态
@@ -2529,6 +2643,116 @@
         ctx.parameters[QStringLiteral("method")] = method;
         ctx.parameters[QStringLiteral("maxFeatures")] = maxFeatures;
         executeRasterAlgorithm(algorithm, ctx);
+    }
+
+    void MainWindow::runSwipeCompare() {
+        std::vector<std::pair<int, std::shared_ptr<RasterLayer>>> rasterLayers;
+        for (int i = 0; i < layers_.size(); ++i) {
+            try {
+                if (auto raster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(i));
+                    raster && raster->hasRasterBands()) {
+                    rasterLayers.emplace_back(i, raster);
+                }
+            } catch (const std::exception &) {
+            }
+        }
+
+        if (rasterLayers.size() < 2) {
+            appendLog(QStringLiteral("前后影像滑动对比需要至少加载两期遥感影像。"));
+            return;
+        }
+
+        std::shared_ptr<RasterLayer> oldRaster;
+        std::shared_ptr<RasterLayer> newRaster;
+        for (const int idx : selectedLayerIndices()) {
+            try {
+                auto raster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx));
+                if (!raster || !raster->hasRasterBands()) {
+                    continue;
+                }
+                if (!oldRaster) {
+                    oldRaster = raster;
+                } else if (!newRaster && raster != oldRaster) {
+                    newRaster = raster;
+                    break;
+                }
+            } catch (const std::exception &) {
+            }
+        }
+
+        if (!oldRaster || !newRaster) {
+            QDialog dialog(this);
+            dialog.setWindowTitle(QStringLiteral("前后影像滑动对比"));
+            auto *layout = new QFormLayout(&dialog);
+            auto *oldCombo = new QComboBox(&dialog);
+            auto *newCombo = new QComboBox(&dialog);
+            for (const auto &[idx, raster] : rasterLayers) {
+                const QString label = QStringLiteral("%1  [%2]").arg(raster->name(), raster->summary());
+                oldCombo->addItem(label, idx);
+                newCombo->addItem(label, idx);
+            }
+            if (newCombo->count() > 1) {
+                newCombo->setCurrentIndex(1);
+            }
+            layout->addRow(QStringLiteral("旧影像"), oldCombo);
+            layout->addRow(QStringLiteral("新影像"), newCombo);
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+            connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+            connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            layout->addRow(buttons);
+            if (dialog.exec() != QDialog::Accepted) {
+                return;
+            }
+
+            const int oldIndex = oldCombo->currentData().toInt();
+            const int newIndex = newCombo->currentData().toInt();
+            if (oldIndex == newIndex) {
+                appendLog(QStringLiteral("前后影像滑动对比失败：旧影像和新影像不能是同一个图层。"));
+                return;
+            }
+            try {
+                oldRaster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(oldIndex));
+                newRaster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(newIndex));
+            } catch (const std::exception &) {
+            }
+        }
+
+        if (!oldRaster || !newRaster) {
+            appendLog(QStringLiteral("前后影像滑动对比失败：无法获取两期影像。"));
+            return;
+        }
+
+        const QImage oldImage = displayImageForRaster(*oldRaster);
+        const QImage newImage = displayImageForRaster(*newRaster);
+        if (oldImage.isNull() || newImage.isNull()) {
+            appendLog(QStringLiteral("前后影像滑动对比失败：影像缺少可显示渲染结果。"));
+            return;
+        }
+
+        QString heatmapMessage;
+        const QImage heatmap = buildNdviDiffHeatmap(*oldRaster, *newRaster, &heatmapMessage);
+        if (heatmap.isNull()) {
+            appendLog(heatmapMessage.isEmpty() ? QStringLiteral("NDVI 差值热力图生成失败。") : heatmapMessage);
+            return;
+        }
+
+        swipeCompareWidget_->setComparison(oldImage, newImage, heatmap, oldRaster->name(), newRaster->name());
+        tabs_->setCurrentWidget(swipeCompareWidget_);
+
+        auto heatLayer = std::make_shared<RasterLayer>(
+            QStringLiteral("%1_vs_%2_NDVI差值").arg(oldRaster->name(), newRaster->name()),
+            QString(), QVector<RasterBand>{}, heatmap);
+        heatLayer->setRenderDescription(QStringLiteral("NDVI 差值热力图（新 - 旧）"));
+        heatLayer->setTreeGroup(QStringLiteral("前后影像滑动对比"));
+        const int addedIndex = layers_.add(heatLayer);
+        refreshLayerTree();
+        revealLayerInTree(addedIndex);
+        updateActionStates();
+
+        appendLog(QStringLiteral("已生成前后影像滑动对比：旧影像=%1，新影像=%2。")
+                      .arg(oldRaster->name(), newRaster->name()));
+        appendLog(heatmapMessage);
+        appendLog(QStringLiteral("热力图说明：红色表示 NDVI 降低，绿色表示 NDVI 增加，浅色表示变化较小。"));
     }
 
     // 执行 DEM 重建流程
@@ -2906,6 +3130,12 @@ void MainWindow::runPointCloudToDem() {
 
 // 当图层树选中项改变时，刷新影像显示和菜单状态
 void MainWindow::onSelectionChanged() {
+    if (tabs_ && tabs_->currentWidget() == swipeCompareWidget_) {
+        updateSwipeComparePreview();
+        updateActionStates();
+        return;
+    }
+
     const auto selected = selectedRaster();
     if (selected) {
         displayRaster(selected, selectedBandIndex());
@@ -3016,6 +3246,9 @@ void MainWindow::onLayerItemChanged(QTreeWidgetItem *item, int column) {
             } else {
                 panorama360Widget_->clearPanorama();
             }
+        }
+        if (tabs_ && tabs_->currentWidget() == swipeCompareWidget_) {
+            updateSwipeComparePreview();
         }
         appendLog(QStringLiteral("%1：%2").arg(item->text(0), visible ? QStringLiteral("显示")
                                                                       : QStringLiteral("隐藏")));
@@ -3450,6 +3683,15 @@ void MainWindow::updateActionStates() {
     int selectedRasters = 0;
     int selectedDems = 0;
     int selectedPointClouds = 0;
+    int totalRasters = 0;
+    for (int i = 0; i < layers_.size(); ++i) {
+        try {
+            if (std::dynamic_pointer_cast<RasterLayer>(layers_.at(i))) {
+                ++totalRasters;
+            }
+        } catch (const std::exception &) {
+        }
+    }
     for (const int index : selectedLayerIndices()) {
         try {
             const auto layer = layers_.at(index);
@@ -3483,6 +3725,9 @@ void MainWindow::updateActionStates() {
     }
     if (featureAction_) {
         featureAction_->setEnabled(hasOneRaster);
+    }
+    if (swipeCompareAction_) {
+        swipeCompareAction_->setEnabled(selectedRasters >= 2 || totalRasters >= 2);
     }
     if (demAction_) {
         demAction_->setEnabled(selectedRasters == 2);
@@ -3576,6 +3821,61 @@ void MainWindow::revealLayerInTree(int layerIndex) {
         }
         ++it;
     }
+}
+
+bool MainWindow::updateSwipeComparePreview() {
+    std::vector<std::shared_ptr<RasterLayer>> candidates;
+
+    for (const int idx : selectedLayerIndices()) {
+        try {
+            auto raster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx));
+            if (raster && raster->hasRasterBands() &&
+                std::find(candidates.begin(), candidates.end(), raster) == candidates.end()) {
+                candidates.push_back(raster);
+            }
+        } catch (const std::exception &) {
+        }
+    }
+
+    if (candidates.size() < 2) {
+        candidates.clear();
+        for (int i = 0; i < layers_.size(); ++i) {
+            try {
+                auto raster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(i));
+                if (raster && raster->visible() && raster->hasRasterBands() &&
+                    std::find(candidates.begin(), candidates.end(), raster) == candidates.end()) {
+                    candidates.push_back(raster);
+                    if (candidates.size() >= 2) {
+                        break;
+                    }
+                }
+            } catch (const std::exception &) {
+            }
+        }
+    }
+
+    if (candidates.size() < 2) {
+        if (swipeCompareWidget_) {
+            swipeCompareWidget_->clearComparison();
+        }
+        return false;
+    }
+
+    const auto &oldRaster = candidates[0];
+    const auto &newRaster = candidates[1];
+    const QImage oldImage = displayImageForRaster(*oldRaster);
+    const QImage newImage = displayImageForRaster(*newRaster);
+    QString heatmapMessage;
+    const QImage heatmap = buildNdviDiffHeatmap(*oldRaster, *newRaster, &heatmapMessage);
+    if (oldImage.isNull() || newImage.isNull() || heatmap.isNull()) {
+        if (swipeCompareWidget_) {
+            swipeCompareWidget_->clearComparison();
+        }
+        return false;
+    }
+
+    swipeCompareWidget_->setComparison(oldImage, newImage, heatmap, oldRaster->name(), newRaster->name());
+    return true;
 }
 
 bool MainWindow::canExportLayer(int layerIndex) const {
@@ -3771,10 +4071,11 @@ void MainWindow::retranslateUi() {
         layerTree_->setHeaderLabel(t.tr(QStringLiteral("layer_tree")));
     }
     if (tabs_) {
-        if (tabs_->count() >= 3) {
+        if (tabs_->count() >= 4) {
             tabs_->setTabText(0, t.tr(QStringLiteral("tab.2d")));
             tabs_->setTabText(1, t.tr(QStringLiteral("tab.3d")));
             tabs_->setTabText(2, t.tr(QStringLiteral("tab.panorama")));
+            tabs_->setTabText(3, QStringLiteral("滑动对比"));
         }
     }
     if (bottomTabs_) {
