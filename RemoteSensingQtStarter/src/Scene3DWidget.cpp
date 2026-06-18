@@ -129,7 +129,13 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, const QImage &texture, int m
 
     float zMin = elevs[0], zMax = elevs[0];
     for (float z : elevs) { zMin = std::min(zMin, z); zMax = std::max(zMax, z); }
-    const float zScale = (zMax - zMin) > 1e-6f ? 1.0f / (zMax - zMin) : 1.0f;
+    const float spanX = static_cast<float>(std::hypot(w * gt[1], w * gt[4]));
+    const float spanY = static_cast<float>(std::hypot(h * gt[2], h * gt[5]));
+    const float horizontalSpan = std::max(spanX, spanY);
+    // Keep all three axes in the same scene scale.  A modest 25% relief
+    // exaggeration makes terrain readable without turning it into a wall.
+    const float zRange = zMax - zMin;
+    const float zScale = zRange > 1e-6f ? horizontalSpan * 0.25f / zRange : 0.0f;
 
     const int cols = (w + stepX - 1) / stepX;
     const int rows = (h + stepY - 1) / stepY;
@@ -143,7 +149,7 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, const QImage &texture, int m
             const float z = elevs[sy * w + sx];
             const float wx = static_cast<float>(gt[0] + sx * gt[1] + sy * gt[2]);
             const float wy = static_cast<float>(gt[3] + sx * gt[4] + sy * gt[5]);
-            meshVertices_.append(QVector3D(wx, wy, (z - zMin) * zScale * 100.0f));
+            meshVertices_.append(QVector3D(wx, wy, (z - zMin) * zScale));
 
             const float u = cols > 1 ? static_cast<float>(gx) / static_cast<float>(cols - 1) : 0.0f;
             const float v = rows > 1 ? static_cast<float>(gy) / static_cast<float>(rows - 1) : 0.0f;
@@ -161,6 +167,11 @@ void Scene3DWidget::setDem(const rs::DemLayer &dem, const QImage &texture, int m
             meshFaces_.append({i1, i3, i2});
         }
     }
+    // DEMs should open in an oblique terrain view. Do not inherit a previous
+    // point-cloud side view, which makes the surface look stretched and flat.
+    m_rotX = 55.0f;
+    m_rotY = 0.0f;
+    m_zoom = 1.0f;
     markDlistDirty();
     update();
 }

@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <numeric>
 #include <optional>
@@ -782,7 +783,8 @@ ProcessingResult PointCloudToDemAlgorithm::execute(
     QString layerName = context.parameters.value("layerName",
                          QStringLiteral("DEM_from_PC")).toString();
 
-    if (res <= 0) res = 1.0;
+    // A fixed one-unit cell can collapse locally-scaled point clouds to only
+    // a handful of cells. A non-positive value requests adaptive sizing.
 
     // 计算点云范围
     double minX = points[0].x(), maxX = points[0].x();
@@ -794,8 +796,17 @@ ProcessingResult PointCloudToDemAlgorithm::execute(
         maxY = std::max(maxY, static_cast<double>(p.y()));
     }
 
-    int cols = static_cast<int>(std::ceil((maxX - minX) / res)) + 1;
-    int rows = static_cast<int>(std::ceil((maxY - minY) / res)) + 1;
+    const double spanX = maxX - minX;
+    const double spanY = maxY - minY;
+    if (!std::isfinite(res) || res <= 0.0) {
+        constexpr double targetLongestSide = 512.0;
+        res = std::max(spanX, spanY) / (targetLongestSide - 1.0);
+        if (!std::isfinite(res) || res <= std::numeric_limits<double>::epsilon())
+            res = 1.0;
+    }
+
+    int cols = static_cast<int>(std::ceil(spanX / res)) + 1;
+    int rows = static_cast<int>(std::ceil(spanY / res)) + 1;
     if (cols < 1) cols = 1;
     if (rows < 1) rows = 1;
 
@@ -805,7 +816,8 @@ ProcessingResult PointCloudToDemAlgorithm::execute(
 
     for (const auto& p : points) {
         int ix = static_cast<int>((p.x() - minX) / res);
-        int iy = static_cast<int>((p.y() - minY) / res);
+        // Row zero is the max-Y edge, matching the north-up GeoTransform.
+        int iy = static_cast<int>((maxY - p.y()) / res);
         ix = std::max(0, std::min(cols - 1, ix));
         iy = std::max(0, std::min(rows - 1, iy));
         auto& cell = grid[static_cast<size_t>(iy * cols + ix)];
@@ -815,14 +827,36 @@ ProcessingResult PointCloudToDemAlgorithm::execute(
     }
 
     QVector<float> elevations(static_cast<int>(grid.size()));
+    std::deque<int> fillQueue;
     for (int i = 0; i < static_cast<int>(grid.size()); ++i) {
         const auto& cell = grid[i];
         if (cell.count == 0) {
-            elevations[i] = 0;
+            elevations[i] = std::numeric_limits<float>::quiet_NaN();
         } else if (useMaxZ) {
             elevations[i] = static_cast<float>(cell.maxZ); // DSM
+            fillQueue.push_back(i);
         } else {
             elevations[i] = static_cast<float>(cell.sum / cell.count); // DTM
+            fillQueue.push_back(i);
+        }
+    }
+
+    // Zero is a valid elevation. Using it for NoData creates artificial cliffs,
+    // so fill gaps from the nearest observed grid cell instead.
+    while (!fillQueue.empty()) {
+        const int i = fillQueue.front();
+        fillQueue.pop_front();
+        const int x = i % cols;
+        const int y = i / cols;
+        const int neighbors[4] = {
+            x > 0 ? i - 1 : -1, x + 1 < cols ? i + 1 : -1,
+            y > 0 ? i - cols : -1, y + 1 < rows ? i + cols : -1
+        };
+        for (const int n : neighbors) {
+            if (n >= 0 && std::isnan(elevations[n])) {
+                elevations[n] = elevations[i];
+                fillQueue.push_back(n);
+            }
         }
     }
 

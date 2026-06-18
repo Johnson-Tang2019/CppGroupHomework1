@@ -3170,7 +3170,7 @@ void MainWindow::runPointCloudToDem() {
     // 点云转 DEM（使用统一 ProcessingAlgorithm 接口）
     ProcessingContext ctx;
     ctx.pointCloudData = &points;
-    ctx.parameters["gridResolution"] = 1.0;
+    ctx.parameters["gridResolution"] = 0.0; // adaptive to point-cloud extent
     ctx.parameters["useMaxZ"] = true;
     ctx.parameters["layerName"] = pcLayer->name() + QStringLiteral("_DSM");
 
