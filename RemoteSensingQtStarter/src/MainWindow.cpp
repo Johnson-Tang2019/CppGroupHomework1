@@ -10,6 +10,7 @@
     #include "rs/RemoteSensingIndices.h"
     #include "rs/SettingsDialog.h"
     #include "rs/AppTheme.h"
+    #include "rs/AppInfo.h"
     #include "rs/Translation.h"
 
     #include <QApplication>
@@ -2000,6 +2001,10 @@
         right->setSizes({620, 300});
 
         setCentralWidget(root); // 将分割器设为窗口的中心控件（填满整个窗口）
+
+        auto *versionLabel = new QLabel(AppInfo::versionLabel() + QStringLiteral(" · CodeFour"), this);
+        versionLabel->setStyleSheet(QStringLiteral("color: #9a5a72; padding-left: 8px;"));
+        statusBar()->addWidget(versionLabel);
 
         coordLabel_ = new QLabel(QStringLiteral(""), this);
         coordLabel_->setMinimumWidth(260);

@@ -43,6 +43,7 @@ GU: dict[str, str] = {
     "settings.lang.fr": "法文",
     "settings.lang.gu": "古语",
     "settings.tab.guide": "用式指南",
+    "settings.tab.about": "关于",
     "settings.button": "设署",
     "log.startup": "Starter 已启：此版具 GDAL 多波段、参数化算法、DEM/正射之工架。",
     "menu.raster.band": "波段与设色",

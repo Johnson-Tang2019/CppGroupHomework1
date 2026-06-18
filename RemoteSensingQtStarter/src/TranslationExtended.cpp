@@ -14,7 +14,7 @@ const QHash<QString, QString> &russianCatalog() {
         {QStringLiteral("menu.ai"), QStringLiteral("AI")},
         {QStringLiteral("menu.settings"), QStringLiteral("Настройки")},
         {QStringLiteral("menu.help"), QStringLiteral("Справка")},
-        {QStringLiteral("action.load_raster"), QStringLiteral("Загрузить снимок (несколько файлов)")},
+        {QStringLiteral("action.load_raster"), QStringLiteral("Загрузить снимок (GDAL, несколько файлов)")},
         {QStringLiteral("action.load_pointcloud"), QStringLiteral("Загрузить облако точек")},
         {QStringLiteral("action.load_mesh"), QStringLiteral("Загрузить Mesh")},
         {QStringLiteral("action.load_dem"), QStringLiteral("Загрузить DEM")},
@@ -45,8 +45,9 @@ const QHash<QString, QString> &russianCatalog() {
         {QStringLiteral("settings.lang.ru"), QStringLiteral("Русский")},
         {QStringLiteral("settings.lang.fr"), QStringLiteral("Français")},
         {QStringLiteral("settings.tab.guide"), QStringLiteral("Руководство")},
+        {QStringLiteral("settings.tab.about"), QStringLiteral("О программе")},
         {QStringLiteral("settings.button"), QStringLiteral("Настройки")},
-        {QStringLiteral("log.startup"), QStringLiteral("Starter запущен: эта сборка поддерживает многоканальные снимки, параметрические алгоритмы и каркас DEM/ортокоррекции.")},
+        {QStringLiteral("log.startup"), QStringLiteral("Starter запущен: эта сборка поддерживает GDAL, параметрические алгоритмы и каркас DEM/ортокоррекции.")},
         {QStringLiteral("menu.raster.band"), QStringLiteral("Каналы и отображение")},
         {QStringLiteral("menu.raster.stat"), QStringLiteral("Статистика")},
         {QStringLiteral("menu.raster.enhance"), QStringLiteral("Улучшение")},
@@ -150,8 +151,8 @@ const QHash<QString, QString> &russianCatalog() {
         {QStringLiteral("log.mesh_load_failed"), QStringLiteral("Ошибка загрузки Mesh [%1]: %2")},
         {QStringLiteral("log.dem_loaded"), QStringLiteral("Загружен DEM: %1 (%2x%3)")},
         {QStringLiteral("log.dem_load_failed"), QStringLiteral("Ошибка загрузки DEM [%1]: %2")},
-        {QStringLiteral("log.panorama_qt_failed_gdal"), QStringLiteral("Qt не прочитал панораму: %1; пробуем резервное чтение растра.")},
-        {QStringLiteral("log.panorama_gdal_failed"), QStringLiteral("Резервное чтение растра также не удалось: %1")},
+        {QStringLiteral("log.panorama_qt_failed_gdal"), QStringLiteral("Qt не прочитал панораму: %1; пробуем GDAL.")},
+        {QStringLiteral("log.panorama_gdal_failed"), QStringLiteral("GDAL также не удался: %1")},
         {QStringLiteral("log.panorama_ratio_hint"), QStringLiteral("Соотношение сторон 360°: %1:1 (не 2:1).")},
         {QStringLiteral("log.panorama_loaded"), QStringLiteral("Загружена панорама: %1 (%2x%3)")},
         {QStringLiteral("log.panorama_load_method"), QStringLiteral("Способ чтения панорамы: %1")},
@@ -209,7 +210,7 @@ const QHash<QString, QString> &frenchCatalog() {
         {QStringLiteral("menu.ai"), QStringLiteral("AI")},
         {QStringLiteral("menu.settings"), QStringLiteral("Paramètres")},
         {QStringLiteral("menu.help"), QStringLiteral("Aide")},
-        {QStringLiteral("action.load_raster"), QStringLiteral("Charger une image (multi-sélection)")},
+        {QStringLiteral("action.load_raster"), QStringLiteral("Charger une image (GDAL, multi-sélection)")},
         {QStringLiteral("action.load_pointcloud"), QStringLiteral("Charger un nuage de points")},
         {QStringLiteral("action.load_mesh"), QStringLiteral("Charger un maillage")},
         {QStringLiteral("action.load_dem"), QStringLiteral("Charger un MNT")},
@@ -240,8 +241,9 @@ const QHash<QString, QString> &frenchCatalog() {
         {QStringLiteral("settings.lang.ru"), QStringLiteral("Russe")},
         {QStringLiteral("settings.lang.fr"), QStringLiteral("Français")},
         {QStringLiteral("settings.tab.guide"), QStringLiteral("Guide d'utilisation")},
+        {QStringLiteral("settings.tab.about"), QStringLiteral("À propos")},
         {QStringLiteral("settings.button"), QStringLiteral("Paramètres")},
-        {QStringLiteral("log.startup"), QStringLiteral("Starter lancé : cette version prend en charge les images multibandes, les algorithmes paramétriques et le flux MNT/orthorectification.")},
+        {QStringLiteral("log.startup"), QStringLiteral("Starter lancé : cette version prend en charge GDAL, les algorithmes paramétriques et le flux MNT/orthorectification.")},
         {QStringLiteral("menu.raster.band"), QStringLiteral("Bandes et rendu")},
         {QStringLiteral("menu.raster.stat"), QStringLiteral("Statistiques")},
         {QStringLiteral("menu.raster.enhance"), QStringLiteral("Amélioration")},
@@ -345,8 +347,8 @@ const QHash<QString, QString> &frenchCatalog() {
         {QStringLiteral("log.mesh_load_failed"), QStringLiteral("Échec chargement maillage [%1] : %2")},
         {QStringLiteral("log.dem_loaded"), QStringLiteral("MNT chargé : %1 (%2x%3)")},
         {QStringLiteral("log.dem_load_failed"), QStringLiteral("Échec chargement MNT [%1] : %2")},
-        {QStringLiteral("log.panorama_qt_failed_gdal"), QStringLiteral("Qt n'a pas lu le panorama : %1 ; essai de lecture raster de secours.")},
-        {QStringLiteral("log.panorama_gdal_failed"), QStringLiteral("Échec de la lecture raster de secours : %1")},
+        {QStringLiteral("log.panorama_qt_failed_gdal"), QStringLiteral("Qt n'a pas lu la panorama : %1 ; essai GDAL.")},
+        {QStringLiteral("log.panorama_gdal_failed"), QStringLiteral("Échec du repli GDAL : %1")},
         {QStringLiteral("log.panorama_ratio_hint"), QStringLiteral("Ratio 360° : %1:1 (pas 2:1 standard).")},
         {QStringLiteral("log.panorama_loaded"), QStringLiteral("Panorama chargée : %1 (%2x%3)")},
         {QStringLiteral("log.panorama_load_method"), QStringLiteral("Méthode de lecture : %1")},
@@ -404,7 +406,7 @@ const QHash<QString, QString> &classicalChineseCatalog() {
         {QStringLiteral("menu.ai"), QStringLiteral("AI")},
         {QStringLiteral("menu.settings"), QStringLiteral("设署")},
         {QStringLiteral("menu.help"), QStringLiteral("指引")},
-        {QStringLiteral("action.load_raster"), QStringLiteral("载入像图（可多择）")},
+        {QStringLiteral("action.load_raster"), QStringLiteral("载入像图（GDAL，可多择）")},
         {QStringLiteral("action.load_pointcloud"), QStringLiteral("载入点云")},
         {QStringLiteral("action.load_mesh"), QStringLiteral("载入网格")},
         {QStringLiteral("action.load_dem"), QStringLiteral("载入 DEM")},
@@ -435,8 +437,9 @@ const QHash<QString, QString> &classicalChineseCatalog() {
         {QStringLiteral("settings.lang.ru"), QStringLiteral("俄文")},
         {QStringLiteral("settings.lang.fr"), QStringLiteral("法文")},
         {QStringLiteral("settings.tab.guide"), QStringLiteral("用式指南")},
+        {QStringLiteral("settings.tab.about"), QStringLiteral("关于")},
         {QStringLiteral("settings.button"), QStringLiteral("设署")},
-        {QStringLiteral("log.startup"), QStringLiteral("Starter 已启：此版具多波段像图、参数化算法、DEM/正射之工架。")},
+        {QStringLiteral("log.startup"), QStringLiteral("Starter 已启：此版具 GDAL 多波段、参数化算法、DEM/正射之工架。")},
         {QStringLiteral("menu.raster.band"), QStringLiteral("波段与设色")},
         {QStringLiteral("menu.raster.stat"), QStringLiteral("统计")},
         {QStringLiteral("menu.raster.enhance"), QStringLiteral("增强")},
@@ -540,8 +543,8 @@ const QHash<QString, QString> &classicalChineseCatalog() {
         {QStringLiteral("log.mesh_load_failed"), QStringLiteral("网格载入未果 [%1]：%2")},
         {QStringLiteral("log.dem_loaded"), QStringLiteral("DEM 已载入：%1（%2×%3）")},
         {QStringLiteral("log.dem_load_failed"), QStringLiteral("DEM 载入未果 [%1]：%2")},
-        {QStringLiteral("log.panorama_qt_failed_gdal"), QStringLiteral("Qt 未读全景：%1；试栅格兜底。")},
-        {QStringLiteral("log.panorama_gdal_failed"), QStringLiteral("栅格兜底亦未果：%1")},
+        {QStringLiteral("log.panorama_qt_failed_gdal"), QStringLiteral("Qt 未读全景：%1；试 GDAL。")},
+        {QStringLiteral("log.panorama_gdal_failed"), QStringLiteral("GDAL 亦未果：%1")},
         {QStringLiteral("log.panorama_ratio_hint"), QStringLiteral("360° 宽高比：%1:1（非 2:1）。")},
         {QStringLiteral("log.panorama_loaded"), QStringLiteral("全景已载入：%1（%2×%3）")},
         {QStringLiteral("log.panorama_load_method"), QStringLiteral("全景读法：%1")},
@@ -586,92 +589,6 @@ const QHash<QString, QString> &classicalChineseCatalog() {
         {QStringLiteral("settings.lang.gu"), QStringLiteral("古语")},
     };
     return table;
-}
-
-QString russianHelpGuideHtml() {
-    return QStringLiteral(R"(<h2>Remote Sensing Qt Starter — Руководство</h2>
-<h3>1. Быстрый старт</h3>
-<ol>
-<li>Меню <b>Данные</b>: загрузите снимок, облако точек, Mesh или DEM.</li>
-<li>Выберите слой в дереве <b>Слои проекта</b>.</li>
-<li>Вкладки <b>2D изображение</b> и <b>3D сцена</b> для просмотра.</li>
-<li>Сообщения — в панели <b>Журнал</b>.</li>
-</ol>
-<h3>2. Обработка изображений</h3>
-<ul>
-<li><b>Каналы и отображение</b>, <b>Улучшение</b>, <b>Классификация</b>, индексы NDVI/NDWI/NDBI.</li>
-</ul>
-<h3>3. 3D и облако точек</h3>
-<ul>
-<li>Загрузка в 3D, downsampling, фильтры, DEM, экспорт PLY.</li>
-</ul>
-<h3>4. Панорама</h3>
-<p>Загрузите 360° изображение через меню <b>Панорама / Улицы</b>.</p>
-<h3>5. AI-ассистент</h3>
-<p>Откройте вкладку <b>AI-ассистент</b> внизу окна.</p>
-<h3>6. Настройки</h3>
-<p>Кнопка <b>Настройки</b> справа вверху: язык, тема, режим заботы.</p>)");
-}
-
-QString frenchHelpGuideHtml() {
-    return QStringLiteral(R"(<h2>Remote Sensing Qt Starter — Guide d'utilisation</h2>
-<h3>1. Démarrage rapide</h3>
-<ol>
-<li>Menu <b>Données</b> : chargez une image, un nuage de points, un maillage ou un MNT.</li>
-<li>Sélectionnez une couche dans <b>Couches du projet</b>.</li>
-<li>Onglets <b>Image 2D</b> et <b>Scène 3D</b> pour la visualisation.</li>
-<li>Messages dans le panneau <b>Journal</b>.</li>
-</ol>
-<h3>2. Traitement d'images</h3>
-<ul>
-<li><b>Bandes et rendu</b>, <b>Amélioration</b>, <b>Classification</b>, indices NDVI/NDWI/NDBI.</li>
-</ul>
-<h3>3. 3D et nuage de points</h3>
-<ul>
-<li>Chargement 3D, sous-échantillonnage, filtres, MNT, export PLY.</li>
-</ul>
-<h3>4. Panorama</h3>
-<p>Chargez une image 360° via <b>Vue panoramique / Rue</b>.</p>
-<h3>5. Assistant IA</h3>
-<p>Ouvrez l'onglet <b>Assistant IA</b> en bas de la fenêtre.</p>
-<h3>6. Paramètres</h3>
-<p>Bouton <b>Paramètres</b> en haut à droite : langue, thème, mode confort.</p>)");
-}
-
-QString classicalChineseHelpGuideHtml() {
-    return QStringLiteral(R"(<h2>遥感像图处置平台 — 用式指南</h2>
-<h3>一、速上手</h3>
-<ol>
-<li>于 <b>数籍</b> 菜单载入遥感像图、点云、网格或 DEM。</li>
-<li>于左侧 <b>工图层级</b> 树中择图层。</li>
-<li><b>二维像图</b> 标签示栅格；<b>三维场景</b> 示点云 / 网格。</li>
-<li>底部 <b>录事</b> 面板察处置消息。</li>
-</ol>
-<h3>二、像图处置</h3>
-<ul>
-<li><b>波段与设色</b>：设波段组合与显色。</li>
-<li><b>增强</b>：直方图均衡、拉伸、滤波、锐化等。</li>
-<li><b>特征 / 分类</b>：ORB/SIFT、缘检测、K-Means、SVM 等。</li>
-<li><b>遥感指数</b>：NDVI、NDWI、NDBI 及多时相对比。</li>
-</ul>
-<h3>三、三维与点云</h3>
-<ul>
-<li>载入点云或网格于三维标签。</li>
-<li><b>点云处置</b>：降采样、滤波、转 DEM、导出 PLY。</li>
-<li><b>测绘 / 三维</b>：DEM 重建、正射校正等。</li>
-</ul>
-<h3>四、街景 / 全景</h3>
-<p>于 <b>街景 / 全景</b> 菜单载入 360° 全景，于专标签览之。</p>
-<h3>五、AI 佐</h3>
-<p>启窗口底部 <b>AI 佐</b> 标签，附图层信息以问。</p>
-<h3>六、设署</h3>
-<p>点右上 <b>设署</b> 按钮。<b>通设</b> 标签可换语言、主题色；<b>用式指南</b> 标签阅本手册。</p>
-<h3>七、要诀</h3>
-<ul>
-<li>二维视图中 Ctrl + 滚轮可缩放像图。</li>
-<li>图层树中 Ctrl/Shift 可多择图层。</li>
-<li>处置成果添为新图层于工图树。</li>
-</ul>)");
 }
 
 } // namespace rs

@@ -35,6 +35,7 @@ private:
     QLabel *languageLabel_{nullptr};
     QLabel *themeLabel_{nullptr};
     QTextBrowser *helpBrowser_{nullptr};
+    QTextBrowser *aboutBrowser_{nullptr};
     QLabel *avatarPreview_{nullptr};
     QPushButton *avatarButton_{nullptr};
     QLabel *nicknameLabel_{nullptr};

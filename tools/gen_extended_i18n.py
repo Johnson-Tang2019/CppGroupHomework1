@@ -51,6 +51,7 @@ T: dict[str, tuple[str, str]] = {
     "settings.lang.ru": ("Русский", "Russe"),
     "settings.lang.fr": ("Français", "Français"),
     "settings.tab.guide": ("Руководство", "Guide d'utilisation"),
+    "settings.tab.about": ("О программе", "À propos"),
     "settings.button": ("Настройки", "Paramètres"),
     "log.startup": (
         "Starter запущен: эта сборка поддерживает GDAL, параметрические алгоритмы и каркас DEM/ортокоррекции.",
@@ -303,9 +304,6 @@ namespace rs {
 const QHash<QString, QString> &russianCatalog();
 const QHash<QString, QString> &frenchCatalog();
 const QHash<QString, QString> &classicalChineseCatalog();
-QString russianHelpGuideHtml();
-QString frenchHelpGuideHtml();
-QString classicalChineseHelpGuideHtml();
 
 } // namespace rs
 """,
@@ -322,22 +320,11 @@ namespace rs {{
 
 {emit_gu_catalog()}
 
-QString russianHelpGuideHtml() {{
-    return QStringLiteral(R\"({HELP_RU})");
-}}
-
-QString frenchHelpGuideHtml() {{
-    return QStringLiteral(R\"({HELP_FR})");
-}}
-
-QString classicalChineseHelpGuideHtml() {{
-    return QStringLiteral(R\"({HELP_GU})");
-}}
-
 }} // namespace rs
 """
     cpp.write_text(body, encoding="utf-8")
     print(f"Wrote {cpp} ({len(T)} keys)")
+    print("Note: run gen_translation_help.py to regenerate TranslationHelp.cpp")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 #include "rs/SplashScreen.h"
 
 #include "rs/Translation.h"
+#include "rs/AppInfo.h"
 
 #include <QImage>
 #include <QDateTime>
@@ -16,7 +17,7 @@ namespace rs {
 SplashScreen::SplashScreen(QWidget *parent) : QWidget(parent) {
     setWindowFlags(Qt::SplashScreen | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
-    setFixedSize(420, 560);
+    setFixedSize(420, 580);
 
     tickTimer_ = new QTimer(this);
     tickTimer_->setInterval(380);
@@ -253,21 +254,28 @@ void SplashScreen::paintEvent(QPaintEvent *event) {
     subFont.setPointSize(10);
     p.setFont(subFont);
     p.setPen(QColor("#9a5a72"));
-    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.72, card.width(), 24),
+    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.72, card.width(), 22),
                Qt::AlignHCenter | Qt::AlignVCenter, QStringLiteral("Remote Sensing Qt Starter"));
+
+    QFont versionFont = font();
+    versionFont.setPointSize(9);
+    versionFont.setBold(true);
+    p.setFont(versionFont);
+    p.setPen(QColor("#c45c82"));
+    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.76, card.width(), 18),
+               Qt::AlignHCenter | Qt::AlignVCenter, AppInfo::splashVersionLine());
 
     const QString dots =
         Translation::instance().tr(QStringLiteral("splash.starting")) + QString(dotPhase_, QChar('.'));
-    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.78, card.width(), 22),
+    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.80, card.width(), 20),
                Qt::AlignHCenter | Qt::AlignVCenter, dots);
 
     QFont teamFont = font();
-    teamFont.setPointSize(9);
+    teamFont.setPointSize(8);
     p.setFont(teamFont);
     p.setPen(QColor("#b06a84"));
-    p.drawText(QRectF(card.left(), card.top() + card.height() * 0.84, card.width(), 20),
-               Qt::AlignHCenter | Qt::AlignVCenter,
-               Translation::instance().tr(QStringLiteral("splash.team")));
+    p.drawText(QRectF(card.left() + 8, card.top() + card.height() * 0.84, card.width() - 16, 32),
+               Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, AppInfo::splashTeamLine());
 
     // 底部进度条装饰
     const QRectF barBg(card.left() + 72, card.bottom() - 52, card.width() - 144, 6);

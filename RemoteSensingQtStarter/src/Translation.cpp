@@ -1,5 +1,6 @@
 #include "rs/Translation.h"
 #include "rs/TranslationExtended.h"
+#include "rs/TranslationHelp.h"
 
 #include <QHash>
 #include <QSettings>
@@ -145,6 +146,9 @@ const QHash<QString, QHash<QString, QString>> &catalog() {
         {QStringLiteral("settings.tab.guide"),
          {{QStringLiteral("zh"), QStringLiteral("使用指南")},
           {QStringLiteral("en"), QStringLiteral("User Guide")}}},
+        {QStringLiteral("settings.tab.about"),
+         {{QStringLiteral("zh"), QStringLiteral("关于")},
+          {QStringLiteral("en"), QStringLiteral("About")}}},
         {QStringLiteral("settings.button"),
          {{QStringLiteral("zh"), QStringLiteral("设置")},
           {QStringLiteral("en"), QStringLiteral("Settings")}}},
@@ -680,91 +684,19 @@ QString Translation::tr(const QString &key) const {
 }
 
 QString Translation::helpGuideHtml() const {
-    if (language_ == AppLanguage::English) {
-        return QStringLiteral(R"(
-<h2>Remote Sensing Qt Starter — User Guide</h2>
-<h3>1. Quick Start</h3>
-<ol>
-<li>Use <b>Data</b> menu to load raster, point cloud, mesh, or DEM files.</li>
-<li>Select a layer in the left <b>Project Layers</b> tree.</li>
-<li>View rasters in the <b>2D Image</b> tab; view point clouds/mesh in <b>3D Scene</b>.</li>
-<li>Check processing messages in the bottom <b>Log</b> panel.</li>
-</ol>
-<h3>2. Raster Processing</h3>
-<ul>
-<li><b>Band &amp; Rendering</b>: configure band combination and color mapping.</li>
-<li><b>Enhancement</b>: histogram equalization, stretch, filters, sharpening.</li>
-<li><b>Features / Classification</b>: ORB/SIFT, edge detection, K-Means, SVM, etc.</li>
-<li><b>Remote Sensing Indices</b>: NDVI, NDWI, NDBI and temporal comparison.</li>
-</ul>
-<h3>3. 3D &amp; Point Cloud</h3>
-<ul>
-<li>Load point cloud or mesh into the 3D tab.</li>
-<li>Use <b>Point Cloud</b> menu for downsampling, filtering, DEM conversion, PLY export.</li>
-<li>Use <b>Photogrammetry / 3D</b> for DEM reconstruction and orthorectification.</li>
-</ul>
-<h3>4. Panorama / Street View</h3>
-<p>Load a 360° panorama image from <b>Street View / Panorama</b> and browse it in the dedicated tab.</p>
-<h3>5. AI Assistant</h3>
-<p>Open the <b>AI Assistant</b> tab at the bottom of the window to attach layer information and ask questions about imported data.</p>
-<h3>6. Settings</h3>
-<p>Click the <b>Settings</b> button at the top-right corner. Use the <b>General</b> tab to switch language or theme color, and the <b>User Guide</b> tab for this manual.</p>
-<h3>7. Tips</h3>
-<ul>
-<li>Ctrl + mouse wheel on the 2D view zooms the image.</li>
-<li>Multiple layers can be selected with Ctrl/Shift in the layer tree.</li>
-<li>Results are added as new layers under the project tree.</li>
-</ul>
-)");
-    }
-
-    if (language_ == AppLanguage::Russian) {
+    switch (language_) {
+    case AppLanguage::English:
+        return englishHelpGuideHtml();
+    case AppLanguage::Russian:
         return russianHelpGuideHtml();
-    }
-
-    if (language_ == AppLanguage::French) {
+    case AppLanguage::French:
         return frenchHelpGuideHtml();
-    }
-
-    if (language_ == AppLanguage::ClassicalChinese) {
+    case AppLanguage::ClassicalChinese:
         return classicalChineseHelpGuideHtml();
+    case AppLanguage::Chinese:
+    default:
+        return chineseHelpGuideHtml();
     }
-
-    return QStringLiteral(R"(
-<h2>遥感影像处理平台 — 使用指南</h2>
-<h3>1. 快速上手</h3>
-<ol>
-<li>在 <b>数据</b> 菜单中加载遥感影像、点云、Mesh 或 DEM。</li>
-<li>在左侧 <b>工程图层</b> 树中选择图层。</li>
-<li>在 <b>二维影像</b> 标签页查看栅格；在 <b>三维场景</b> 查看点云/Mesh。</li>
-<li>在底部 <b>日志</b> 面板查看处理过程与提示信息。</li>
-</ol>
-<h3>2. 影像处理</h3>
-<ul>
-<li><b>波段与设色</b>：设置波段组合与显示配色。</li>
-<li><b>增强</b>：直方图均衡、拉伸、滤波、锐化等。</li>
-<li><b>特征与检测 / 分类</b>：ORB/SIFT、边缘检测、K-Means、SVM 等。</li>
-<li><b>遥感指数</b>：NDVI、NDWI、NDBI 及多时相对比。</li>
-</ul>
-<h3>3. 三维与点云</h3>
-<ul>
-<li>加载点云或 Mesh 后在三维标签页浏览。</li>
-<li><b>点云处理</b>：降采样、滤波、转 DEM、导出 PLY。</li>
-<li><b>摄影测量/三维</b>：DEM 重建、正射校正、DEM 贴图等。</li>
-</ul>
-<h3>4. 街景 / 全景</h3>
-<p>在 <b>街景/全景</b> 菜单加载 360° 全景图，并在对应标签页中查看。</p>
-<h3>5. AI 助手</h3>
-<p>在窗口底部的 <b>AI 助手</b> 标签页打开面板，可附带图层信息并进行问答。</p>
-<h3>6. 设置</h3>
-<p>点击窗口右上角的 <b>设置</b> 按钮。在 <b>常规</b> 标签页切换语言或主题颜色，在 <b>使用指南</b> 标签页查看本说明。</p>
-<h3>7. 小技巧</h3>
-<ul>
-<li>二维视图中按住 Ctrl 并滚动鼠标滚轮可缩放影像。</li>
-<li>图层树中可用 Ctrl/Shift 多选图层。</li>
-<li>处理结果会以新图层形式加入工程。</li>
-</ul>
-)");
 }
 
 } // namespace rs

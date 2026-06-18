@@ -1,4 +1,5 @@
 #include "rs/SettingsDialog.h"
+#include "rs/AppInfo.h"
 #include "rs/AppTheme.h"
 #include "rs/Translation.h"
 
@@ -101,6 +102,11 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
     helpBrowser_ = new QTextBrowser(this);
     helpBrowser_->setOpenExternalLinks(true);
     tabs_->addTab(helpBrowser_, QString());
+
+    aboutBrowser_ = new QTextBrowser(this);
+    aboutBrowser_->setOpenExternalLinks(true);
+    aboutBrowser_->setOpenLinks(true);
+    tabs_->addTab(aboutBrowser_, QString());
 
     layout->addWidget(tabs_, 1);
 
@@ -208,6 +214,7 @@ void SettingsDialog::retranslateUi() {
     tabs_->setTabText(0, t.tr(QStringLiteral("settings.tab.general")));
     tabs_->setTabText(1, QStringLiteral("个人资料"));
     tabs_->setTabText(2, t.tr(QStringLiteral("settings.tab.guide")));
+    tabs_->setTabText(3, t.tr(QStringLiteral("settings.tab.about")));
     avatarLabel_->setText(QStringLiteral("头像"));
     avatarButton_->setText(QStringLiteral("上传头像"));
     nicknameLabel_->setText(QStringLiteral("昵称"));
@@ -215,6 +222,7 @@ void SettingsDialog::retranslateUi() {
     addressLabel_->setText(QStringLiteral("地址"));
     emailLabel_->setText(QStringLiteral("邮箱"));
     helpBrowser_->setHtml(t.helpGuideHtml());
+    aboutBrowser_->setHtml(AppInfo::aboutHtml(t.language()));
 }
 
 } // namespace rs

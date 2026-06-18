@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(RemoteSensingQtStarter VERSION 0.1.0 LANGUAGES CXX)
+project(RemoteSensingQtStarter VERSION 1.0.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,7 +41,9 @@ add_executable(RemoteSensingQtStarter WIN32
     src/SplashScreen.cpp
     src/Translation.cpp
     src/TranslationExtended.cpp
+    src/TranslationHelp.cpp
     src/AppTheme.cpp
+    src/AppInfo.cpp
     src/SettingsDialog.cpp
     src/Algorithms.cpp
     src/ExtendedAlgorithms.cpp
@@ -67,7 +69,9 @@ add_executable(RemoteSensingQtStarter WIN32
     include/rs/SplashScreen.h
     include/rs/Translation.h
     include/rs/TranslationExtended.h
+    include/rs/TranslationHelp.h
     include/rs/AppTheme.h
+    include/rs/AppInfo.h
     include/rs/SettingsDialog.h
     include/rs/Panorama360Widget.h
     include/rs/SwipeCompareWidget.h
