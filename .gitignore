@@ -86,3 +86,4 @@ RemoteSensingQtStarter/CMakePresets.json
 .agents/
 codex-plugin-backup-*/
 .codex-remote-attachments/
+tmp/
