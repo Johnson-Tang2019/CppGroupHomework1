@@ -73,6 +73,19 @@ public:
     // 清空所有图层
     void clear() { layers_.clear(); }
 
+    bool move(int from, int to) {
+        if (from < 0 || from >= static_cast<int>(layers_.size()) ||
+            to < 0 || to >= static_cast<int>(layers_.size()) || from == to) {
+            return false;
+        }
+        auto layer = std::move(layers_[static_cast<std::size_t>(from)]);
+        layers_.erase(layers_.begin() + from);
+        layers_.insert(layers_.begin() + to, std::move(layer));
+        return true;
+    }
+
+    void replaceAll(std::vector<Ptr> layers) { layers_ = std::move(layers); }
+
 private:
     std::vector<Ptr> layers_;  // 图层智能指针的动态数组，实际存储所有图层
 };

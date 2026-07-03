@@ -23,6 +23,7 @@
 #include <QMainWindow> // Qt 主窗口基类，提供菜单栏、工具栏、状态栏等
 #include <QMenu>
 #include <QMenuBar>
+#include <QNetworkAccessManager>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
@@ -55,6 +56,14 @@ struct StoredLogEntry {
     QString trKey;
     QStringList args;
     QString fixedText;
+};
+
+struct UndoState {
+    std::vector<std::shared_ptr<DataObject>> layers;
+    QVector<QString> layerGroups;
+    QVector<QString> treeGroups;
+    QVector<bool> visible;
+    QString label;
 };
 
 // MainWindow：应用程序的主窗口
@@ -114,6 +123,12 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     void applyThemeStyles();    // 应用主题配色
     void retranslateUi(); // 刷新界面语言
 
+    void undoLastOperation();
+    void pushUndoState(const QString &label = QString());
+    void checkForUpdates();
+    void handleUpdateReply(QNetworkReply *reply);
+    bool moveLayerByTreeDrop(int sourceIndex, QTreeWidgetItem *targetItem);
+
     // ============ 图层管理 ============
     void refreshLayerTree(); // 根据 LayerManager 数据重建图层树（保持展开状态）
     void saveLastSession() const;
@@ -138,6 +153,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
                                const QString &suffix = QStringLiteral("_结果"));
     void revealLayerInTree(int layerIndex);
     void exportLayerImage(int layerIndex);
+    bool exportLayersToDirectory(const std::vector<int> &indices, const QString &dirPath);
     bool canExportLayer(int layerIndex) const;
     bool exportLayerToPath(int layerIndex, const QString &path);
     std::vector<int> collectLayerIndicesUnder(QTreeWidgetItem *item) const;
@@ -163,6 +179,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     QTextEdit *logEdit_{};           // 日志输出面板（底部）
     QLabel *coordLabel_{};           // 状态栏：光标经纬度/像素信息
 
+    QMenu *editMenu_{};
     QMenu *dataMenu_{};
     QMenu *rasterMenu_{};
     QMenu *indexMenu_{};
@@ -171,6 +188,7 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
 
     QPushButton *settingsButton_{};
 
+    QAction *undoAction_{};
     QAction *loadRasterAction_{};
     QAction *loadPointCloudAction_{};
     QAction *loadMeshAction_{};
@@ -200,6 +218,9 @@ class MainWindow final : public QMainWindow { // final 禁止进一步继承
     // ============ 状态变量 ============
     bool rebuildingTree_{};           // 正在重建图层树的标志（刷新过程中阻止重复响应）
     QVector<StoredLogEntry> logHistory_;
+    QVector<UndoState> undoStack_;
+    QNetworkAccessManager updateNetwork_;
+    int dragSourceLayerIndex_ {-1};
     LayerManager<DataObject> layers_; // 图层管理器，管理所有数据图层（影像、点云、DEM 等）
     std::shared_ptr<RasterLayer> activeRasterForCoords_; // 当前二维视图用于显示坐标的影像
     QSize activeDisplaySizeForCoords_; // 当前二维视图显示图像的像素尺寸（用于坐标映射）

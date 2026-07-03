@@ -49,7 +49,7 @@ QString chineseHelpGuideHtml() {
 
 <h3>5. 遥感指数（遥感指数菜单）</h3>
 <ul>
-<li><b>计算 NDVI / NDWI / NDBI</b>：可选是否应用阈值分割掩膜。</li>
+<li><b>计算 NDVI / NDWI / NDBI / MNDWI / NDCI / NDTI / TSS / TLI / FUI / PC / CDOM</b>：可选是否应用阈值分割掩膜。</li>
 <li><b>多时相指数对比</b>：选中两个不同时相的栅格图层，生成 NDVI 变化对比结果。</li>
 <li><b>前后影像滑动对比</b>：选中两期影像，在「滑动对比」标签页拖动中间分隔线对比（亦可在图层树选中两期后自动更新）。</li>
 <li><b>导出指数统计 CSV</b>：将当前选中图层的指数统计导出为 CSV 文件。</li>
@@ -165,7 +165,7 @@ QString englishHelpGuideHtml() {
 
 <h3>5. Remote Sensing Indices</h3>
 <ul>
-<li><b>NDVI / NDWI / NDBI</b> with optional threshold mask.</li>
+<li><b>NDVI / NDWI / NDBI / MNDWI / NDCI / NDTI / TSS / TLI / FUI / PC / CDOM</b> with optional threshold mask.</li>
 <li><b>Multi-temporal index compare</b>: select two rasters from different dates.</li>
 <li><b>Before/After swipe compare</b>: drag the divider in the Swipe Compare tab.</li>
 <li><b>Export index statistics CSV</b>.</li>
@@ -249,7 +249,7 @@ QString russianHelpGuideHtml() {
 
 <h3>4. Индексы и сравнение</h3>
 <ul>
-<li>NDVI, NDWI, NDBI; сравнение по времени; <b>сравнение с ползунком</b>; экспорт CSV.</li>
+<li>NDVI, NDWI, NDBI, MNDWI, NDCI, NDTI, TSS, TLI, FUI, PC, CDOM; сравнение по времени; <b>сравнение с ползунком</b>; экспорт CSV.</li>
 </ul>
 
 <h3>5. 3D и облако точек</h3>
@@ -291,7 +291,7 @@ QString frenchHelpGuideHtml() {
 
 <h3>4. Indices</h3>
 <ul>
-<li>NDVI, NDWI, NDBI ; comparaison multi-temporelle ; <b>comparaison avant/après</b> ; export CSV.</li>
+<li>NDVI, NDWI, NDBI, MNDWI, NDCI, NDTI, TSS, TLI, FUI, PC, CDOM ; comparaison multi-temporelle ; <b>comparaison avant/après</b> ; export CSV.</li>
 </ul>
 
 <h3>5. 3D et nuage de points</h3>
@@ -335,7 +335,7 @@ QString classicalChineseHelpGuideHtml() {
 
 <h3>四、遥感指数</h3>
 <ul>
-<li>NDVI/NDWI/NDBI；多时相对比；前后滑动对比；导出 CSV。</li>
+<li>NDVI/NDWI/NDBI/MNDWI/NDCI/NDTI/TSS/TLI/FUI/PC/CDOM；多时相对比；前后滑动对比；导出 CSV。</li>
 </ul>
 
 <h3>五、三维与点云</h3>

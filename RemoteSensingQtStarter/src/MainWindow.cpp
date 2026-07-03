@@ -16,7 +16,11 @@
     #include <QApplication>
     #include <QBuffer>
     #include <QColor>
+    #include <QCoreApplication>
     #include <QDialog>
+    #include <QProcess>
+    #include <QDropEvent>
+    #include <QDesktopServices>
     #include <QDir>
     #include <QFutureWatcher>
     #include <QHBoxLayout>
@@ -45,6 +49,10 @@
     #include <utility>
 #ifdef RS_WITH_GDAL
     #include <ogr_spatialref.h>
+#endif
+
+#ifndef RS_GIT_COMMIT
+#define RS_GIT_COMMIT "unknown"
 #endif
 
     namespace rs {
@@ -342,7 +350,7 @@
         double tx = x;
         double ty = y;
         const int ok = ct->Transform(1, &tx, &ty);
-        OCTDestroyCoordinateTransformation(ct);
+        OCTDestroyCoordinateTransformation(reinterpret_cast<OGRCoordinateTransformationH>(ct));
         if (!ok) {
             return false;
         }
@@ -1130,7 +1138,7 @@
         folder->setText(0, displayName);
         folder->setData(0, kFolderKeyRole, folderKey);
         folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
-        folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
+        folder->setFlags(folder->flags() | Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDropEnabled);
         return folder;
     }
 
@@ -1148,7 +1156,7 @@
         folder->setText(0, displayName);
         folder->setData(0, kFolderKeyRole, folderKey);
         folder->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Folder));
-        folder->setFlags((folder->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
+        folder->setFlags(folder->flags() | Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDropEnabled);
         return folder;
     }
 
@@ -1306,6 +1314,7 @@
         retranslateUi();
         appendLogTr(QStringLiteral("log.startup"));
         QTimer::singleShot(3200, this, &MainWindow::restoreLastSession);
+        QTimer::singleShot(5200, this, &MainWindow::checkForUpdates);
         updateActionStates();
     }
 
@@ -1333,6 +1342,12 @@
             return a;
         };
 
+        editMenu_ = menuBar()->addMenu(QString::fromUtf8("\xE7\xBC\x96\xE8\xBE\x91"));
+        undoAction_ = editMenu_->addAction(QString::fromUtf8("\xE6\x92\xA4\xE9\x94\x80\xE4\xB8\x8A\xE4\xB8\x80\xE6\xAD\xA5"));
+        undoAction_->setShortcut(QKeySequence::Undo);
+        undoAction_->setEnabled(false);
+        connect(undoAction_, &QAction::triggered, this, &MainWindow::undoLastOperation);
+
         dataMenu_ = regTopMenu(QStringLiteral("menu.data"));
         loadRasterAction_ = regAction(dataMenu_, QStringLiteral("action.load_raster"));
         connect(loadRasterAction_, &QAction::triggered, this, &MainWindow::openRasterDatasets);
@@ -1344,6 +1359,28 @@
         connect(loadDemAction_, &QAction::triggered, this, &MainWindow::openDem);
         loadPanoramaAction_ = regAction(dataMenu_, QStringLiteral("action.load_panorama360"));
         connect(loadPanoramaAction_, &QAction::triggered, this, &MainWindow::openPanorama360);
+        dataMenu_->addSeparator();
+        QAction *exportAllResultsAction = dataMenu_->addAction(QStringLiteral("Export All Results..."));
+        connect(exportAllResultsAction, &QAction::triggered, this, [this]() {
+            std::vector<int> exportable;
+            for (int i = 0; i < layers_.size(); ++i) {
+                try {
+                    const auto layer = layers_.at(i);
+                    if (layer && !layer->treeGroup().isEmpty() && canExportLayer(i)) {
+                        exportable.push_back(i);
+                    }
+                } catch (const std::exception &) {
+                }
+            }
+            if (exportable.empty()) {
+                appendLog(QStringLiteral("No processing result image is available for export."));
+                return;
+            }
+            const QString dirPath = QFileDialog::getExistingDirectory(this, Translation::instance().tr(QStringLiteral("dialog.select_export_dir")));
+            if (!dirPath.isEmpty()) {
+                exportLayersToDirectory(exportable, dirPath);
+            }
+        });
         dataMenu_->addSeparator();
         deleteLayerAction_ = regAction(dataMenu_, QStringLiteral("action.delete_layer"));
         connect(deleteLayerAction_, &QAction::triggered, this, &MainWindow::deleteSelectedLayers);
@@ -1545,7 +1582,11 @@
         connect(regAction(indexMenu_, QStringLiteral("action.index_calc")), &QAction::triggered, this,
                 [this]() {
                     QStringList indices = {QStringLiteral("NDVI"), QStringLiteral("NDWI"),
-                                        QStringLiteral("NDBI")};
+                                        QStringLiteral("NDBI"), QStringLiteral("MNDWI"),
+                                        QStringLiteral("NDCI"), QStringLiteral("NDTI"),
+                                        QStringLiteral("TSS"), QStringLiteral("TLI"),
+                                        QStringLiteral("FUI"), QStringLiteral("PC"),
+                                        QStringLiteral("CDOM")};
                     bool ok = false;
                     const QString index = QInputDialog::getItem(
                         this, QStringLiteral("遥感指数"), QStringLiteral("选择指数："), indices, 0, false,
@@ -1560,13 +1601,7 @@
                     ctx.parameters[QStringLiteral("index")] = index;
                     ctx.parameters[QStringLiteral("applyThreshold")] = threshold;
                     ctx.parameters[QStringLiteral("threshold")] = 0.2;
-                    const auto raster = selectedRaster();
-                    if (!raster) {
-                        appendLogTr(QStringLiteral("log.select_raster"));
-                        return;
-                    }
-                    const auto result = algo.execute(*raster, ctx);
-                    applyProcessingResult(result, raster, index, QStringLiteral("_") + index);
+                    executeRasterAlgorithm(algo, ctx);
                 });
         connect(regAction(indexMenu_, QStringLiteral("action.index_temporal")), &QAction::triggered, this,
                 [this]() {
@@ -1671,13 +1706,19 @@
         layerTree_->setHeaderLabel(Translation::instance().tr(QStringLiteral("layer_tree")));
         layerTree_->setAlternatingRowColors(true);                          // 开启交替行颜色
         layerTree_->setSelectionMode(QAbstractItemView::ExtendedSelection); // 支持 Ctrl/Shift 多选
+        layerTree_->setDragEnabled(true);
+        layerTree_->setAcceptDrops(true);
+        layerTree_->viewport()->setAcceptDrops(true);
+        layerTree_->setDragDropMode(QAbstractItemView::InternalMove);
+        layerTree_->setDropIndicatorShown(true);
         layerTree_->setContextMenuPolicy(Qt::CustomContextMenu);            // 启用自定义右键菜单
         connect(layerTree_, &QTreeWidget::itemSelectionChanged, this,
                 &MainWindow::onSelectionChanged); // 选中项改变时刷新影像
         connect(layerTree_, &QTreeWidget::itemChanged, this,
                 &MainWindow::onLayerItemChanged); // 勾选框改变时切换可见性
         connect(layerTree_, &QTreeWidget::customContextMenuRequested, this,
-                &MainWindow::showLayerContextMenu); // 右键弹出菜单
+                &MainWindow::showLayerContextMenu);
+        layerTree_->viewport()->installEventFilter(this); // 右键弹出菜单
 
         // ---- 右侧：上下分割（上方影像标签页 + 下方日志） ----
         auto *right = new QSplitter(Qt::Vertical, root); // 右侧垂直分割器
@@ -1730,6 +1771,12 @@
                 }
                 lines << QStringLiteral("Selected layer indexes: %1").arg(selectedText.join(QStringLiteral(", ")));
             }
+            if (auto *current = layerTree_ ? layerTree_->currentItem() : nullptr) {
+                const QString folderKey = current->data(0, kFolderKeyRole).toString();
+                if (!folderKey.isEmpty()) {
+                    lines << QStringLiteral("Current tree group: %1").arg(current->text(0));
+                }
+            }
 
             for (int i = 0; i < layers_.size(); ++i) {
                 const auto layer = layers_.at(i);
@@ -1761,6 +1808,9 @@
                 lines << QStringLiteral("- Path: %1").arg(layer->path());
                 lines << QStringLiteral("- Summary: %1").arg(layer->summary());
                 lines << QStringLiteral("- Visible: %1").arg(layer->visible() ? QStringLiteral("yes") : QStringLiteral("no"));
+                if (!layer->layerGroup().isEmpty()) {
+                    lines << QStringLiteral("- Raster group: %1").arg(layer->layerGroup());
+                }
 
                 if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
                     lines << QStringLiteral("- Render: %1").arg(raster->renderDescription());
@@ -1935,14 +1985,31 @@
             toolBar->addAction(iconForKey(QStringLiteral("action.export")), QStringLiteral("导出图层"));
         exportSelectedAction->setToolTip(QStringLiteral("导出左侧当前选中的第一个可导出图层。"));
         connect(exportSelectedAction, &QAction::triggered, this, [this]() {
-            const auto indices = selectedLayerIndices();
-            for (int index : indices) {
+            std::vector<int> exportable;
+            for (int index : selectedLayerIndices()) {
                 if (canExportLayer(index)) {
-                    exportLayerImage(index);
-                    return;
+                    exportable.push_back(index);
                 }
             }
-            appendLog(QStringLiteral("请先在左侧选择一个可导出的图层。"));
+            if (exportable.empty() && layerTree_ && layerTree_->currentItem()) {
+                for (int index : collectLayerIndicesUnder(layerTree_->currentItem())) {
+                    if (canExportLayer(index)) {
+                        exportable.push_back(index);
+                    }
+                }
+            }
+            if (exportable.empty()) {
+                appendLog(QStringLiteral("Please select exportable layer(s)."));
+                return;
+            }
+            if (exportable.size() == 1) {
+                exportLayerImage(exportable.front());
+                return;
+            }
+            const QString dirPath = QFileDialog::getExistingDirectory(this, Translation::instance().tr(QStringLiteral("dialog.select_export_dir")));
+            if (!dirPath.isEmpty()) {
+                exportLayersToDirectory(exportable, dirPath);
+            }
         });
         if (deleteLayerAction_) {
             deleteLayerAction_->setIcon(iconForKey(QStringLiteral("action.delete_layer")));
@@ -2492,6 +2559,7 @@
             }
         }
 
+        pushUndoState(QStringLiteral("delete layers"));
         layers_.removeMany(indices);
         imageScene_->clear();
         if (has3DLayer) {
@@ -2507,6 +2575,9 @@
 
     // 清空所有图层，重置工程
     void MainWindow::clearProject() {
+        if (!layers_.empty()) {
+            pushUndoState(QStringLiteral("clear project"));
+        }
         layers_.clear();      // 清空所有图层
         imageScene_->clear(); // 清空图像场景
         scene3DWidget_->clearData();
@@ -2568,6 +2639,7 @@
             settings.setValue(QStringLiteral("type"), type);
             settings.setValue(QStringLiteral("path"), layer->path());
             settings.setValue(QStringLiteral("visible"), layer->visible());
+            settings.setValue(QStringLiteral("layerGroup"), layer->layerGroup());
         }
 
         settings.endArray();
@@ -2597,6 +2669,7 @@
             const QString type = settings.value(QStringLiteral("type")).toString();
             const QString path = settings.value(QStringLiteral("path")).toString();
             const bool visible = settings.value(QStringLiteral("visible"), true).toBool();
+            const QString layerGroup = settings.value(QStringLiteral("layerGroup")).toString();
             const QFileInfo info(path);
             if (path.isEmpty() || !info.exists()) {
                 ++failed;
@@ -2627,6 +2700,7 @@
                     throw std::runtime_error("未知图层类型");
                 }
                 layer->setVisible(visible);
+                layer->setLayerGroup(layerGroup);
                 layers_.add(layer);
                 ++restored;
             } catch (const std::exception &e) {
@@ -3325,8 +3399,68 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
     const int nodeKind = item->data(0, kNodeKindRole).toInt();
     QMenu menu(this);
 
+    const auto selectedRasterIndices = [this]() {
+        std::vector<int> rasterIndices;
+        for (const int idx : selectedLayerIndices()) {
+            try {
+                if (std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx)) &&
+                    std::find(rasterIndices.begin(), rasterIndices.end(), idx) == rasterIndices.end()) {
+                    rasterIndices.push_back(idx);
+                }
+            } catch (const std::exception &) {
+            }
+        }
+        return rasterIndices;
+    };
+    const auto assignGroup = [this](const std::vector<int> &indices, const QString &groupName) {
+        if (indices.empty()) {
+            return;
+        }
+        pushUndoState(QStringLiteral("set raster group"));
+        for (const int idx : indices) {
+            try {
+                if (auto raster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx))) {
+                    raster->setLayerGroup(groupName.trimmed());
+                }
+            } catch (const std::exception &) {
+            }
+        }
+        refreshLayerTree();
+        updateActionStates();
+    };
+
     if (!layerIndexVar.isValid() || nodeKind != static_cast<int>(NodeKind::Layer)) {
         const auto folderIndices = collectLayerIndicesUnder(item);
+        const QString folderKey = item->data(0, kFolderKeyRole).toString();
+        const auto rasters = selectedRasterIndices();
+        if (!rasters.empty()) {
+            QAction *createGroupAction = menu.addAction(QStringLiteral("Create raster group from selection..."));
+            connect(createGroupAction, &QAction::triggered, this, [this, rasters, assignGroup]() {
+                bool ok = false;
+                const QString name = QInputDialog::getText(this, QStringLiteral("Raster Group"),
+                                                           QStringLiteral("Group name:"), QLineEdit::Normal,
+                                                           QStringLiteral("Raster Group"), &ok).trimmed();
+                if (ok && !name.isEmpty()) {
+                    assignGroup(rasters, name);
+                }
+            });
+        }
+        if (folderKey.startsWith(QStringLiteral("source/raster/group/"))) {
+            QAction *renameGroupAction = menu.addAction(QStringLiteral("Rename raster group..."));
+            connect(renameGroupAction, &QAction::triggered, this, [this, folderIndices, item, assignGroup]() {
+                bool ok = false;
+                const QString name = QInputDialog::getText(this, QStringLiteral("Raster Group"),
+                                                           QStringLiteral("New group name:"), QLineEdit::Normal,
+                                                           item->text(0), &ok).trimmed();
+                if (ok && !name.isEmpty()) {
+                    assignGroup(folderIndices, name);
+                }
+            });
+        }
+        if (!rasters.empty() || folderKey.startsWith(QStringLiteral("source/raster/group/"))) {
+            menu.addSeparator();
+        }
+
         std::vector<int> exportableIndices;
         for (const int idx : folderIndices) {
             if (canExportLayer(idx)) {
@@ -3343,21 +3477,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
                     return;
                 }
 
-                QDir dir(dirPath);
-                int okCount = 0;
-                for (const int idx : exportableIndices) {
-                    try {
-                        const auto layer = layers_.at(idx);
-                        const QString suffix = layer->type() == DataType::Dem ? QStringLiteral(".tif")
-                                             : QStringLiteral(".png");
-                        const QString path = dir.filePath(safeFileBaseName(layer->name()) + suffix);
-                        if (exportLayerToPath(idx, path)) {
-                            ++okCount;
-                        }
-                    } catch (const std::exception &) {
-                    }
-                }
-                appendLogTr(QStringLiteral("log.export_group_done"), {QString::number(okCount), QString::number(exportableIndices.size())});
+                exportLayersToDirectory(exportableIndices, dirPath);
             });
             menu.addSeparator();
         }
@@ -3381,6 +3501,68 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
         return;
     }
 
+    if (std::dynamic_pointer_cast<RasterLayer>(layer)) {
+        auto rasters = selectedRasterIndices();
+        if (std::find(rasters.begin(), rasters.end(), layerIndex) == rasters.end()) {
+            rasters.push_back(layerIndex);
+        }
+        if (rasters.size() >= 2) {
+            QAction *createGroupAction = menu.addAction(QStringLiteral("Create raster group from selected layers..."));
+            connect(createGroupAction, &QAction::triggered, this, [this, rasters, assignGroup]() {
+                bool ok = false;
+                const QString name = QInputDialog::getText(this, QStringLiteral("Raster Group"),
+                                                           QStringLiteral("Group name:"), QLineEdit::Normal,
+                                                           QStringLiteral("Raster Group"), &ok).trimmed();
+                if (ok && !name.isEmpty()) {
+                    assignGroup(rasters, name);
+                }
+            });
+            menu.addSeparator();
+        }
+
+        QAction *groupAction = menu.addAction(QStringLiteral("Set raster group..."));
+        connect(groupAction, &QAction::triggered, this, [this, layerIndex, assignGroup]() {
+            bool ok = false;
+            QString current;
+            try {
+                current = layers_.at(layerIndex)->layerGroup();
+            } catch (const std::exception &) {
+            }
+            const QString name = QInputDialog::getText(this, QStringLiteral("Raster Group"),
+                                                       QStringLiteral("Group name:"), QLineEdit::Normal,
+                                                       current, &ok).trimmed();
+            if (ok) {
+                assignGroup({layerIndex}, name);
+            }
+        });
+        QAction *clearGroupAction = menu.addAction(QStringLiteral("Remove from raster group"));
+        clearGroupAction->setEnabled(!layer->layerGroup().isEmpty());
+        connect(clearGroupAction, &QAction::triggered, this, [this, layerIndex, assignGroup]() {
+            assignGroup({layerIndex}, QString());
+        });
+        menu.addSeparator();
+    }
+
+    QAction *moveUpAction = menu.addAction(QStringLiteral("Move layer up"));
+    moveUpAction->setEnabled(layerIndex > 0);
+    connect(moveUpAction, &QAction::triggered, this, [this, layerIndex]() {
+        pushUndoState(QStringLiteral("move layer up"));
+        if (layers_.move(layerIndex, layerIndex - 1)) {
+            refreshLayerTree();
+            revealLayerInTree(layerIndex - 1);
+        }
+    });
+    QAction *moveDownAction = menu.addAction(QStringLiteral("Move layer down"));
+    moveDownAction->setEnabled(layerIndex + 1 < layers_.size());
+    connect(moveDownAction, &QAction::triggered, this, [this, layerIndex]() {
+        pushUndoState(QStringLiteral("move layer down"));
+        if (layers_.move(layerIndex, layerIndex + 1)) {
+            refreshLayerTree();
+            revealLayerInTree(layerIndex + 1);
+        }
+    });
+    menu.addSeparator();
+
     QAction *deleteAction = menu.addAction(tr.tr(QStringLiteral("action.delete_single_layer")));
     connect(deleteAction, &QAction::triggered, this, [this, layerIndex]() {
         try {
@@ -3396,6 +3578,7 @@ void MainWindow::showLayerContextMenu(const QPoint &position) {
             }
         } catch (...) {
         }
+        pushUndoState(QStringLiteral("delete layer"));
         layers_.removeMany({layerIndex});
         refreshLayerTree();
         appendLogTr(QStringLiteral("log.layer_deleted"));
@@ -3501,12 +3684,23 @@ void MainWindow::refreshLayerTree() {
         const auto layer = layers_.at(i);
         QTreeWidgetItem *parent = nullptr;
         if (!layer->treeGroup().isEmpty()) {
-            const QString groupKey = QStringLiteral("results/") + layer->treeGroup();
-            parent = ensureChildFolder(resultRoot, groupKey, localizedTreeGroupName(layer->treeGroup()));
+            QTreeWidgetItem *groupParent = resultRoot;
+            QString groupKey = QStringLiteral("results");
+            const QStringList parts = layer->treeGroup().split(QChar('/'), Qt::SkipEmptyParts);
+            for (const QString &part : parts) {
+                groupKey += QStringLiteral("/") + part;
+                groupParent = ensureChildFolder(groupParent, groupKey, localizedTreeGroupName(part));
+            }
+            parent = groupParent;
         } else {
             switch (layer->type()) {
             case DataType::Raster:
-                parent = rasterFolder;
+                if (!layer->layerGroup().isEmpty()) {
+                    const QString groupKey = QStringLiteral("source/raster/group/") + layer->layerGroup();
+                    parent = ensureChildFolder(rasterFolder, groupKey, layer->layerGroup());
+                } else {
+                    parent = rasterFolder;
+                }
                 break;
             case DataType::PointCloud:
                 parent = pointFolder;
@@ -3531,7 +3725,7 @@ void MainWindow::refreshLayerTree() {
         item->setData(0, kLayerIndexRole, i);
         item->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Layer));
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable |
-                       Qt::ItemIsEnabled);
+                       Qt::ItemIsEnabled | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
         item->setCheckState(0, layer->visible() ? Qt::Checked : Qt::Unchecked);
 
         if (const auto raster = std::dynamic_pointer_cast<RasterLayer>(layer)) {
@@ -3644,6 +3838,31 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         return QMainWindow::eventFilter(watched, event);
     }
 
+    if (layerTree_ && watched == layerTree_->viewport()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            QTreeWidgetItem *item = layerTree_->itemAt(mouseEvent->pos());
+            dragSourceLayerIndex_ = item ? item->data(0, kLayerIndexRole).toInt() : -1;
+            return QMainWindow::eventFilter(watched, event);
+        }
+        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+            if (auto *dropEvent = dynamic_cast<QDropEvent *>(event)) {
+                dropEvent->acceptProposedAction();
+                return true;
+            }
+        }
+        if (event->type() == QEvent::Drop) {
+            auto *dropEvent = static_cast<QDropEvent *>(event);
+            QTreeWidgetItem *target = layerTree_->itemAt(dropEvent->position().toPoint());
+            if (moveLayerByTreeDrop(dragSourceLayerIndex_, target)) {
+                dropEvent->acceptProposedAction();
+                dragSourceLayerIndex_ = -1;
+                return true;
+            }
+            dragSourceLayerIndex_ = -1;
+        }
+    }
+
     if (watched == imageView_->viewport()) {
         if (event->type() == QEvent::Leave) {
             coordLabel_->setText(QString());
@@ -3714,14 +3933,20 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
 // 获取当前选中的所有图层的索引列表（去重）
 std::vector<int> MainWindow::selectedLayerIndices() const {
     std::vector<int> indices;
-    for (const auto *item : layerTree_->selectedItems()) {
-        const QVariant value = item->data(0, kLayerIndexRole);
-        if (!value.isValid()) {
-            continue;
-        }
-        const int index = value.toInt();
+    const auto addIndex = [&indices](int index) {
         if (std::find(indices.begin(), indices.end(), index) == indices.end()) {
             indices.push_back(index);
+        }
+    };
+
+    for (auto *item : layerTree_->selectedItems()) {
+        const QVariant value = item->data(0, kLayerIndexRole);
+        if (value.isValid()) {
+            addIndex(value.toInt());
+            continue;
+        }
+        for (const int idx : collectLayerIndicesUnder(item)) {
+            addIndex(idx);
         }
     }
     return indices;
@@ -3735,6 +3960,14 @@ std::shared_ptr<RasterLayer> MainWindow::selectedRaster() const {
     }
     const QVariant value = item->data(0, kLayerIndexRole);
     if (!value.isValid()) {
+        for (const int idx : collectLayerIndicesUnder(item)) {
+            try {
+                if (auto raster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx))) {
+                    return raster;
+                }
+            } catch (const std::exception &) {
+            }
+        }
         return {};
     }
     try {
@@ -3756,6 +3989,10 @@ int MainWindow::selectedBandIndex() const {
 
 // 根据当前选中图层的类型，更新菜单项的启用/禁用状态
 void MainWindow::updateActionStates() {
+    if (undoAction_) {
+        undoAction_->setEnabled(!undoStack_.isEmpty());
+    }
+
     int selectedRasters = 0;
     int selectedDems = 0;
     int selectedPointClouds = 0;
@@ -3783,6 +4020,7 @@ void MainWindow::updateActionStates() {
     }
 
     const bool hasOneRaster = selectedRasters == 1;
+    const bool hasRasterSelection = selectedRasters >= 1;
     const bool hasPointCloud = selectedPointClouds >= 1;
     if (deleteLayerAction_) {
         deleteLayerAction_->setEnabled(!selectedLayerIndices().empty());
@@ -3794,13 +4032,13 @@ void MainWindow::updateActionStates() {
         renderAction_->setEnabled(hasOneRaster);
     }
     if (histogramAction_) {
-        histogramAction_->setEnabled(hasOneRaster);
+        histogramAction_->setEnabled(hasRasterSelection);
     }
     if (equalizeAction_) {
-        equalizeAction_->setEnabled(hasOneRaster);
+        equalizeAction_->setEnabled(hasRasterSelection);
     }
     if (featureAction_) {
-        featureAction_->setEnabled(hasOneRaster);
+        featureAction_->setEnabled(hasRasterSelection);
     }
     if (swipeCompareAction_) {
         swipeCompareAction_->setEnabled(selectedRasters >= 2 || totalRasters >= 2);
@@ -3874,15 +4112,42 @@ void MainWindow::refreshLogDisplay() {
 }
 
 void MainWindow::executeRasterAlgorithm(const ProcessingAlgorithm &algorithm, ProcessingContext ctx) {
-    const auto raster = selectedRaster();
-    if (!raster) {
+    std::vector<std::shared_ptr<RasterLayer>> rasters;
+    for (const int idx : selectedLayerIndices()) {
+        try {
+            if (auto raster = std::dynamic_pointer_cast<RasterLayer>(layers_.at(idx))) {
+                if (std::find(rasters.begin(), rasters.end(), raster) == rasters.end()) {
+                    rasters.push_back(raster);
+                }
+            }
+        } catch (const std::exception &) {
+        }
+    }
+
+    if (rasters.empty()) {
+        if (const auto raster = selectedRaster()) {
+            rasters.push_back(raster);
+        }
+    }
+    if (rasters.empty()) {
         appendLogTr(QStringLiteral("log.select_raster_one"));
         return;
     }
+
     if (ctx.bandIndex < 0)
         ctx.bandIndex = selectedBandIndex();
-    const ProcessingResult result = algorithm.execute(*raster, ctx);
-    applyProcessingResult(result, raster, algorithm.name());
+    for (const auto &raster : rasters) {
+        ProcessingContext oneCtx = ctx;
+        const ProcessingResult result = algorithm.execute(*raster, oneCtx);
+        QString resultGroup = ctx.parameters.value(QStringLiteral("index"), algorithm.name()).toString();
+        if (resultGroup.trimmed().isEmpty()) {
+            resultGroup = algorithm.name();
+        }
+        if (!raster->layerGroup().trimmed().isEmpty()) {
+            resultGroup += QStringLiteral("/") + raster->layerGroup().trimmed();
+        }
+        applyProcessingResult(result, raster, resultGroup);
+    }
 }
 
 void MainWindow::revealLayerInTree(int layerIndex) {
@@ -4040,6 +4305,55 @@ std::vector<int> MainWindow::collectLayerIndicesUnder(QTreeWidgetItem *item) con
     return indices;
 }
 
+
+bool MainWindow::exportLayersToDirectory(const std::vector<int> &indices, const QString &dirPath) {
+    if (indices.empty() || dirPath.isEmpty()) {
+        return false;
+    }
+
+    QDir root(dirPath);
+    if (!root.exists() && !root.mkpath(QStringLiteral("."))) {
+        appendLog(QStringLiteral("Export failed: cannot create target directory."));
+        return false;
+    }
+
+    int okCount = 0;
+    int total = 0;
+    for (const int idx : indices) {
+        if (!canExportLayer(idx)) {
+            continue;
+        }
+        ++total;
+        try {
+            const auto layer = layers_.at(idx);
+            QString subDir;
+            if (!layer->treeGroup().isEmpty()) {
+                subDir = safeFileBaseName(layer->treeGroup());
+            }
+            if (!layer->layerGroup().isEmpty()) {
+                if (!subDir.isEmpty()) {
+                    subDir += QStringLiteral("/");
+                }
+                subDir += safeFileBaseName(layer->layerGroup());
+            }
+            QDir outDir = root;
+            if (!subDir.isEmpty()) {
+                root.mkpath(subDir);
+                outDir = QDir(root.filePath(subDir));
+            }
+            const QString suffix = layer->type() == DataType::Dem ? QStringLiteral(".tif") : QStringLiteral(".png");
+            const QString path = outDir.filePath(safeFileBaseName(layer->name()) + suffix);
+            if (exportLayerToPath(idx, path)) {
+                ++okCount;
+            }
+        } catch (const std::exception &) {
+        }
+    }
+
+    appendLog(QStringLiteral("Exported %1/%2 layer image(s).").arg(okCount).arg(total));
+    return okCount > 0;
+}
+
 void MainWindow::exportLayerImage(int layerIndex) {
     std::shared_ptr<DataObject> layer;
     try {
@@ -4073,6 +4387,10 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
     if (!result.message.isEmpty())
         appendLog(result.message);
 
+    if (result.demResult || result.rasterResult || !result.image.isNull()) {
+        pushUndoState(QStringLiteral("processing result"));
+    }
+
     int addedIndex = -1;
 
     if (result.demResult) {
@@ -4105,6 +4423,194 @@ void MainWindow::applyProcessingResult(const ProcessingResult &result,
 void MainWindow::openSettings() {
     SettingsDialog dialog(this);
     dialog.exec();
+}
+
+
+void MainWindow::pushUndoState(const QString &label) {
+    UndoState state;
+    state.label = label;
+    state.layers = layers_.all();
+    for (const auto &layer : state.layers) {
+        state.layerGroups.append(layer ? layer->layerGroup() : QString());
+        state.treeGroups.append(layer ? layer->treeGroup() : QString());
+        state.visible.append(layer ? layer->visible() : false);
+    }
+
+    undoStack_.append(std::move(state));
+    constexpr int kMaxUndoStates = 30;
+    while (undoStack_.size() > kMaxUndoStates) {
+        undoStack_.removeFirst();
+    }
+    if (undoAction_) {
+        undoAction_->setEnabled(true);
+    }
+}
+
+void MainWindow::undoLastOperation() {
+    if (undoStack_.isEmpty()) {
+        return;
+    }
+
+    UndoState state = undoStack_.takeLast();
+    for (int i = 0; i < static_cast<int>(state.layers.size()); ++i) {
+        if (!state.layers[i]) {
+            continue;
+        }
+        state.layers[i]->setLayerGroup(i < state.layerGroups.size() ? state.layerGroups[i] : QString());
+        state.layers[i]->setTreeGroup(i < state.treeGroups.size() ? state.treeGroups[i] : QString());
+        state.layers[i]->setVisible(i < state.visible.size() ? state.visible[i] : true);
+    }
+
+    layers_.replaceAll(std::move(state.layers));
+    imageScene_->clear();
+    scene3DWidget_->clearData();
+    panorama360Widget_->clearPanorama();
+    swipeCompareWidget_->clearComparison();
+    refreshLayerTree();
+    updateActionStates();
+    if (undoAction_) {
+        undoAction_->setEnabled(!undoStack_.isEmpty());
+    }
+    appendLog(QStringLiteral("Undo completed."));
+}
+
+bool MainWindow::moveLayerByTreeDrop(int sourceIndex, QTreeWidgetItem *targetItem) {
+    if (sourceIndex < 0 || sourceIndex >= layers_.size() || !targetItem) {
+        return false;
+    }
+
+    QTreeWidgetItem *target = targetItem;
+    const int targetKind = target->data(0, kNodeKindRole).toInt();
+    if (targetKind == static_cast<int>(NodeKind::Band) && target->parent()) {
+        target = target->parent();
+    }
+
+    QString targetGroup;
+    int insertPos = layers_.size();
+    const QVariant targetLayerValue = target->data(0, kLayerIndexRole);
+    const QString folderKey = target->data(0, kFolderKeyRole).toString();
+    if (targetLayerValue.isValid()) {
+        const int targetIndex = targetLayerValue.toInt();
+        if (targetIndex == sourceIndex) {
+            return false;
+        }
+        insertPos = targetIndex;
+        try {
+            targetGroup = layers_.at(targetIndex)->layerGroup();
+        } catch (const std::exception &) {
+        }
+    } else {
+        if (folderKey.startsWith(QStringLiteral("source/raster/group/"))) {
+            targetGroup = target->text(0);
+        } else if (folderKey == QStringLiteral("source/raster")) {
+            targetGroup.clear();
+        }
+        const auto under = collectLayerIndicesUnder(target);
+        if (!under.empty()) {
+            insertPos = *std::max_element(under.begin(), under.end()) + 1;
+        }
+    }
+
+    auto all = layers_.all();
+    if (sourceIndex < 0 || sourceIndex >= static_cast<int>(all.size())) {
+        return false;
+    }
+
+    pushUndoState(QStringLiteral("move layer"));
+    auto moving = all.at(sourceIndex);
+    all.erase(all.begin() + sourceIndex);
+    if (sourceIndex < insertPos) {
+        --insertPos;
+    }
+    insertPos = std::clamp(insertPos, 0, static_cast<int>(all.size()));
+    if (moving && moving->type() == DataType::Raster) {
+        moving->setLayerGroup(targetGroup);
+    }
+    all.insert(all.begin() + insertPos, std::move(moving));
+    layers_.replaceAll(std::move(all));
+    refreshLayerTree();
+    revealLayerInTree(insertPos);
+    updateActionStates();
+    appendLog(QStringLiteral("Update canceled."));
+    return true;
+}
+
+void MainWindow::checkForUpdates() {
+    if (QStringLiteral(RS_GIT_COMMIT) == QStringLiteral("unknown")) {
+        appendLog(QStringLiteral("This build has no Git commit id; update check skipped."));
+        return;
+    }
+
+    QNetworkRequest request(QUrl(QStringLiteral("https://api.github.com/repos/Johnson-Tang2019/CppGroupHomework1/commits/main")));
+    request.setRawHeader("User-Agent", "RemoteSensingQtStarter");
+    auto *reply = updateNetwork_.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        handleUpdateReply(reply);
+    });
+}
+
+void MainWindow::handleUpdateReply(QNetworkReply *reply) {
+    if (!reply) {
+        return;
+    }
+    const QByteArray payload = reply->readAll();
+    const bool okReply = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    if (!okReply) {
+        appendLog(QStringLiteral("Update check failed: %1").arg(QString::fromUtf8(payload.left(180))));
+        return;
+    }
+
+    const QJsonObject root = QJsonDocument::fromJson(payload).object();
+    const QString remoteSha = root.value(QStringLiteral("sha")).toString();
+    const QString localSha = QStringLiteral(RS_GIT_COMMIT);
+    if (remoteSha.isEmpty() || remoteSha.startsWith(localSha.left(12)) || localSha.startsWith(remoteSha.left(12))) {
+        appendLog(QStringLiteral("Update check complete: already up to date."));
+        return;
+    }
+
+    const QString message = root.value(QStringLiteral("commit")).toObject()
+                                .value(QStringLiteral("message")).toString();
+    const auto choice = QMessageBox::question(
+        this, QStringLiteral("Update available"),
+        QStringLiteral("A newer version is available on GitHub. Update now?\n\nCurrent: %1\nLatest: %2\n\n%3")
+            .arg(localSha.left(12), remoteSha.left(12), message.left(300)),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (choice != QMessageBox::Yes) {
+        appendLog(QStringLiteral("Update canceled."));
+        return;
+    }
+
+    QDir repoDir(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 5 && !repoDir.exists(QStringLiteral(".git")); ++i) {
+        repoDir.cdUp();
+    }
+    if (!repoDir.exists(QStringLiteral(".git"))) {
+        QDesktopServices::openUrl(QUrl(AppInfo::repositoryUrl()));
+        appendLog(QStringLiteral("Local Git repository was not found; opened project page."));
+        return;
+    }
+
+    QProcess git;
+    git.setProgram(QStringLiteral("git"));
+    git.setArguments({QStringLiteral("-C"), repoDir.absolutePath(), QStringLiteral("pull"), QStringLiteral("--ff-only")});
+    git.start();
+    if (!git.waitForFinished(60000)) {
+        git.kill();
+        appendLog(QStringLiteral("Update timed out. Please run git pull in VS Code later."));
+        return;
+    }
+
+    const QString output = QString::fromLocal8Bit(git.readAllStandardOutput() + git.readAllStandardError()).trimmed();
+    if (git.exitStatus() == QProcess::NormalExit && git.exitCode() == 0) {
+        QMessageBox::information(this, QStringLiteral("Update complete"),
+                                 QStringLiteral("Code updated. Please rebuild and restart the program.\n\n%1").arg(output.left(800)));
+        appendLog(QStringLiteral("GitHub update complete. Please rebuild and restart."));
+    } else {
+        QMessageBox::warning(this, QStringLiteral("Update failed"),
+                             QStringLiteral("Automatic update failed. Please resolve it in VS Code.\n\n%1").arg(output.left(1000)));
+        appendLog(QStringLiteral("Automatic update failed."));
+    }
 }
 
 void MainWindow::retranslateUi() {

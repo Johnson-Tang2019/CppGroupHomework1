@@ -12,6 +12,16 @@ set(QT_PACKAGE Qt6)
 
 find_package(GDAL QUIET)
 
+execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    OUTPUT_VARIABLE RS_GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT RS_GIT_COMMIT)
+    set(RS_GIT_COMMIT "unknown")
+endif()
+
 # MSYS2/MinGW 的 OpenCV 不能与 MSVC 链接；MSVC 需使用 vcpkg 等 MSVC 版 OpenCV。
 if(MSVC)
     if(DEFINED OpenCV_DIR AND OpenCV_DIR MATCHES "[Mm]sys64|[Mm]ingw64")
@@ -84,6 +94,7 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/resources/app.ico"
      DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 
 target_include_directories(RemoteSensingQtStarter PRIVATE include)
+target_compile_definitions(RemoteSensingQtStarter PRIVATE RS_GIT_COMMIT="${RS_GIT_COMMIT}")
 target_link_libraries(RemoteSensingQtStarter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::OpenGL ${QT_PACKAGE}::OpenGLWidgets ${QT_PACKAGE}::Concurrent ${QT_PACKAGE}::Network opengl32)
 
 # 编译完成后自动部署运行所需 DLL 和 Qt 插件。

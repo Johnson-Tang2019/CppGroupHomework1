@@ -39,6 +39,8 @@ public:
     // 图层树分组：非空时归入「处理结果/<treeGroup>」，空则按 type 归入源数据目录
     const QString &treeGroup() const { return treeGroup_; }
     void setTreeGroup(QString group) { treeGroup_ = std::move(group); }
+    const QString &layerGroup() const { return layerGroup_; }
+    void setLayerGroup(QString group) { layerGroup_ = std::move(group); }
 
     // 纯虚函数：返回图层的简要描述信息
     // 子类必须实现，例如 "3 Bands, 1024x1024" 或 "1.2M Points"
@@ -49,6 +51,7 @@ private:
     QString path_;       // 文件路径（如 "C:/data/IMG_2024.tif"）
     DataType type_;      // 数据类型（Raster/PointCloud/Mesh/Dem/Result）
     bool visible_ {true};  // 可见性标志，默认为 true（显示状态）
+    QString layerGroup_;   // User-defined source layer group name
     QString treeGroup_;    // 处理结果树分组名（如「Canny 边缘检测」）
 };
 
