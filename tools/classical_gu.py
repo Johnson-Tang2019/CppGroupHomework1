@@ -71,6 +71,8 @@ GU: dict[str, str] = {
     "action.index_calc": "算 NDVI/NDWI/NDBI...",
     "action.index_temporal": "多时相指数对比...",
     "action.index_export_csv": "导出指数统计 CSV...",
+    "action.water_area": "水体面积计算...",
+    "action.infrared_spectral": "红外光谱分析...",
     "action.dem_rebuild": "DEM 重建...",
     "action.orthorectify": "正射像图校正...",
     "action.dem_texture": "DEM 三维贴图...",

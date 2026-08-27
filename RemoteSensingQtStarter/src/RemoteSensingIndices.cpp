@@ -1,7 +1,8 @@
-
 #include "rs/RemoteSensingIndices.h"
 
 #include <QFile>
+#include <QFont>
+#include <QPainter>
 #include <QStringList>
 #include <QTextStream>
 #include <algorithm>
@@ -125,6 +126,8 @@ IndexGrid computeIndexGrid(const RasterLayer &input, const QString &indexName, c
                 value = normalizedDifference(swir, nir, swirOk, nirOk, valid);
             } else if (indexName == QStringLiteral("MNDWI")) {
                 value = normalizedDifference(green, swir, greenOk, swirOk, valid);
+            } else if (indexName == QStringLiteral("NDMI")) {
+                value = normalizedDifference(nir, swir, nirOk, swirOk, valid);
             } else if (indexName == QStringLiteral("NDCI")) {
                 value = normalizedDifference(redEdge, red, redEdgeOk, redOk, valid);
             } else if (indexName == QStringLiteral("NDTI")) {
@@ -197,6 +200,168 @@ IndexStats computeStats(const IndexGrid &grid) {
         stats.mean = sum / count;
     }
     return stats;
+}
+
+double pixelGroundAreaSqM(const std::array<double, 6> &gt) {
+    return std::abs(gt[1] * gt[5] - gt[2] * gt[4]);
+}
+
+QString formatArea(double sqMeters) {
+    if (sqMeters <= 0.0)
+        return QStringLiteral("N/A (无地理参考)");
+    if (sqMeters >= 1.0e6)
+        return QStringLiteral("%1 km²").arg(sqMeters / 1.0e6, 0, 'f', 3);
+    if (sqMeters >= 10000.0)
+        return QStringLiteral("%1 公顷").arg(sqMeters / 10000.0, 0, 'f', 2);
+    return QStringLiteral("%1 m²").arg(sqMeters, 0, 'f', 1);
+}
+
+struct MaskStats {
+    int waterPixels = 0;
+    int validPixels = 0;
+    double waterRatio = 0.0;
+};
+
+MaskStats computeWaterMaskStats(const IndexGrid &grid, float threshold) {
+    MaskStats stats;
+    for (int i = 0; i < grid.values.size(); ++i) {
+        if (!grid.valid.value(i))
+            continue;
+        ++stats.validPixels;
+        if (grid.values[i] >= threshold)
+            ++stats.waterPixels;
+    }
+    if (stats.validPixels > 0)
+        stats.waterRatio = static_cast<double>(stats.waterPixels) / stats.validPixels;
+    return stats;
+}
+
+QImage waterMaskToImage(const IndexGrid &grid, float threshold) {
+    QImage img(grid.width, grid.height, QImage::Format_RGB888);
+    for (int y = 0; y < grid.height; ++y) {
+        for (int x = 0; x < grid.width; ++x) {
+            const int offset = y * grid.width + x;
+            QRgb color = qRgb(40, 40, 40);
+            if (grid.valid.value(offset)) {
+                if (grid.values[offset] >= threshold)
+                    color = qRgb(30, 120, 255);
+                else
+                    color = qRgb(70, 110, 70);
+            }
+            img.setPixel(x, y, color);
+        }
+    }
+    return img;
+}
+
+struct BandStats {
+    float minValue = 0.0f;
+    float maxValue = 0.0f;
+    double mean = 0.0;
+    double stddev = 0.0;
+    int validPixels = 0;
+};
+
+BandStats computeBandStats(const RasterBand &band) {
+    BandStats stats;
+    if (!band.hasSamples())
+        return stats;
+
+    float minValue = std::numeric_limits<float>::max();
+    float maxValue = std::numeric_limits<float>::lowest();
+    double sum = 0.0;
+    double sumSq = 0.0;
+    int count = 0;
+
+    for (int y = 0; y < band.height; ++y) {
+        for (int x = 0; x < band.width; ++x) {
+            bool ok = false;
+            const float v = bandValue(band, x, y, ok);
+            if (!ok)
+                continue;
+            minValue = std::min(minValue, v);
+            maxValue = std::max(maxValue, v);
+            sum += v;
+            sumSq += static_cast<double>(v) * v;
+            ++count;
+        }
+    }
+
+    stats.validPixels = count;
+    if (count > 0) {
+        stats.minValue = minValue;
+        stats.maxValue = maxValue;
+        stats.mean = sum / count;
+        const double variance = std::max(0.0, sumSq / count - stats.mean * stats.mean);
+        stats.stddev = std::sqrt(variance);
+    }
+    return stats;
+}
+
+QImage bandToColorPreview(const RasterBand &band) {
+    if (!band.hasSamples())
+        return {};
+
+    BandStats stats = computeBandStats(band);
+    cv::Mat gray(band.height, band.width, CV_8U, cv::Scalar(0));
+    cv::Mat validMask(band.height, band.width, CV_8U, cv::Scalar(0));
+    float range = stats.maxValue - stats.minValue;
+    if (range < 1e-10f)
+        range = 1.0f;
+
+    for (int y = 0; y < band.height; ++y) {
+        for (int x = 0; x < band.width; ++x) {
+            bool ok = false;
+            const float v = bandValue(band, x, y, ok);
+            if (!ok)
+                continue;
+            const int g = static_cast<int>((v - stats.minValue) / range * 255.0f);
+            gray.at<uchar>(y, x) = static_cast<uchar>(std::clamp(g, 0, 255));
+            validMask.at<uchar>(y, x) = 255;
+        }
+    }
+
+    cv::Mat color;
+    cv::applyColorMap(gray, color, cv::COLORMAP_INFERNO);
+    color.setTo(cv::Scalar(35, 35, 35), validMask == 0);
+    cv::Mat rgb;
+    cv::cvtColor(color, rgb, cv::COLOR_BGR2RGB);
+    QImage img(rgb.data, rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888);
+    return img.copy();
+}
+
+QImage renderInfraredReportImage(const QString &title, const QStringList &lines, const QImage &nirPreview) {
+    const int panelW = nirPreview.isNull() ? 520 : 280;
+    const int panelH = nirPreview.isNull() ? 360 : nirPreview.height();
+    const int textW = 360;
+    const int margin = 16;
+    QImage canvas(panelW + textW + margin * 3, std::max(panelH, 360) + margin * 2, QImage::Format_RGB888);
+    canvas.fill(qRgb(255, 250, 252));
+
+    if (!nirPreview.isNull()) {
+        QPainter p(&canvas);
+        p.drawImage(margin, margin, nirPreview.scaled(panelW, panelH, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+
+    QPainter painter(&canvas);
+    painter.setPen(QColor(QStringLiteral("#7a3f57")));
+    QFont titleFont = painter.font();
+    titleFont.setPointSize(13);
+    titleFont.setBold(true);
+    painter.setFont(titleFont);
+    painter.drawText(QRect(margin * 2 + panelW, margin, textW, 28), Qt::AlignLeft | Qt::AlignVCenter, title);
+
+    QFont bodyFont = painter.font();
+    bodyFont.setPointSize(9);
+    bodyFont.setBold(false);
+    painter.setFont(bodyFont);
+    painter.setPen(Qt::black);
+    int y = margin + 36;
+    for (const QString &line : lines) {
+        painter.drawText(QRect(margin * 2 + panelW, y, textW, 20), Qt::AlignLeft | Qt::AlignVCenter, line);
+        y += 20;
+    }
+    return canvas;
 }
 
 QString waterHealthHint(const QString &indexName, double mean) {
@@ -388,6 +553,173 @@ ProcessingResult IndexTemporalCompareAlgorithm::execute(const RasterLayer &input
     return {img.copy(), QStringLiteral("Multi-temporal %1 difference finished.").arg(index)};
 }
 
+QString WaterAreaAlgorithm::name() const { return QStringLiteral("Water Area Calculation"); }
+QString WaterAreaAlgorithm::category() const { return QStringLiteral("Remote Sensing Index"); }
+std::vector<AlgorithmParameter> WaterAreaAlgorithm::parameterSchema() const {
+    return {{QStringLiteral("index"), QStringLiteral("index"), QStringLiteral("MNDWI"), QStringLiteral("MNDWI / NDWI")},
+            {QStringLiteral("threshold"), QStringLiteral("threshold"), QStringLiteral("0.0"),
+             QStringLiteral("Water threshold")}};
+}
+
+ProcessingResult WaterAreaAlgorithm::execute(const RasterLayer &input,
+                                             const ProcessingContext &context) const {
+    if (input.bandCount() < 2)
+        return {{}, QStringLiteral("水体面积计算失败：至少需要 2 个波段。")};
+
+    QString index = context.parameters.value(QStringLiteral("index"), QStringLiteral("MNDWI"))
+                        .toString()
+                        .toUpper();
+    if (index != QStringLiteral("NDWI") && index != QStringLiteral("MNDWI"))
+        index = QStringLiteral("MNDWI");
+
+    const float defaultThreshold = index == QStringLiteral("MNDWI") ? 0.0f : 0.2f;
+    const float threshold =
+        context.parameters.value(QStringLiteral("threshold"), defaultThreshold).toFloat();
+
+    const BandMap bands = bandMapFromContext(input, context);
+    const IndexGrid grid = computeIndexGrid(input, index, bands);
+    const MaskStats maskStats = computeWaterMaskStats(grid, threshold);
+
+    const double pixelArea = pixelGroundAreaSqM(input.geoTransform());
+    const auto gt = input.geoTransform();
+    const bool defaultGeo = gt[0] == 0.0 && gt[1] == 1.0 && gt[2] == 0.0 && gt[3] == 0.0 &&
+                            gt[4] == 0.0 && gt[5] == -1.0;
+    const bool hasGeoRef = !input.projection().trimmed().isEmpty() || !defaultGeo;
+    const double waterAreaSqM = hasGeoRef ? maskStats.waterPixels * pixelArea : 0.0;
+
+    const QString csvPath = context.parameters.value(QStringLiteral("csvPath")).toString();
+    if (!csvPath.isEmpty()) {
+        QFile file(csvPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << "index,threshold,water_pixels,valid_pixels,water_ratio,water_area_sqm,pixel_area_sqm,has_georef\n";
+            out << index << "," << threshold << "," << maskStats.waterPixels << ","
+                << maskStats.validPixels << "," << maskStats.waterRatio << "," << waterAreaSqM
+                << "," << pixelArea << "," << (hasGeoRef ? 1 : 0) << "\n";
+        }
+    }
+
+    QImage preview = waterMaskToImage(grid, threshold);
+    auto resultLayer = std::make_shared<RasterLayer>(
+        input.name() + QStringLiteral("_") + index + QStringLiteral("_water"), QString(),
+        QVector<RasterBand>{}, preview);
+    resultLayer->setRenderDescription(
+        index + QStringLiteral(" water mask (threshold=") + QString::number(threshold, 'f', 2) +
+        QStringLiteral(")"));
+    resultLayer->setProjection(input.projection());
+    resultLayer->setGeoTransform(input.geoTransform());
+
+    QString areaText = hasGeoRef ? formatArea(waterAreaSqM) : QStringLiteral("无地理参考，仅统计像素");
+    ProcessingResult result;
+    result.image = preview;
+    result.rasterResult = resultLayer;
+    result.message =
+        QStringLiteral("水体面积计算完成 [%1≥%2]：水体 %3 像素（占有效像元 %4%），面积 %5")
+            .arg(index)
+            .arg(threshold, 0, 'f', 2)
+            .arg(maskStats.waterPixels)
+            .arg(maskStats.waterRatio * 100.0, 0, 'f', 1)
+            .arg(areaText);
+    return result;
+}
+
+QString InfraredSpectralAnalysisAlgorithm::name() const {
+    return QStringLiteral("Infrared Spectral Analysis");
+}
+QString InfraredSpectralAnalysisAlgorithm::category() const {
+    return QStringLiteral("Remote Sensing Index");
+}
+std::vector<AlgorithmParameter> InfraredSpectralAnalysisAlgorithm::parameterSchema() const {
+    return {};
+}
+
+ProcessingResult InfraredSpectralAnalysisAlgorithm::execute(const RasterLayer &input,
+                                                            const ProcessingContext &context) const {
+    if (input.bandCount() < 2)
+        return {{}, QStringLiteral("红外光谱分析失败：至少需要 2 个波段。")};
+
+    BandMap bands = bandMapFromContext(input, context);
+    bands.nir = std::clamp(context.parameters.value(QStringLiteral("nirBand"), bands.nir).toInt(), 0,
+                           input.bandCount() - 1);
+    bands.swir = std::clamp(context.parameters.value(QStringLiteral("swirBand"), bands.swir).toInt(), 0,
+                            input.bandCount() - 1);
+    bands.red = std::clamp(context.parameters.value(QStringLiteral("redBand"), bands.red).toInt(), 0,
+                           input.bandCount() - 1);
+
+    const BandStats nirStats = computeBandStats(input.band(bands.nir));
+    const BandStats swirStats =
+        bands.swir < input.bandCount() ? computeBandStats(input.band(bands.swir)) : BandStats{};
+    const BandStats redStats = computeBandStats(input.band(bands.red));
+
+    const IndexGrid ndviGrid = computeIndexGrid(input, QStringLiteral("NDVI"), bands);
+    const IndexGrid ndmiGrid = computeIndexGrid(input, QStringLiteral("NDMI"), bands);
+    const IndexGrid ndbiGrid = computeIndexGrid(input, QStringLiteral("NDBI"), bands);
+    const IndexStats ndviStats = computeStats(ndviGrid);
+    const IndexStats ndmiStats = computeStats(ndmiGrid);
+    const IndexStats ndbiStats = computeStats(ndbiGrid);
+
+    QStringList reportLines;
+    reportLines << QStringLiteral("NIR 波段: %1").arg(bands.nir + 1);
+    reportLines << QStringLiteral("  均值=%1  范围=[%2, %3]")
+                       .arg(nirStats.mean, 0, 'f', 2)
+                       .arg(nirStats.minValue, 0, 'f', 2)
+                       .arg(nirStats.maxValue, 0, 'f', 2);
+    if (bands.swir < input.bandCount()) {
+        reportLines << QStringLiteral("SWIR 波段: %1").arg(bands.swir + 1);
+        reportLines << QStringLiteral("  均值=%1  范围=[%2, %3]")
+                           .arg(swirStats.mean, 0, 'f', 2)
+                           .arg(swirStats.minValue, 0, 'f', 2)
+                           .arg(swirStats.maxValue, 0, 'f', 2);
+    }
+    reportLines << QStringLiteral("Red 波段: %1").arg(bands.red + 1);
+    reportLines << QStringLiteral("  均值=%1  范围=[%2, %3]")
+                       .arg(redStats.mean, 0, 'f', 2)
+                       .arg(redStats.minValue, 0, 'f', 2)
+                       .arg(redStats.maxValue, 0, 'f', 2);
+    reportLines << QString();
+    reportLines << QStringLiteral("NDVI  均值=%1").arg(ndviStats.mean, 0, 'f', 4);
+    reportLines << QStringLiteral("NDMI  均值=%1").arg(ndmiStats.mean, 0, 'f', 4);
+    reportLines << QStringLiteral("NDBI  均值=%1").arg(ndbiStats.mean, 0, 'f', 4);
+
+    const QString csvPath = context.parameters.value(QStringLiteral("csvPath")).toString();
+    if (!csvPath.isEmpty()) {
+        QFile file(csvPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << "metric,value\n";
+            out << "nir_band," << bands.nir + 1 << "\n";
+            out << "swir_band," << bands.swir + 1 << "\n";
+            out << "red_band," << bands.red + 1 << "\n";
+            out << "nir_mean," << nirStats.mean << "\n";
+            out << "nir_min," << nirStats.minValue << "\n";
+            out << "nir_max," << nirStats.maxValue << "\n";
+            out << "ndvi_mean," << ndviStats.mean << "\n";
+            out << "ndmi_mean," << ndmiStats.mean << "\n";
+            out << "ndbi_mean," << ndbiStats.mean << "\n";
+        }
+    }
+
+    QImage nirPreview = bandToColorPreview(input.band(bands.nir));
+    QImage reportImage =
+        renderInfraredReportImage(QStringLiteral("红外光谱分析"), reportLines, nirPreview);
+
+    auto resultLayer = std::make_shared<RasterLayer>(
+        input.name() + QStringLiteral("_IR_spectral"), QString(), QVector<RasterBand>{}, reportImage);
+    resultLayer->setRenderDescription(QStringLiteral("Infrared spectral analysis report"));
+    resultLayer->setProjection(input.projection());
+    resultLayer->setGeoTransform(input.geoTransform());
+
+    ProcessingResult result;
+    result.image = reportImage;
+    result.rasterResult = resultLayer;
+    result.message = QStringLiteral("红外光谱分析完成：NIR=%1，NDVI=%2，NDMI=%3，NDBI=%4")
+                         .arg(bands.nir + 1)
+                         .arg(ndviStats.mean, 0, 'f', 4)
+                         .arg(ndmiStats.mean, 0, 'f', 4)
+                         .arg(ndbiStats.mean, 0, 'f', 4);
+    return result;
+}
+
 #else
 
 QString RemoteSensingIndexAlgorithm::name() const { return QStringLiteral("Remote Sensing Index"); }
@@ -402,6 +734,20 @@ QString IndexTemporalCompareAlgorithm::category() const { return QStringLiteral(
 std::vector<AlgorithmParameter> IndexTemporalCompareAlgorithm::parameterSchema() const { return {}; }
 ProcessingResult IndexTemporalCompareAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
     return openCvUnavailable(QStringLiteral("Multi-temporal Index Compare"));
+}
+
+QString WaterAreaAlgorithm::name() const { return QStringLiteral("Water Area Calculation"); }
+QString WaterAreaAlgorithm::category() const { return QStringLiteral("Remote Sensing Index"); }
+std::vector<AlgorithmParameter> WaterAreaAlgorithm::parameterSchema() const { return {}; }
+ProcessingResult WaterAreaAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
+    return openCvUnavailable(QStringLiteral("Water Area Calculation"));
+}
+
+QString InfraredSpectralAnalysisAlgorithm::name() const { return QStringLiteral("Infrared Spectral Analysis"); }
+QString InfraredSpectralAnalysisAlgorithm::category() const { return QStringLiteral("Remote Sensing Index"); }
+std::vector<AlgorithmParameter> InfraredSpectralAnalysisAlgorithm::parameterSchema() const { return {}; }
+ProcessingResult InfraredSpectralAnalysisAlgorithm::execute(const RasterLayer &, const ProcessingContext &) const {
+    return openCvUnavailable(QStringLiteral("Infrared Spectral Analysis"));
 }
 
 #endif

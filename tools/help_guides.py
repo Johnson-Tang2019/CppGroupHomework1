@@ -51,6 +51,8 @@ HELP_ZH = """
 <li><b>多时相指数对比</b>：选中两个不同时相的栅格图层，生成 NDVI 变化对比结果。</li>
 <li><b>前后影像滑动对比</b>：选中两期影像，在「滑动对比」标签页拖动中间分隔线对比（亦可在图层树选中两期后自动更新）。</li>
 <li><b>导出指数统计 CSV</b>：将当前选中图层的指数统计导出为 CSV 文件。</li>
+<li><b>水体面积计算</b>：基于 MNDWI/NDWI 阈值分割统计水体像元数与面积（需 GeoTransform/投影时可换算 m²/公顷/km²），生成蓝色水体掩膜预览，可选导出 CSV。</li>
+<li><b>红外光谱分析</b>：对 NIR/SWIR/Red 波段做统计，并计算 NDVI、NDMI、NDBI 均值，生成 NIR 伪彩色预览与分析报告图，可选导出 CSV。</li>
 </ul>
 
 <h3>6. 摄影测量 / 三维</h3>
@@ -167,6 +169,8 @@ HELP_EN = """
 <li><b>Multi-temporal index compare</b>: select two rasters from different dates.</li>
 <li><b>Before/After swipe compare</b>: drag the divider in the Swipe Compare tab.</li>
 <li><b>Export index statistics CSV</b>.</li>
+<li><b>Water body area calculation</b>: MNDWI/NDWI threshold mask, pixel count and area (m²/ha/km² when georeferenced), blue mask preview, optional CSV export.</li>
+<li><b>Infrared spectral analysis</b>: NIR/SWIR/Red band statistics plus NDVI, NDMI, NDBI means; NIR pseudo-color preview and report image; optional CSV export.</li>
 </ul>
 
 <h3>6. Photogrammetry / 3D</h3>
@@ -333,7 +337,7 @@ HELP_GU = """
 
 <h3>四、遥感指数</h3>
 <ul>
-<li>NDVI/NDWI/NDBI；多时相对比；前后滑动对比；导出 CSV。</li>
+<li>NDVI/NDWI/NDBI；多时相对比；前后滑动对比；导出 CSV；水体面积计算；红外光谱分析。</li>
 </ul>
 
 <h3>五、三维与点云</h3>

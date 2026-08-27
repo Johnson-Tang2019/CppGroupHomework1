@@ -1650,6 +1650,114 @@
                     ctx.parameters[QStringLiteral("csvPath")] = path;
                     executeRasterAlgorithm(algo, ctx);
                 });
+        connect(regAction(indexMenu_, QStringLiteral("action.water_area")), &QAction::triggered, this,
+                [this]() {
+                    const auto raster = selectedRaster();
+                    if (!raster) {
+                        appendLogTr(QStringLiteral("log.select_raster_one"));
+                        return;
+                    }
+                    QStringList methods = {QStringLiteral("MNDWI"), QStringLiteral("NDWI")};
+                    bool ok = false;
+                    const QString index = QInputDialog::getItem(
+                        this, Translation::instance().tr(QStringLiteral("dialog.water_area_title")),
+                        Translation::instance().tr(QStringLiteral("dialog.water_area_index")), methods, 0, false, &ok);
+                    if (!ok)
+                        return;
+                    const double defaultTh = index == QStringLiteral("MNDWI") ? 0.0 : 0.2;
+                    const double threshold = QInputDialog::getDouble(
+                        this, Translation::instance().tr(QStringLiteral("dialog.water_area_title")),
+                        Translation::instance().tr(QStringLiteral("dialog.water_area_threshold")), defaultTh, -1.0, 1.0, 2, &ok);
+                    if (!ok)
+                        return;
+
+                    ProcessingContext ctx;
+                    ctx.parameters[QStringLiteral("index")] = index;
+                    ctx.parameters[QStringLiteral("threshold")] = threshold;
+                    if (raster->bandCount() >= 4) {
+                        int greenBand = QInputDialog::getInt(
+                            this, Translation::instance().tr(QStringLiteral("dialog.water_area_title")),
+                            Translation::instance().tr(QStringLiteral("dialog.water_band_green")), 2, 1, raster->bandCount(), 1, &ok);
+                        if (!ok)
+                            return;
+                        int nirBand = QInputDialog::getInt(
+                            this, Translation::instance().tr(QStringLiteral("dialog.water_area_title")),
+                            Translation::instance().tr(QStringLiteral("dialog.water_band_nir")), qMin(4, raster->bandCount()), 1,
+                            raster->bandCount(), 1, &ok);
+                        if (!ok)
+                            return;
+                        int swirBand = QInputDialog::getInt(
+                            this, Translation::instance().tr(QStringLiteral("dialog.water_area_title")),
+                            Translation::instance().tr(QStringLiteral("dialog.water_band_swir")), qMin(5, raster->bandCount()), 1,
+                            raster->bandCount(), 1, &ok);
+                        if (!ok)
+                            return;
+                        ctx.parameters[QStringLiteral("greenBand")] = greenBand - 1;
+                        ctx.parameters[QStringLiteral("nirBand")] = nirBand - 1;
+                        ctx.parameters[QStringLiteral("swirBand")] = swirBand - 1;
+                    }
+
+                    const int exportChoice = QMessageBox::question(
+                        this, Translation::instance().tr(QStringLiteral("dialog.water_area_title")),
+                        Translation::instance().tr(QStringLiteral("dialog.water_area_export_csv")),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                    if (exportChoice == QMessageBox::Yes) {
+                        const QString path = QFileDialog::getSaveFileName(
+                            this, Translation::instance().tr(QStringLiteral("dialog.water_area_csv_title")), QString(),
+                            QStringLiteral("CSV (*.csv)"));
+                        if (!path.isEmpty())
+                            ctx.parameters[QStringLiteral("csvPath")] = path;
+                    }
+
+                    WaterAreaAlgorithm algo;
+                    executeRasterAlgorithm(algo, ctx);
+                });
+        connect(regAction(indexMenu_, QStringLiteral("action.infrared_spectral")), &QAction::triggered, this,
+                [this]() {
+                    const auto raster = selectedRaster();
+                    if (!raster) {
+                        appendLogTr(QStringLiteral("log.select_raster_one"));
+                        return;
+                    }
+                    bool ok = false;
+                    const int nirBand = QInputDialog::getInt(
+                        this, Translation::instance().tr(QStringLiteral("dialog.infrared_title")),
+                        Translation::instance().tr(QStringLiteral("dialog.infrared_nir_band")),
+                        qMin(4, raster->bandCount()), 1, raster->bandCount(), 1, &ok);
+                    if (!ok)
+                        return;
+                    const int swirBand = QInputDialog::getInt(
+                        this, Translation::instance().tr(QStringLiteral("dialog.infrared_title")),
+                        Translation::instance().tr(QStringLiteral("dialog.infrared_swir_band")),
+                        qMin(5, raster->bandCount()), 1, raster->bandCount(), 1, &ok);
+                    if (!ok)
+                        return;
+                    const int redBand = QInputDialog::getInt(
+                        this, Translation::instance().tr(QStringLiteral("dialog.infrared_title")),
+                        Translation::instance().tr(QStringLiteral("dialog.infrared_red_band")), 1, 1, raster->bandCount(), 1, &ok);
+                    if (!ok)
+                        return;
+
+                    ProcessingContext ctx;
+                    ctx.parameters[QStringLiteral("nirBand")] = nirBand - 1;
+                    ctx.parameters[QStringLiteral("swirBand")] = swirBand - 1;
+                    ctx.parameters[QStringLiteral("redBand")] = redBand - 1;
+
+                    const int exportChoice = QMessageBox::question(
+                        this, Translation::instance().tr(QStringLiteral("dialog.infrared_title")),
+                        Translation::instance().tr(QStringLiteral("dialog.infrared_export_csv")),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                    if (exportChoice == QMessageBox::Yes) {
+                        const QString path = QFileDialog::getSaveFileName(
+                            this, Translation::instance().tr(QStringLiteral("dialog.infrared_csv_title")), QString(),
+                            QStringLiteral("CSV (*.csv)"));
+                        if (!path.isEmpty())
+                            ctx.parameters[QStringLiteral("csvPath")] = path;
+                    }
+
+                    InfraredSpectralAnalysisAlgorithm algo;
+                    executeRasterAlgorithm(algo, ctx);
+                });
 
         photogrammetryMenu_ = regTopMenu(QStringLiteral("menu.photogrammetry"));
         demAction_ = regAction(photogrammetryMenu_, QStringLiteral("action.dem_rebuild"));

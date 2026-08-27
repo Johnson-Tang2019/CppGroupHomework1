@@ -82,6 +82,8 @@ T: dict[str, tuple[str, str]] = {
     "action.index_calc": ("Вычислить NDVI/NDWI/NDBI...", "Calculer NDVI/NDWI/NDBI..."),
     "action.index_temporal": ("Сравнение индексов...", "Comparaison multi-temporelle..."),
     "action.index_export_csv": ("Экспорт CSV индексов...", "Exporter statistiques CSV..."),
+    "action.water_area": ("Расчёт площади воды...", "Calcul de la surface des eaux..."),
+    "action.infrared_spectral": ("ИК спектральный анализ...", "Analyse spectrale infrarouge..."),
     "action.dem_rebuild": ("Построение DEM...", "Reconstruction MNT..."),
     "action.orthorectify": ("Ортокоррекция...", "Orthorectification..."),
     "action.dem_texture": ("3D текстура DEM...", "Texturation 3D MNT..."),
